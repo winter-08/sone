@@ -86,6 +86,20 @@ if [[ -n "${SPIKE_GPU:-}" ]]; then wlr_renderer=vulkan; else wlr_renderer=pixman
 if [[ -n "${SPIKE_GPU:-}" ]]; then export WLR_RENDER_DRM_DEVICE=/dev/dri/renderD128; fi
 WLR_BACKENDS=headless WLR_RENDERER=$wlr_renderer WLR_LIBINPUT_NO_DEVICES=1 \
   sway -c "$RUN/sway.conf" > "$RUN/logs/sway.log" 2>&1 &
+sway_pid=$!
+# Headless sway with the Vulkan renderer leaks while it sits idle (2026-11-08: 8 GB in 18 s
+# during a sign-in that waited minutes; the out-of-memory killer took the desktop session's
+# processes with it). Short benchmark passes stay small, but never let it run away.
+if [[ -n "${SPIKE_GPU:-}" ]]; then
+  ( while kill -0 "$sway_pid" 2>/dev/null; do
+      rss=$(ps -o rss= -p "$sway_pid" 2>/dev/null || echo 0)
+      if (( ${rss:-0} > 2000000 )); then
+        echo "sandbox: sway passed 2 GB (GPU renderer leak), stopping it" | tee -a "$RUN/logs/sway.log" >&2
+        kill "$sway_pid"; break
+      fi
+      sleep 2
+    done ) &
+fi
 wait_for 'ls "$XDG_RUNTIME_DIR"/wayland-?'
 export WAYLAND_DISPLAY="$(basename "$(ls "$XDG_RUNTIME_DIR"/wayland-? | head -1)")"
 export SWAYSOCK="$(ls "$XDG_RUNTIME_DIR"/sway-ipc.* | head -1)"
