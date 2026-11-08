@@ -4959,6 +4959,7 @@ version = "0.1.0"
 name = "sone-rune"
 version = "0.23.0"
 dependencies = [
+ "image",
  "log",
  "rand 0.8.8",
  "rune",

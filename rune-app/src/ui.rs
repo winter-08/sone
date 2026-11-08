@@ -75,7 +75,7 @@ pub fn tile(hue: f32, size: f32, seed: u64, radius: f32) -> El {
 /// laid over it, once there is one: the placeholder shows while it downloads and decodes, and
 /// whenever there's no image. Corners follow `radius`.
 pub fn with_image(placeholder: El, url: Option<String>, size: f32, radius: f32) -> El {
-    match url.and_then(|u| crate::art::pixels(&u)) {
+    match url.and_then(|u| crate::art::pixels(&u, size)) {
         Some(px) => placeholder.child(el().absolute(0.0, 0.0).size(size, size).radius(radius).pixels_fit(&px, rune::SurfaceFit::Fill)),
         None => placeholder,
     }

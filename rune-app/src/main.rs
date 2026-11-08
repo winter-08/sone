@@ -91,8 +91,8 @@ fn poll(s: &mut App, _: f64, tx: &mut Tx) -> bool {
         tx.wake_after(Duration::from_millis(50));
     }
     let (state, ticks) = controller::versions();
-    // new data, or a downloaded cover to attach
-    let v = (state, ticks, data::version().wrapping_add(art::version() << 32));
+    // (Covers don't appear here: art.rs fills their pixels in place, without a rebuild.)
+    let v = (state, ticks, data::version());
     tx.wake_after(Duration::from_millis(200));
     let changed = v != s.seen;
     // A clock tick (or a seek bar drag) lands at once; a seek, a new track or new data animate.
@@ -195,3 +195,4 @@ fn main() {
     handle.on_exit(|code| std::process::exit(code));
     app.run();
 }
+

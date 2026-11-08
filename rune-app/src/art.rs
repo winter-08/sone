@@ -1,48 +1,54 @@
-//! Real artwork: covers and pictures from TIDAL's image CDN, cached on disk, decoded by Rune.
+//! Real artwork: covers and pictures from TIDAL's image CDN, cached on disk, drawn by Rune.
 //!
 //! Performance, in order of what matters:
-//! - Fetch the size that's drawn: the smallest CDN size at least the element's points times the
-//!   display scale (a 132 pt card at 1.5x wants 198 px, so the 320 px file). Decoded memory goes
-//!   with the square of the side.
-//! - Decode off the UI thread: Rune's `ImageCache` decodes and builds mips on its worker. A
-//!   decoded image wakes only the windows showing it, without rebuilding the view.
-//! - Bound decoded memory: the cache holds images weakly, so `HELD` decides what stays: the most
-//!   recently drawn `KEEP` images (a 320 px cover with mips is about 0.55 MB). Older ones reload
-//!   from disk when drawn again.
+//! - Decode to the size that's drawn: the CDN file is the smallest of its sizes at least the
+//!   element's points times the display scale, and it's resized to exactly that many pixels
+//!   (a 132 pt card at 1.5x: the 320 px file, kept as 198 px, ~160 KB of RGBA). No mips are
+//!   needed when nothing is minified, and memory goes with the square of the side.
+//! - Never rebuild the view for a cover: each (url, size) gets a stable `Pixels` slot the first
+//!   time a view asks, drawn empty over the placeholder; when the image is ready it's `set` from
+//!   a worker, which wakes only the windows showing it. (An earlier version rebuilt the page to
+//!   attach each cover; the accessibility tree then published the page ~60 ms late.)
+//! - Decode off the UI thread: on the blocking pool, `DECODES` at a time.
+//! - Bound memory: `HELD` keeps the `KEEP` most recently drawn slots; an element still showing
+//!   an evicted slot keeps its pixels until the view moves on.
 //! - Download once: the JPEG bytes are kept under `$XDG_CACHE_HOME/sone-rune/art` (pruned to
 //!   `DISK_BUDGET` at startup, oldest first).
-//! - Bounded network: `PERMITS` downloads at a time on the backend's shared client (connection
-//!   reuse, and the user's proxy settings), in the order views ask, which is layout order. A
-//!   failed URL isn't asked again this run.
-//! - No redraw churn: views rebuild for new covers at most once per poll (`version()`), and
-//!   covers appear without a fade, so nothing animates while they stream in.
+//! - Bounded network: `DOWNLOADS` at a time on the backend's shared client (connection reuse,
+//!   and the user's proxy settings), in the order views ask, which is layout order. A failed URL
+//!   isn't asked again this run.
+//! - No fade-in: covers appear without animating anything.
 //!
-//! The Afterglow placeholder stays underneath until a cover is decoded, and whenever there is
-//! none (offline, no image on the item).
+//! The Afterglow placeholder shows until a cover is filled in, and whenever there is none
+//! (offline, no image on the item, `SONE_ART=0`).
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
-use std::sync::{Arc, LazyLock, Mutex};
+use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::{LazyLock, Mutex};
 
-use rune::{Image, ImageCache, Pixels};
+use rune::Pixels;
 use serde_json::Value;
 use sone_host_shim::Manager;
 use tauri_app_lib::AppState;
 
-const KEEP: usize = 160;
-const PERMITS: usize = 6;
+const KEEP: usize = 200;
+const DOWNLOADS: usize = 6;
+const DECODES: usize = 4;
 const DISK_BUDGET: u64 = 300 * 1024 * 1024;
 
 static SCALE: AtomicU32 = AtomicU32::new(0x3f80_0000); // 1.0
-static VERSION: AtomicU64 = AtomicU64::new(0);
-static CACHE: LazyLock<ImageCache> = LazyLock::new(|| ImageCache::new(Arc::new(|| {})));
-static DOWNLOADS: LazyLock<tokio::sync::Semaphore> = LazyLock::new(|| tokio::sync::Semaphore::new(PERMITS));
+static NET: LazyLock<tokio::sync::Semaphore> = LazyLock::new(|| tokio::sync::Semaphore::new(DOWNLOADS));
+static CPU: LazyLock<tokio::sync::Semaphore> = LazyLock::new(|| tokio::sync::Semaphore::new(DECODES));
+static OFF: LazyLock<bool> = LazyLock::new(|| std::env::var("SONE_ART").is_ok_and(|v| v == "0"));
+
+type Slot = (String, u32); // (url, side in pixels)
 
 #[derive(Default)]
 struct Held {
-    images: HashMap<String, Image>,
-    order: VecDeque<String>,
-    fetching: HashSet<String>,
+    slots: HashMap<Slot, Pixels>,
+    order: VecDeque<Slot>,
+    /// Downloads in flight, with the slots waiting on each.
+    waiting: HashMap<String, Vec<(u32, Pixels)>>,
     failed: HashSet<String>,
 }
 static HELD: LazyLock<Mutex<Held>> = LazyLock::new(Default::default);
@@ -56,11 +62,6 @@ pub fn set_scale(scale: f32) {
 
 fn px(pt: f32) -> f32 {
     pt * f32::from_bits(SCALE.load(Ordering::Relaxed))
-}
-
-/// Bumps when a downloaded cover is ready to attach (main::poll redraws).
-pub fn version() -> u64 {
-    VERSION.load(Ordering::Relaxed)
 }
 
 fn cdn(uuid: &str, side: u32) -> String {
@@ -159,49 +160,77 @@ fn disk_path(url: &str) -> PathBuf {
     cache_dir().join(name)
 }
 
-fn hold(held: &mut Held, url: &str, image: Image) {
-    held.images.insert(url.to_string(), image);
-    held.order.push_back(url.to_string());
+/// The slot for `url` drawn `pt` points square: empty until the image is in, then filled in
+/// place (the windows showing it redraw; the view doesn't re-run). None with `SONE_ART=0` or
+/// for a URL that failed.
+pub fn pixels(url: &str, pt: f32) -> Option<Pixels> {
+    if *OFF {
+        return None;
+    }
+    let side = px(pt).ceil().clamp(1.0, 2048.0) as u32;
+    let key: Slot = (url.to_string(), side);
+    let mut held = HELD.lock().unwrap();
+    if held.failed.contains(url) {
+        return None;
+    }
+    if let Some(p) = held.slots.get(&key).cloned() {
+        if let Some(pos) = held.order.iter().position(|k| *k == key) {
+            let k = held.order.remove(pos).unwrap();
+            held.order.push_back(k);
+        }
+        return Some(p);
+    }
+    let slot = Pixels::new();
+    held.slots.insert(key.clone(), slot.clone());
+    held.order.push_back(key);
     while held.order.len() > KEEP {
         if let Some(old) = held.order.pop_front() {
-            held.images.remove(&old);
+            held.slots.remove(&old);
         }
-    }
-}
-
-/// The image at `url` for drawing: pending (draws when decoded) or ready. None while it
-/// downloads, or when there is none.
-pub fn pixels(url: &str) -> Option<Pixels> {
-    let mut held = HELD.lock().unwrap();
-    if let Some(img) = held.images.get(url) {
-        let px = (img.error().is_none()).then(|| img.pixels().clone());
-        if let Some(pos) = held.order.iter().position(|u| u == url) {
-            let u = held.order.remove(pos).unwrap();
-            held.order.push_back(u);
-        }
-        return px;
-    }
-    if held.fetching.contains(url) || held.failed.contains(url) {
-        return None;
     }
     let path = disk_path(url);
     if path.exists() {
-        // read and decoded on Rune's worker, not here
-        let img = CACHE.file(&path, 0.0, 1.0);
-        let px = img.pixels().clone();
-        hold(&mut held, url, img);
-        return Some(px);
+        drop(held);
+        let s = slot.clone();
+        sone_host_shim::async_runtime::spawn(async move {
+            // a prune racing this read just leaves the placeholder this time
+            if let Ok(bytes) = tokio::fs::read(&path).await {
+                fill(bytes, vec![(side, s)]).await;
+            }
+        });
+    } else if let Some(waiters) = held.waiting.get_mut(url) {
+        waiters.push((side, slot.clone()));
+    } else {
+        held.waiting.insert(url.to_string(), vec![(side, slot.clone())]);
+        drop(held);
+        download(url.to_string(), path);
     }
-    held.fetching.insert(url.to_string());
-    drop(held);
-    download(url.to_string(), path);
-    None
+    Some(slot)
+}
+
+/// Decode `bytes` once and fill each waiting slot at its size, off the UI thread.
+async fn fill(bytes: Vec<u8>, slots: Vec<(u32, Pixels)>) {
+    let _permit = CPU.acquire().await;
+    let _ = tokio::task::spawn_blocking(move || {
+        let Ok(img) = image::load_from_memory(&bytes) else { return };
+        let img = img.to_rgba8();
+        for (side, slot) in slots {
+            // Covers at exactly the drawn size (never upscaled); others keep their aspect and
+            // are drawn with Fill.
+            let (w, h) = img.dimensions();
+            let k = (side as f32 / w.min(h) as f32).min(1.0);
+            let (nw, nh) = (((w as f32 * k).round() as u32).max(1), ((h as f32 * k).round() as u32).max(1));
+            let out = if (nw, nh) == (w, h) { img.clone() } else { image::imageops::resize(&img, nw, nh, image::imageops::FilterType::Triangle) };
+            slot.set(nw, nh, out.into_raw());
+        }
+    })
+    .await;
 }
 
 fn download(url: String, path: PathBuf) {
     sone_host_shim::async_runtime::spawn(async move {
         let bytes = {
-            let _permit = DOWNLOADS.acquire().await;
+            let _permit = NET.acquire().await;
             let client = crate::host().state::<AppState>().proxied_http.client();
             match client {
                 Ok(c) => match c.get(&url).send().await {
@@ -218,25 +247,23 @@ fn download(url: String, path: PathBuf) {
                 Err(_) => None, // the proxy plan blocks traffic: no artwork
             }
         };
-        let mut held = HELD.lock().unwrap();
-        held.fetching.remove(&url);
-        match bytes {
-            Some(b) => {
-                if let Some(dir) = path.parent() {
-                    let _ = std::fs::create_dir_all(dir);
-                }
-                let tmp = path.with_extension("part");
-                if std::fs::write(&tmp, &b).is_ok() {
-                    let _ = std::fs::rename(&tmp, &path);
-                }
-                let img = CACHE.load(b);
-                hold(&mut held, &url, img);
-                VERSION.fetch_add(1, Ordering::Relaxed);
+        let waiters = {
+            let mut held = HELD.lock().unwrap();
+            let w = held.waiting.remove(&url).unwrap_or_default();
+            if bytes.is_none() {
+                held.failed.insert(url.clone());
             }
-            None => {
-                held.failed.insert(url);
-            }
+            w
+        };
+        let Some(bytes) = bytes else { return };
+        if let Some(dir) = path.parent() {
+            let _ = tokio::fs::create_dir_all(dir).await;
         }
+        let tmp = path.with_extension("part");
+        if tokio::fs::write(&tmp, &bytes).await.is_ok() {
+            let _ = tokio::fs::rename(&tmp, &path).await;
+        }
+        fill(bytes, waiters).await;
     });
 }
 
