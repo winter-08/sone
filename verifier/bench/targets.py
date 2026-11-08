@@ -69,8 +69,8 @@ def search(query: str, until: str | None = None) -> float:
     itself before its results arrive)."""
     atspi.focus("Search", "entry")
     time.sleep(0.2)
-    # Clear an earlier query with End + Backspace: Ctrl+A doesn't select in Rune's search
-    # field yet (a port bug, see DESIGN.md), and Backspace behaves the same in both apps.
+    # Clear an earlier query with End + Backspace: the harness can't send Ctrl+A to WebKit
+    # (see channels/atspi.key), and Backspace behaves the same in both apps.
     import subprocess
     subprocess.run(["wtype", "-k", "End"] + ["-k", "BackSpace"] * 60, check=True, timeout=10)
     time.sleep(0.1)

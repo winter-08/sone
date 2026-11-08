@@ -140,7 +140,14 @@ def type_text(text: str) -> None:
 
 
 def key(name: str) -> None:
-    """One key press by XKB name (Return, Escape, Tab), or a chord like "ctrl+a"."""
+    """One key press by XKB name (Return, Escape, Tab), or a chord like "ctrl+a".
+
+    Caveat (2026-11-08): sent this way, without pauses, a chord reaches neither app in the
+    headless sway (wtype tears its virtual keyboard down first: no wl_keyboard events at all).
+    With `-s 50` pauses Rune gets Ctrl+A and selects all, but WebKit still doesn't, so the
+    references' goldens never saw a working select-all (settings-edit's `select_all` step
+    appends). Left as is so candidate and reference get the same input; don't rely on Ctrl
+    chords in scenarios until the injector is fixed for both."""
     import subprocess
     *mods, k = name.split("+")
     cmd = ["wtype"]

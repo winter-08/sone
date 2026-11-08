@@ -331,7 +331,7 @@ pub fn dropdown(s: &App) -> Option<El> {
     }
     // Peek only: the debounce in App::poll decides when to fetch (rendering mid-typing must not).
     let v = data::peek(&Key::Suggest(q.clone()))?;
-    let mut list = col().key("suggest").w(420.0).padding(8.0).gap(2.0).radius(14.0).fill(oklch(0.2, 0.02, 270.0)).shadow(8.0, 24.0, rune::oklcha(0.0, 0.0, 0.0, 0.4));
+    let mut list = col().w_full().padding(8.0).gap(2.0);
     let texts = v["textSuggestions"].as_array().cloned().unwrap_or_default();
     for (i, sug) in texts.iter().enumerate() {
         let sq = sug["query"].as_str().unwrap_or("").to_string();
@@ -381,7 +381,13 @@ pub fn dropdown(s: &App) -> Option<El> {
             })
             .child(text("View all results").font(t(13.0, 600.0)).color(white(0.85)).a11y_hidden()),
     );
-    Some(row().pin(Some(60.0), Some(140.0), None, None).child(list))
+    // SearchBar.tsx: 420 px wide, right-aligned 8 px under the search field, at most 70vh tall
+    // and scrolling. `anchored_fit` sizes it to the room below (or above) the field.
+    Some(
+        col().key("suggest").w(420.0).anchored_fit("search-bar", rune::Side::Bottom, rune::Align::End, 8.0)
+            .radius(14.0).fill(oklch(0.2, 0.02, 270.0)).shadow(8.0, 24.0, rune::oklcha(0.0, 0.0, 0.0, 0.4)).clip_rounded(14.0)
+            .child(col().w_full().shrink().min_h(0.0).scroll(ScrollSpec { stick_bottom: false }).child(list)),
+    )
 }
 
 pub fn sidebar(s: &App) -> El {
@@ -557,12 +563,49 @@ fn play_label(v: &View, source_name: &str) -> &'static str {
 }
 
 fn hero(title: &str, title_heading: bool, sub: &str, seed: u64, round: bool, actions: El) -> El {
+    hero_with(title, title_heading, text(sub.to_string()).font(t(13.0, 500.0)).color(white(0.6)), seed, round, actions)
+}
+
+fn hero_with(title: &str, title_heading: bool, sub: El, seed: u64, round: bool, actions: El) -> El {
     let h = ui::hue(Some(seed));
     let art = if round { ui::art(h, 180.0, seed, 0.0) } else { ui::tile(h, 180.0, seed, 14.0) };
     let title_el = if title_heading { heading(title, 30.0) } else { text(title.to_string()).font(t(30.0, 650.0)).color(white(0.95)) };
     row().w_full().gap(24.0).items_end()
         .child(art)
-        .child(col().gap(10.0).min_w(0.0).child(title_el).child(text(sub.to_string()).font(t(13.0, 500.0)).color(white(0.6))).child(actions))
+        .child(col().gap(10.0).min_w(0.0).child(title_el).child(sub).child(actions))
+}
+
+/// "Artist, Artist · 2013" under an album's title, each artist a link to their page, as the
+/// React header's TrackArtists (there clickable spans; here also reachable by keyboard and
+/// exposed as links).
+fn album_byline(a: &Value) -> El {
+    let d = data::data(a);
+    let mut artists: Vec<(u64, String)> = d["artists"].as_array().map(|xs| {
+        xs.iter().filter_map(|x| Some((x["id"].as_u64()?, x["name"].as_str()?.to_string()))).collect()
+    }).unwrap_or_default();
+    if artists.is_empty()
+        && let (Some(id), Some(name)) = (d["artist"]["id"].as_u64(), d["artist"]["name"].as_str())
+    {
+        artists.push((id, name.to_string()));
+    }
+    let dim = |s: &str| text(s.to_string()).font(t(13.0, 500.0)).color(white(0.6));
+    let mut r = row().items_center().min_w(0.0);
+    for (i, (aid, name)) in artists.into_iter().enumerate() {
+        if i > 0 {
+            r = r.child(dim(", "));
+        }
+        r = r.child(
+            text(name.clone()).font(t(13.0, 600.0)).color(white(0.85))
+                .key(format!("album-artist-{i}")).role("link").label(name).focusable(true).focus_ring(2.0, 2.0, white(0.6))
+                .cursor(rune::Cursor::Pointer)
+                .on_press(move |s: &mut App| go(s, Page::Artist(aid))),
+        );
+    }
+    let year = d["releaseDate"].as_str().unwrap_or("").get(..4).unwrap_or("").to_string();
+    if !year.is_empty() {
+        r = r.child(dim(&format!(" · {year}")));
+    }
+    r
 }
 
 fn play_buttons(v: &View, src_name: &str, play: Cmd, shuffle: Cmd) -> El {
@@ -589,8 +632,7 @@ fn album(id: u64, v: &View) -> El {
         .child(icon::<App>("album-fav", "Favorite album", G::Heart))
         .child(icon::<App>("album-share", "Share album", G::PopOut))
         .child(icon::<App>("album-more", "More options", G::List));
-    let sub = format!("{} · {}", data::artist_of(a), a["releaseDate"].as_str().unwrap_or("").get(..4).unwrap_or(""));
-    let mut c = col().w_full().gap(18.0).child(hero(&title, true, &sub, id, false, actions));
+    let mut c = col().w_full().gap(18.0).child(hero_with(&title, true, album_byline(a), id, false, actions));
     let mut rows = col().w_full().gap(2.0);
     for (i, tr) in tracks.iter().enumerate() {
         let (all, src, idx) = (tracks.clone(), json!({"type": "album", "id": id, "name": title}), i);

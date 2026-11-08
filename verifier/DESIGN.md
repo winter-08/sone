@@ -681,11 +681,15 @@ SONE as shipped and Rune (12 launches in ~25 minutes). Results:
 | Wheel scroll: frames/s, worst gap | 54, 35 ms | 115, 11 ms |
 | Dialog open/close: frames/s, worst gap | 43, 44 ms | 64, 10 ms |
 
-Port gaps found on the way (not fixed here):
-- Ctrl+A doesn't select the text in Rune's search field (the drivers clear it with Backspace).
-- The search suggestions dropdown is pinned at a fixed spot near the left, not under the
-  search field.
-- Rune's album page shows the artist as plain text; SONE links it.
+Found on the way:
+- Fixed: the search suggestions dropdown was pinned at a fixed spot near the left; it's now
+  `anchored_fit` under the search field, right-aligned, 420 pt wide, as SearchBar.tsx.
+- Fixed: Rune's album page showed the artist as plain text; each artist is now a link to their
+  page (SONE's TrackArtists spans are clickable but not accessible; waived as an extra control).
+- Not a Rune bug: Ctrl+A looked broken in the search field, but the harness's chords never
+  arrive unpaced (no wl_keyboard events at all), and paced ones reach Rune (which selects all)
+  but not WebKit. So the goldens never exercised select-all; see `channels/atspi.key`. The
+  drivers clear the field with Backspace.
 - Rune exposes only on-screen content to AT-SPI (AccessKit), so at 1400x900 a results page's
   lower sections can't be found by name (the verifier uses a 1400x2000 display for this).
 

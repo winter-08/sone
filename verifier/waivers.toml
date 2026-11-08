@@ -11,4 +11,7 @@ allow = [
   "slider: Position", "slider: Volume",
   # the Shortcuts/About dialogs' close button is unnamed in the reference
   "button: Close dialog",
+  # the album header's artist: a clickable span in the reference (TrackArtists), not exposed;
+  # the candidate makes it a keyboard-reachable link to the artist's page
+  "link: Fixture Artist",
 ]
