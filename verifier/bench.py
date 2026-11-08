@@ -41,8 +41,15 @@ def wrapper(rundir: str, binary: str, env: dict) -> str:
 
 def one(binary: str, env: dict, rundir: str, a, script: str) -> dict:
     out = os.path.join(rundir, "bench.json")
-    senv = {**os.environ, "SPIKE_SEED": json.dumps(BASE_PROFILE), "SPIKE_OUTPUT": a.display,
-            "SPIKE_REFRESH": str(a.refresh)}
+    profile = dict(BASE_PROFILE)
+    senv = {**os.environ, "SPIKE_OUTPUT": a.display, "SPIKE_REFRESH": str(a.refresh)}
+    if a.real_profile:
+        # a real account: its own tokens, the real network, no proxy; audio stays virtual
+        profile.pop("auth_tokens")
+        profile.pop("proxy")
+        senv.update({"SPIKE_NET": "1", "SPIKE_BENCH_REAL": "1", "SPIKE_BENCH_ALBUM": a.album,
+                     "SPIKE_PROFILE_DIR": os.path.abspath(a.real_profile)})
+    senv["SPIKE_SEED"] = json.dumps(profile)
     if a.gpu:
         senv["SPIKE_GPU"] = "1"
     if script == "frames.py":
@@ -136,6 +143,9 @@ def main():
     ap.add_argument("--display", default="1400x900")
     ap.add_argument("--refresh", type=int, default=60)
     ap.add_argument("--gpu", action="store_true")
+    ap.add_argument("--real-profile", help="a signed-in profile dir (bench/signin_real.py): benchmark a real account over the network")
+    ap.add_argument("--album", default="Random Access Memories", help="with --real-profile: the album to search for and play")
+    ap.add_argument("--pause", type=float, default=None, help="seconds between passes (default: 0, or 45 with --real-profile)")
     ap.add_argument("--out", default=os.path.join(ROOT, "runs", "bench-" + time.strftime("%Y%m%d-%H%M%S")))
     a = ap.parse_args()
     builds = {}  # label -> (binary, env)
@@ -149,12 +159,21 @@ def main():
         builds["SONE on Rune"] = (os.path.abspath(a.cand), {})
     names = list(builds)
     results = {k: [] for k in builds}
+    # A real account should look like one person using one app: one session at a time (passes
+    # never overlap and reuse the same signed-in device), a pause between launches, a couple of
+    # searches and two tracks started per pass, paused after seconds.
+    pause = a.pause if a.pause is not None else (45.0 if a.real_profile else 0.0)
+    first = True
     for i in range(a.runs):
         for n, (b, env) in builds.items():  # alternate, so drift hits every build equally
             slug = "".join(c if c.isalnum() else "-" for c in n.lower()).strip("-")
             rd = os.path.join(a.out, slug, f"run{i}")
             try:
+                if not first:
+                    time.sleep(pause)
+                first = False
                 r = flat(one(b, env, rd, a, "driver.py"))
+                time.sleep(pause)
                 r.update(flat(one(b, env, rd + "-frames", a, "frames.py"), "frames."))
                 results[n].append(r)
                 print(f"run {i + 1}/{a.runs} {n}: ok", flush=True)
@@ -182,15 +201,16 @@ def main():
     table = "\n".join(lines)
     print("\n" + table)
     os.makedirs(os.path.join(ROOT, "bench", "results"), exist_ok=True)
-    mode = f"{'gpu' if a.gpu else 'software'}-{a.refresh}hz"
+    mode = f"{'gpu' if a.gpu else 'software'}-{a.refresh}hz" + ("-real" if a.real_profile else "")
     stamp = time.strftime("%Y-%m-%d") + "-" + mode
     json.dump({"runs": results, "summary": summary, "sizes": sizes, "display": a.display, "n": a.runs,
                "gpu": a.gpu, "refresh": a.refresh, "builds": {n: {"bin": b, "env": e} for n, (b, e) in builds.items()}},
               open(os.path.join(ROOT, "bench", "results", f"{stamp}.json"), "w"), indent=1)
     render = "the machine's GPU" if a.gpu else "software rendering"
+    source = (f"a real TIDAL account over the network (album: {a.album})" if a.real_profile else "fake TIDAL")
     open(os.path.join(ROOT, "bench", "results", f"{stamp}.md"), "w").write(
         f"# Benchmark {stamp}\n\n{a.runs} runs per build, alternating; median (min–max). Display {a.display} "
-        f"at {a.refresh} Hz, {render}, fake TIDAL, virtual audio.\n\n" + table + "\n")
+        f"at {a.refresh} Hz, {render}, {source}, virtual audio.\n\n" + table + "\n")
 
 
 if __name__ == "__main__":

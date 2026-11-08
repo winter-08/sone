@@ -19,7 +19,9 @@ import sys
 import time
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from channels import atspi, mcp  # noqa: E402
+import targets  # noqa: E402
 
 LOG = os.path.join(os.environ["RUN"], "logs", "sone.log")
 MCP_URL = "http://127.0.0.1:5577/verifier/mcp"
@@ -81,23 +83,12 @@ def swaymsg(*a):
     subprocess.run(["swaymsg", *a], capture_output=True)
 
 
-def wait_control(name: str, timeout: float = 60.0):
-    t0 = time.monotonic()
-    while time.monotonic() - t0 < timeout:
-        try:
-            if name in atspi.controls():
-                return
-        except Exception:  # noqa: BLE001
-            pass
-        time.sleep(0.05)
-    raise TimeoutError(name)
-
-
 def main():
     out = {"refresh_hz": HZ}
     mcp.wait_ready(MCP_URL)
     atspi.wait_ready()
-    wait_control("heading: Fixture Albums")
+    targets.wait_control("button: Home", 60)
+    targets.wait_home(set(), 60)
     time.sleep(4)
     out["idle_fps"] = stats(window(lambda: None, 4), 4)["fps"]
 
@@ -126,11 +117,11 @@ def main():
     time.sleep(1)
 
     m = mcp.Mcp(MCP_URL).connect()
-    m.call("play_tracks", {"track_ids": [1001, 1002], "action": "play_now"})
+    t = targets.discover(m)
+    m.call("play_tracks", {"track_ids": t["tracks"], "action": "play_now"})
     time.sleep(2)
     out["playing_fps"] = stats(window(lambda: None, 5), 5)["fps"]
-    atspi.press("Fixture Album", "heading")  # the playing row's animated bars
-    wait_control("button: Favorite album")
+    targets.open_album(t)  # the playing row's animated bars
     time.sleep(2)
     out["playing_album"] = stats(window(lambda: None, 4), 4)
     m.call("pause")

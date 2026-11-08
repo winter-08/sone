@@ -12,13 +12,18 @@
 #   - everything in its own network namespace (loopback only) with host system bus, /run/user,
 #     nscd, /run/pulse and /dev/snd hidden
 # The driver gets SONE_PID, RUN, WAYLAND_DISPLAY and the same DBUS_SESSION_BUS_ADDRESS.
-# Env knobs: SPIKE_SEED (JSON merged into settings.json), SPIKE_STRACE=1 (trace connect()).
+# Env knobs: SPIKE_SEED (JSON merged into settings.json), SPIKE_STRACE=1 (trace connect()),
+#   SPIKE_GPU=1, SPIKE_REFRESH=Hz (see the compositor below), and for real-account runs:
+#   SPIKE_NET=1 (the host's network instead of loopback and the fake TIDAL; audio, the system
+#   bus and /dev/snd stay private) and SPIKE_PROFILE_DIR (a signed-in profile copied in: its
+#   sone.key and encrypted settings.json, never written to the logs).
 # Must run inside `nix-shell verifier/harness/shell.nix`.
 set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 RUN="$(realpath -m "$1")"; SONE_BIN="$2"; shift 2
 PROXY=1
 [[ "${1:-}" == "--no-proxy" ]] && { PROXY=0; shift; }
+if [[ -n "${SPIKE_NET:-}" ]]; then PROXY=0; fi
 [[ "${1:-}" == "--" ]] && shift
 
 if [[ -z "${SPIKE_INNER:-}" ]]; then
@@ -36,7 +41,9 @@ if [[ -z "${SPIKE_INNER:-}" ]]; then
   # the system PulseAudio and /dev/snd.
   hide=(--tmpfs /run/user --tmpfs /dev/snd)
   for d in /run/dbus /run/pulse /run/nscd; do [[ -d $d ]] && hide+=(--tmpfs "$d"); done
-  exec bwrap --dev-bind / / --unshare-net "${hide[@]}" --die-with-parent -- \
+  netns=(--unshare-net)
+  if [[ -n "${SPIKE_NET:-}" ]]; then netns=(); fi
+  exec bwrap --dev-bind / / "${netns[@]}" "${hide[@]}" --die-with-parent -- \
     env -i "${pass[@]}" SPIKE_INNER=1 \
     HOME="$RUN/home" XDG_CONFIG_HOME="$RUN/config" XDG_CACHE_HOME="$RUN/cache" \
     XDG_DATA_HOME="$RUN/data" XDG_RUNTIME_DIR="$(readlink -f "$RUN/runtime")" \
@@ -151,9 +158,19 @@ if [[ $PROXY == 1 ]]; then
          CURL_CA_BUNDLE="$RUN/ca-bundle.pem"
 fi
 
+if [[ -n "${SPIKE_NET:-}" && -f /etc/ssl/certs/ca-certificates.crt ]]; then
+  export SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt NIX_SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt
+fi
+
 # ---- profile seed (encrypted settings.json + sone.key), before first launch
+seed_log="$RUN/logs/seed.json"
+if [[ -n "${SPIKE_PROFILE_DIR:-}" ]]; then
+  mkdir -p "$XDG_CONFIG_HOME/sone"
+  cp "$SPIKE_PROFILE_DIR/sone.key" "$SPIKE_PROFILE_DIR/settings.json" "$XDG_CONFIG_HOME/sone/"
+  seed_log=/dev/null  # the decrypted settings hold real tokens
+fi
 if [[ -n "${SPIKE_SEED:-}" ]]; then
-  python3 -I "$HERE/seed_profile.py" seed "$XDG_CONFIG_HOME/sone" "$SPIKE_SEED" > "$RUN/logs/seed.json"
+  python3 -I "$HERE/seed_profile.py" seed "$XDG_CONFIG_HOME/sone" "$SPIKE_SEED" > "$seed_log"
 fi
 
 # ---- no real apps: xdg-open / $BROWSER only record what the app asked to open

@@ -651,6 +651,44 @@ Still to measure from L5: a 10k-track playlist, a 30-minute gapless underrun run
 real-account run (network, user signs in, virtual audio only). The verifier itself still runs
 in software at 60 Hz (34/34 pass with these changes).
 
+## Benchmark: a real TIDAL account (2026-11-08)
+
+The same GPU, 120 Hz benchmark against the real catalogue. `SPIKE_NET=1` gives the sandbox the
+host's network (no fake TIDAL, no proxy) while audio, the system bus and `/dev/snd` stay private:
+playback goes bit-perfect into the virtual capture device, never to a real card.
+`bench/signin_real.py` runs SONE's device-code sign-in once (the account owner approves the link
+in their own browser; nothing types a password) and saves the profile (`sone.key` + encrypted
+`settings.json`); `SPIKE_PROFILE_DIR` copies it into every run and keeps the decrypted settings
+out of the logs. `bench.py --real-profile DIR [--album TITLE]`; `bench/targets.py` searches the
+album over MCP, then the drivers reach it through the UI: search from Home (timed to the first
+result), the Albums tab (on "All", a playlist of the same name can come first), the album
+(timed to its Shuffle button, present whether or not it's a favourite). No artist page: a real
+"Daft Punk" is also an album title, and Rune's album page doesn't link the artist yet.
+
+To stay ordinary account activity: one app session at a time on the same signed-in device, 45 s
+between launches, one search, one album and a few seconds of two tracks per pass, three runs of
+SONE as shipped and Rune (12 launches in ~25 minutes). Results:
+`bench/results/2026-11-08-gpu-120hz-real.{md,json}` (album: Random Access Memories).
+
+| Metric | SONE as shipped | SONE on Rune |
+|---|---|---|
+| Startup, Home content shown | 4.42 s | 2.16 s |
+| Memory idle / playing (PSS) | 380 / 547 MB | 165 / 229 MB |
+| CPU idle | 0.6 % | 0.2 % |
+| CPU playing, on Home | 4.1 % | 1.3 % |
+| CPU playing, album page (bars animating) | 40.7 % at 64 fps | 11.4 % at 123 fps |
+| Search to first result / open album | 0.85 / 0.98 s | 0.60 / 0.40 s |
+| Wheel scroll: frames/s, worst gap | 54, 35 ms | 115, 11 ms |
+| Dialog open/close: frames/s, worst gap | 43, 44 ms | 64, 10 ms |
+
+Port gaps found on the way (not fixed here):
+- Ctrl+A doesn't select the text in Rune's search field (the drivers clear it with Backspace).
+- The search suggestions dropdown is pinned at a fixed spot near the left, not under the
+  search field.
+- Rune's album page shows the artist as plain text; SONE links it.
+- Rune exposes only on-screen content to AT-SPI (AccessKit), so at 1400x900 a results page's
+  lower sections can't be found by name (the verifier uses a 1400x2000 display for this).
+
 ## Build order
 
 1. ~~Spikes~~, ~~sandbox completion~~, ~~harness v0~~, ~~port slice 1 (playback core)~~,

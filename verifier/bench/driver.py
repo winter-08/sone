@@ -7,7 +7,8 @@ reference), from /proc only:
   - memory: RSS and PSS of the tree, idle on Home, after browsing, while playing
   - cpu: CPU seconds used by the tree over a 10 s window: idle, while playing (on the search
     results page), and while playing on the playing track's album (its animated "playing" bars)
-  - latency: press -> the next page's content is exposed (album, artist, search results)
+  - latency: press -> the next page's content is exposed (album, artist, search results);
+    the pages come from bench/targets.py (fixtures, or a real catalogue)
 """
 import json
 import os
@@ -15,7 +16,9 @@ import sys
 import time
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from channels import atspi, mcp  # noqa: E402
+import targets  # noqa: E402
 
 PID = int(os.environ["SONE_PID"])
 TICK = os.sysconf("SC_CLK_TCK")
@@ -122,7 +125,7 @@ def main():
         time.sleep(0.02)
     wait_control("button: Home", 60)
     out["startup_ui_s"] = round(time.monotonic() - t_launch, 2)
-    wait_control("heading: Fixture Albums", 60)
+    targets.wait_home(set(), 60)
     out["startup_home_s"] = round(time.monotonic() - t_launch, 2)
     root = app_root()
 
@@ -130,34 +133,38 @@ def main():
     out["idle_home"] = mem(root)
     out["idle_cpu_pct"] = cpu_window(root)
 
+    m = mcp.Mcp(MCP_URL).connect()
+    t = targets.discover(m)
     lat = {}
-    atspi.press("Fixture Album", "heading")
-    lat["open_album_s"] = round(wait_control("button: Favorite album"), 3)
-    atspi.press("Home")
-    wait_control("heading: Fixture Albums")
-    atspi.press("Mock Ensemble", "heading")
-    lat["open_artist_s"] = round(wait_control("button: Follow"), 3)
-    atspi.focus("Search", "entry")
-    time.sleep(0.2)
-    atspi.type_text("fixture")
-    atspi.press("View all results")
-    lat["search_results_s"] = round(wait_control('heading: Results for "fixture"'), 3)
+    if targets.REAL:
+        # from Home: search, then open the album from the results (we stay on its page)
+        lat["search_results_s"] = round(targets.search(t["search"], t["album"]), 3)
+        lat["open_album_s"] = round(targets.press_album(t), 3)
+    else:
+        lat["open_album_s"] = round(targets.open_album(t), 3)
+        lat["open_artist_s"] = round(targets.open_artist(t), 3)
+        lat["search_results_s"] = round(targets.search(t["search"]), 3)
     out["latency"] = lat
     time.sleep(3)
     out["after_browsing"] = mem(root)
 
-    m = mcp.Mcp(MCP_URL).connect()
-    m.call("play_tracks", {"track_ids": [1001, 1002], "action": "play_now"})
+    m.call("play_tracks", {"track_ids": t["tracks"], "action": "play_now"})
     time.sleep(2)
-    out["playing_cpu_pct"] = cpu_window(root)
-    out["playing"] = mem(root)
-    # the playing track's album: its row shows the animated "playing" bars
-    atspi.press("Home")
-    wait_control("heading: Fixture Albums")
-    atspi.press("Fixture Album", "heading")
-    wait_control("button: Favorite album")
-    time.sleep(2)
-    out["playing_album_cpu_pct"] = cpu_window(root)
+    if targets.REAL:
+        # on the album page already: its playing row's bars, then Home
+        out["playing_album_cpu_pct"] = cpu_window(root)
+        atspi.press("Home")
+        targets.wait_home(set(), 30)
+        time.sleep(2)
+        out["playing_cpu_pct"] = cpu_window(root)
+        out["playing"] = mem(root)
+    else:
+        out["playing_cpu_pct"] = cpu_window(root)
+        out["playing"] = mem(root)
+        # the playing track's album: its row shows the animated "playing" bars
+        targets.open_album(t)
+        time.sleep(2)
+        out["playing_album_cpu_pct"] = cpu_window(root)
     m.call("pause")
     json.dump(out, open(sys.argv[1], "w"), indent=1)
 
