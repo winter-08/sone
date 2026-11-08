@@ -186,6 +186,16 @@ fn track_row_with(key: String, n: usize, tr: &Value, actions: bool, on_play: imp
     let d = data::data(tr);
     let title = d["title"].as_str().unwrap_or("").to_string();
     let dur = d["duration"].as_u64().unwrap_or(0);
+    // The React TrackList: the playing row shows the bouncing bars in place of its number, and
+    // the current track's number and title take the accent colour.
+    let (current_id, playing) = controller::now_playing();
+    let active = current_id.is_some() && d["id"].as_u64() == current_id;
+    let accent = oklch(0.82, 0.11, ui::hue(current_id));
+    let number: El = if active && playing {
+        el().w(22.0).child(ui::eq(true, &key))
+    } else {
+        text(format!("{n}")).font(ui::tnum(t(12.0, 500.0))).color(if active { accent } else { white(0.45) }).w(22.0)
+    };
     // Rows aren't accessible nodes in the React build either; their action buttons are.
     let mut r = row()
         .key(key.clone())
@@ -199,12 +209,12 @@ fn track_row_with(key: String, n: usize, tr: &Value, actions: bool, on_play: imp
         .hover(white(0.05))
         .cursor(rune::Cursor::Pointer)
         .on_press(on_play)
-        .child(text(format!("{n}")).font(ui::tnum(t(12.0, 500.0))).color(white(0.45)).w(22.0))
+        .child(number)
         .child(
             col()
                 .grow(1.0)
                 .min_w(0.0)
-                .child(text(title).font(t(14.0, 500.0)).color(white(0.95)).truncate())
+                .child(text(title).font(t(14.0, 500.0)).color(if active { accent } else { white(0.95) }).truncate())
                 .child(text(data::artist_of(tr)).font(t(12.0, 400.0)).color(white(0.55)).truncate()),
         );
     if actions {
@@ -435,7 +445,7 @@ pub fn sidebar(s: &App) -> El {
                     .child(text("Show all").font(t(12.0, 600.0)).color(white(0.6)).a11y_hidden())),
         )
         .child(row().gap(6.0).child(tab("tab-pl", "Playlists", LibTab::Playlists)).child(tab("tab-al", "Albums", LibTab::Albums)).child(tab("tab-ar", "Artists", LibTab::Artists)).child(tab("tab-mx", "Mixes", LibTab::Mixes)))
-        .child(col().key("lib-scroll").grow(1.0).min_h(0.0).w_full().scroll(ScrollSpec { stick_bottom: false }).child(list))
+        .child(ui::smooth_wheel::<App>(col().grow(1.0).min_h(0.0).w_full().scroll(ScrollSpec { stick_bottom: false }).child(list), "lib-scroll".into()))
 }
 
 fn lib_row(key: &str, label: &str, title: &str, sub: &str, seed: u64, page: Option<Page>) -> El {
@@ -502,7 +512,7 @@ pub fn page(s: &App, v: &View) -> El {
     };
     // `.cache()`: without it Rune culls content outside the viewport, from paint and from the
     // accessibility tree, so screen readers (and the verifier) would miss everything below the fold.
-    col().key(format!("page-{:?}", s.nav.page)).grow(1.0).min_h(0.0).w_full().scroll(ScrollSpec { stick_bottom: false }).child(col().w_full().px(28.0).py(20.0).gap(18.0).cache().child(body))
+    ui::smooth_wheel::<App>(col().grow(1.0).min_h(0.0).w_full().scroll(ScrollSpec { stick_bottom: false }).child(col().w_full().px(28.0).py(20.0).gap(18.0).cache().child(body)), format!("page-{:?}", s.nav.page))
 }
 
 fn home() -> El {
@@ -900,7 +910,7 @@ pub fn settings_modal(s: &App) -> Option<El> {
         return None;
     }
     let panel = col().key("settings-modal").w(860.0).h(620.0).padding(24.0).radius(18.0).fill(oklch(0.17, 0.02, 270.0)).shadow(10.0, 40.0, rune::oklcha(0.0, 0.0, 0.0, 0.5))
-        .child(col().grow(1.0).min_h(0.0).w_full().scroll(ScrollSpec { stick_bottom: false }).child(settings_page(s)));
+        .child(ui::smooth_wheel::<App>(col().grow(1.0).min_h(0.0).w_full().scroll(ScrollSpec { stick_bottom: false }).child(settings_page(s)), "settings-scroll".into()));
     Some(row().pin(Some(0.0), Some(0.0), Some(0.0), Some(0.0)).items_center().justify_center().fill(rune::oklcha(0.0, 0.0, 0.0, 0.45)).child(panel))
 }
 
@@ -1105,7 +1115,7 @@ pub fn drawer(s: &App, v: &View) -> Option<El> {
     }
     Some(col().key("drawer").w(360.0).h_full().padding(16.0).gap(12.0).fill(oklch(0.14, 0.02, 270.0))
         .child(head)
-        .child(col().key("drawer-scroll").grow(1.0).min_h(0.0).w_full().scroll(ScrollSpec { stick_bottom: false }).child(body)))
+        .child(ui::smooth_wheel::<App>(col().grow(1.0).min_h(0.0).w_full().scroll(ScrollSpec { stick_bottom: false }).child(body), "drawer-scroll".into())))
 }
 
 /// Synced (LRC) lines as (seconds, text); plain lyrics as untimed lines.

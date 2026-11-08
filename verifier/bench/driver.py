@@ -5,7 +5,8 @@ Measures the app's whole process tree (WebKit's web and network processes count 
 reference), from /proc only:
   - startup: launch -> backend up (MCP answers), UI exposed (AT-SPI), Home content shown
   - memory: RSS and PSS of the tree, idle on Home, after browsing, while playing
-  - cpu: CPU seconds used by the tree over a 10 s window, idle and while playing
+  - cpu: CPU seconds used by the tree over a 10 s window: idle, while playing (on the search
+    results page), and while playing on the playing track's album (its animated "playing" bars)
   - latency: press -> the next page's content is exposed (album, artist, search results)
 """
 import json
@@ -114,7 +115,10 @@ def main():
         except Exception:  # noqa: BLE001
             time.sleep(0.02)
     out["startup_backend_s"] = round(time.monotonic() - t_launch, 2)
+    t0 = time.monotonic()
     while atspi.app() is None:
+        if time.monotonic() - t0 > 60:
+            raise TimeoutError("the app never appeared on the accessibility bus")
         time.sleep(0.02)
     wait_control("button: Home", 60)
     out["startup_ui_s"] = round(time.monotonic() - t_launch, 2)
@@ -147,6 +151,13 @@ def main():
     time.sleep(2)
     out["playing_cpu_pct"] = cpu_window(root)
     out["playing"] = mem(root)
+    # the playing track's album: its row shows the animated "playing" bars
+    atspi.press("Home")
+    wait_control("heading: Fixture Albums")
+    atspi.press("Fixture Album", "heading")
+    wait_control("button: Favorite album")
+    time.sleep(2)
+    out["playing_album_cpu_pct"] = cpu_window(root)
     m.call("pause")
     json.dump(out, open(sys.argv[1], "w"), indent=1)
 

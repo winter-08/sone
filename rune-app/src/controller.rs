@@ -88,7 +88,7 @@ pub enum Login {
     Failed(String),
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct QItem {
     pub id: u64,
     pub title: String,
@@ -97,7 +97,7 @@ pub struct QItem {
 }
 
 /// What the window draws. A snapshot, replaced after every controller message.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct View {
     pub track_id: Option<u64>,
     pub title: String,
@@ -147,21 +147,36 @@ pub fn bump() {
 }
 
 static SHOWN_SECOND: AtomicU64 = AtomicU64::new(u64::MAX);
+static TICKS: AtomicU64 = AtomicU64::new(0);
 
-pub fn version() -> u64 {
-    // While playing, redraw only when the displayed second changes (the clock and seek bar
-    // show whole seconds); redrawing every poll cost a full frame each time.
+/// Changes a window should redraw for: (controller state, playback clock ticks).
+///
+/// While playing, the clock ticks only when the displayed second changes (the time label and
+/// seek bar show whole seconds); redrawing every poll cost a full frame each time. Ticks are
+/// counted apart from state changes so a window can land a tick without animation (a seek bar
+/// spring re-run every second keeps the window drawing) while a seek or a new track glides.
+pub fn versions() -> (u64, u64) {
     if view_playing() {
         let sec = POSITION.get().map(|p| p.lock().unwrap().interpolated() as u64).unwrap_or(0);
         if SHOWN_SECOND.swap(sec, Ordering::Relaxed) != sec {
-            VERSION.fetch_add(1, Ordering::Relaxed);
+            TICKS.fetch_add(1, Ordering::Relaxed);
         }
     }
-    VERSION.load(Ordering::Relaxed)
+    (VERSION.load(Ordering::Relaxed), TICKS.load(Ordering::Relaxed))
+}
+
+pub fn version() -> u64 {
+    let (state, ticks) = versions();
+    state.wrapping_add(ticks)
 }
 
 fn view_playing() -> bool {
     VIEW.get().map(|v| v.lock().unwrap().playing).unwrap_or(false)
+}
+
+/// The current track's id and whether it's playing, without cloning the whole view.
+pub fn now_playing() -> (Option<u64>, bool) {
+    VIEW.get().map(|v| { let v = v.lock().unwrap(); (v.track_id, v.playing) }).unwrap_or((None, false))
 }
 
 /// The streaming quality ceiling, read from the backend (it owns the setting).
@@ -1890,8 +1905,21 @@ impl Player {
             // With the stream gone (track ended), the React badge shows the track's tier.
             badge: badge_text(&self.stream_info).or_else(|| self.current.as_ref().and_then(|t| tier(t["audioQuality"].as_str()).map(str::to_string))),
         };
-        *VIEW.get_or_init(Default::default).lock().unwrap() = v;
-        VERSION.fetch_add(1, Ordering::Relaxed);
+        // Signal windows only when something they draw changed. The controller republishes on
+        // every backend event (position syncs among them), and each signal is an animated
+        // commit; the clock itself advances through `versions()`' ticks. A position that jumps
+        // from where the clock would be by now (a seek, a restart) counts as a change.
+        static LAST: Mutex<Option<(f64, std::time::Instant, bool)>> = Mutex::new(None);
+        let mut last = LAST.lock().unwrap();
+        let expected = last.map(|(p, at, playing)| if playing { p + at.elapsed().as_secs_f64() } else { p });
+        let jumped = expected.is_none_or(|e| (v.position - e).abs() > 1.0);
+        *last = Some((v.position, std::time::Instant::now(), v.playing));
+        let mut cur = VIEW.get_or_init(Default::default).lock().unwrap();
+        let changed = jumped || View { position: 0.0, ..cur.clone() } != View { position: 0.0, ..v.clone() };
+        *cur = v;
+        if changed {
+            VERSION.fetch_add(1, Ordering::Relaxed);
+        }
     }
 }
 

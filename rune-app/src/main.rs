@@ -36,13 +36,16 @@ pub fn set_mini(open: bool) {
 }
 
 struct Mini {
-    seen: u64,
+    seen: (u64, u64),
 }
 
 fn mini_poll(s: &mut Mini, _: f64, tx: &mut Tx) -> bool {
-    let v = controller::version();
+    let v = controller::versions();
     tx.wake_after(Duration::from_millis(150));
     let changed = v != s.seen;
+    if changed && (v.0 == s.seen.0 || ui::dragging()) {
+        tx.instant(); // a clock tick lands at once, as in the main window
+    }
     s.seen = v;
     changed
 }
@@ -70,7 +73,7 @@ pub fn host() -> &'static AppHandle {
 }
 
 pub struct App {
-    seen: (u64, u64),
+    seen: (u64, u64, u64),
     pub nav: views::Nav,
 }
 
@@ -86,9 +89,14 @@ fn poll(s: &mut App, _: f64, tx: &mut Tx) -> bool {
     if s.nav.suggest_due.is_some() || s.nav.discord_due.is_some() || s.nav.proxy_due.is_some() {
         tx.wake_after(Duration::from_millis(50));
     }
-    let v = (controller::version(), data::version());
+    let (state, ticks) = controller::versions();
+    let v = (state, ticks, data::version());
     tx.wake_after(Duration::from_millis(200));
     let changed = v != s.seen;
+    // A clock tick (or a seek bar drag) lands at once; a seek, a new track or new data animate.
+    if changed && ((state, v.2) == (s.seen.0, s.seen.2) || ui::dragging()) {
+        tx.instant();
+    }
     s.seen = v;
     changed
 }
@@ -166,7 +174,7 @@ fn main() {
         families: ("Inter", "ui-monospace"),
         poll: Some(poll),
         on_key: Some(on_key),
-        ..AppSpec::new("SONE", initial_size(), || App { seen: (0, 0), nav: views::Nav::default() }, view)
+        ..AppSpec::new("SONE", initial_size(), || App { seen: (0, 0, 0), nav: views::Nav::default() }, view)
     };
     let mut app = rune::App::new(spec);
     let mini_spec = AppSpec::<Mini> {
@@ -174,7 +182,7 @@ fn main() {
         families: ("Inter", "ui-monospace"),
         poll: Some(mini_poll),
         min_size: Some((380.0, 150.0)),
-        ..AppSpec::new("SONE Miniplayer", (420.0, 160.0), || Mini { seen: 0 }, mini_view)
+        ..AppSpec::new("SONE Miniplayer", (420.0, 160.0), || Mini { seen: (0, 0) }, mini_view)
     };
     let options = rune::WindowOptions { always_on_top: true, resizable: false, visible: false, ..Default::default() };
     let mini_app = rune::App::new(mini_spec).on_close(|_, _| MINI_OPEN.store(false, std::sync::atomic::Ordering::Relaxed));

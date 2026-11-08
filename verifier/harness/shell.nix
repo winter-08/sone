@@ -8,9 +8,12 @@ let
     p.pygobject3
     p.dbus-python
     p.numpy
+    p.pywayland
   ]);
 in
 pkgs.mkShell {
+  # bench/wheel.py generates its virtual-pointer bindings from this XML
+  SPIKE_WLR_PROTOCOLS = "${pkgs.wlr-protocols}/share/wlr-protocols";
   packages = [
     py
     pkgs.at-spi2-core

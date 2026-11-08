@@ -72,8 +72,12 @@ python3 -I "$HERE/../channels/tray.py" watcher > "$RUN/logs/tray.log" 2>&1 &
 # ---- headless compositor
 # Display size (SPIKE_OUTPUT, verify.py --display). AccessKit (Rune) hides scroll content outside
 # the viewport from AT-SPI and exposes no scroll action, so Rune builds are scored on a tall display.
-printf 'output HEADLESS-1 resolution %s\ndefault_border none\n' "${SPIKE_OUTPUT:-1400x900}" > "$RUN/sway.conf"
-WLR_BACKENDS=headless WLR_RENDERER=pixman WLR_LIBINPUT_NO_DEVICES=1 \
+# SPIKE_REFRESH (Hz) sets the output's refresh rate; SPIKE_GPU=1 renders on the machine's GPU
+# (compositor, WebKit and Rune) instead of in software.
+printf 'output HEADLESS-1 mode --custom %s@%sHz\ndefault_border none\n' "${SPIKE_OUTPUT:-1400x900}" "${SPIKE_REFRESH:-60}" > "$RUN/sway.conf"
+if [[ -n "${SPIKE_GPU:-}" ]]; then wlr_renderer=vulkan; else wlr_renderer=pixman; fi
+if [[ -n "${SPIKE_GPU:-}" ]]; then export WLR_RENDER_DRM_DEVICE=/dev/dri/renderD128; fi
+WLR_BACKENDS=headless WLR_RENDERER=$wlr_renderer WLR_LIBINPUT_NO_DEVICES=1 \
   sway -c "$RUN/sway.conf" > "$RUN/logs/sway.log" 2>&1 &
 wait_for 'ls "$XDG_RUNTIME_DIR"/wayland-?'
 export WAYLAND_DISPLAY="$(basename "$(ls "$XDG_RUNTIME_DIR"/wayland-? | head -1)")"
@@ -163,8 +167,11 @@ done
 export PATH="$RUN/bin:$PATH" BROWSER="$RUN/bin/xdg-open"
 
 # ---- SONE
-# The headless compositor has no GPU: WebKit renders in software, Rune uses lavapipe.
-export WEBKIT_DISABLE_DMABUF_RENDERER=1 LIBGL_ALWAYS_SOFTWARE=1 GDK_BACKEND=wayland RUST_LOG=info SONE_SOFTWARE_VULKAN=1
+# Without SPIKE_GPU the compositor has no GPU: WebKit renders in software, Rune uses lavapipe.
+export GDK_BACKEND=wayland RUST_LOG=info
+if [[ -z "${SPIKE_GPU:-}" ]]; then
+  export WEBKIT_DISABLE_DMABUF_RENDERER=1 LIBGL_ALWAYS_SOFTWARE=1 SONE_SOFTWARE_VULKAN=1
+fi
 # Rune builds: open at the display size (Rune keeps a window's first bounds for AccessKit).
 export SONE_WINDOW_SIZE="${SPIKE_OUTPUT:-1400x900}"
 launch=("$SONE_BIN")

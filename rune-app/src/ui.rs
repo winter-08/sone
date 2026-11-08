@@ -99,14 +99,29 @@ pub fn slider<S: 'static>(key: &str, label: &str, w: f32, h: f32, frac: f32, val
         .focusable(true)
         .focus_ring(2.0, 2.0, white(0.6))
         .on_step(move |_: &mut S, dir, _| send(set((frac + dir as f32 * 0.03).clamp(0.0, 1.0))))
-        .on_drag(move |_: &mut S, d, _| send(set((d.x / d.w).clamp(0.0, 1.0))))
+        .on_drag(move |_: &mut S, d, tx| {
+            // the fill follows the pointer exactly; a click or a key glides (see main::poll)
+            DRAG_AT.with(|t| t.set(Some(std::time::Instant::now())));
+            tx.instant();
+            send(set((d.x / d.w).clamp(0.0, 1.0)))
+        })
         .cursor(rune::Cursor::Pointer)
         .w(w)
         .h(24.0)
         .justify_center()
-        // Spring::NONE: the fill moves every second while playing; a layout spring on it would
-        // keep the window redrawing at frame rate (measured: 50 fps, ~2.4 cores on lavapipe).
-        .child(el().w_full().h(h).radius(h / 2.0).fill(white(0.18)).child(el().absolute(0.0, 0.0).h(h).w_frac(frac).radius(h / 2.0).fill(white(0.9)).motion(Spring::NONE)))
+        // The fill glides on a short spring when a seek, a click or a new track moves it; the
+        // playback clock's once-a-second ticks land at once (main::poll), so playing draws one
+        // frame a second instead of running a spring all the time.
+        .child(el().w_full().h(h).radius(h / 2.0).fill(white(0.18)).child(el().absolute(0.0, 0.0).h(h).w_frac(frac).radius(h / 2.0).fill(white(0.9)).motion(Spring::new(0.12, 0.0))))
+}
+
+thread_local! {
+    static DRAG_AT: std::cell::Cell<Option<std::time::Instant>> = const { std::cell::Cell::new(None) };
+}
+
+/// Whether a slider was dragged in the last quarter second.
+pub fn dragging() -> bool {
+    DRAG_AT.with(|t| t.get().is_some_and(|t| t.elapsed().as_millis() < 250))
 }
 
 pub fn seek<S: 'static>(v: &View, key: &str, w: f32, h: f32) -> El {
@@ -123,14 +138,37 @@ pub fn volume<S: 'static>(v: &View, key: &str, w: f32) -> El {
 }
 
 /// Three bars that bounce while playing: the "this one is playing" mark in a track list.
-pub fn eq(v: &View) -> El {
-    let l = (v.position * 1.7) as f32;
-    let mut r = row().size(16.0, 14.0).gap(2.0).items_end().a11y_hidden();
-    for (i, k) in [0.7f32, 1.0, 0.55].iter().enumerate() {
-        let h = if v.playing { 3.0 + 11.0 * (l * k + i as f32 * 0.13).fract().max(0.15) } else { 3.0 };
-        r = r.child(el().w(4.0).h(h).radius(1.0).fill(white(0.92)));
+///
+/// SONE's bars are a CSS loop (`barBounce`: scaleY 0.4 -> 1 -> 0.4 every second, ease-in-out,
+/// the bars 0.2 s apart). Here each bar is a renderer-owned [`rune::Sequence`] of scale
+/// beats on the same curve, drawn at the display's rate with no view rebuilds, layout or app
+/// wakeups. A sequence scales uniformly, so each bar is a wide block scaled about its centre
+/// inside a 3 pt clip: only its height shows the scale. (An opacity `Cycle` would be wall-clock
+/// too, but it wakes on a timer, which landed every other 120 Hz frame.) `key` must be unique
+/// and stable for the row: a new key restarts the bounce.
+pub fn eq(playing: bool, key: &str) -> El {
+    const H: f32 = 16.0;
+    let mut r = row().size(15.0, H).gap(3.0).items_center().a11y_hidden();
+    for bar in 0..3 {
+        let clip = col().w(3.0).h(H).clip_rounded(1.5).justify_center();
+        let fill = el().absolute(-13.5, 0.0).w(30.0).h(H).fill(white(0.92));
+        r = r.child(if playing {
+            let seq = rune::Sequence::new(eq_beats()).delay(bar as f64 * 0.2);
+            clip.child(fill.key(format!("{key}-eq{bar}")).sequence(seq)) // beat 0 (0.4) holds through the delay
+        } else {
+            clip.child(fill.scale(0.4)) // paused: at rest, at their smallest
+        });
     }
     r
+}
+
+/// `barBounce` as beats: 0.4 at each whole second, 1.0 at each half, eased in and out between.
+/// A sequence is finite and holds its last pose, so this runs for an hour of play per mount.
+fn eq_beats() -> &'static [rune::Beat] {
+    static BEATS: std::sync::OnceLock<Vec<rune::Beat>> = std::sync::OnceLock::new();
+    BEATS.get_or_init(|| {
+        (0..=7200).map(|i| rune::Beat::new(i as f64 * 0.5).scale(if i % 2 == 0 { 0.4 } else { 1.0 })).collect()
+    })
 }
 
 pub fn transport<S: 'static>(v: &View, prefix: &str, play_size: f32) -> El {
@@ -220,7 +258,7 @@ pub fn nowbar<S: 'static>(v: &View, extras: El) -> El {
 
 /// One row of the queue.
 pub fn track_row<S: 'static>(v: &View, key: String, n: usize, item: &QItem, current: bool, play: impl Fn(&mut S) + 'static) -> El {
-    let num: El = if current { eq(v) } else { text(format!("{n}")).font(tnum(t(13.0, 500.0))).color(white(0.45)) };
+    let num: El = if current { eq(v.playing, &key) } else { text(format!("{n}")).font(tnum(t(13.0, 500.0))).color(white(0.45)) };
     row()
         .key(key)
         .role("button")
@@ -251,4 +289,62 @@ pub fn track_row<S: 'static>(v: &View, key: String, n: usize, item: &QItem, curr
 
 pub fn section(title: &str) -> El {
     row().items_center().child(text(title).font(t(20.0, 650.0)).color(white(0.95))).role("heading").label(title).child(spacer())
+}
+
+// ---- smooth wheel scrolling
+//
+// Rune moves a notched mouse wheel's line steps at once (40 pt a notch) and leaves smoothing to
+// the app (`WheelEvent::precise`). Here a notch glides instead: each one moves the glide's
+// target, and `Tx::scroll_to_with` keeps the running glide's speed, so a spin of the wheel is one
+// continuous motion at the display's rate, like WebKit's smooth scrolling. Trackpads and
+// free-spinning wheels (precise deltas) scroll as Rune does.
+
+struct WheelGlide {
+    offset: f32,
+    max: f32,
+    target: Option<f32>,
+    last: std::time::Instant,
+}
+
+thread_local! {
+    static GLIDES: std::cell::RefCell<std::collections::HashMap<String, WheelGlide>> = Default::default();
+}
+
+const WHEEL_SPRING: Spring = Spring::new(0.22, 0.0);
+
+/// A scroll viewport keyed `key` whose notched-wheel scrolling glides.
+pub fn smooth_wheel<S: 'static>(e: El, key: String) -> El {
+    let (k_offset, k_wheel) = (key.clone(), key.clone());
+    e.key(key)
+        .on_scroll_offset(move |p| {
+            GLIDES.with(|g| {
+                let mut g = g.borrow_mut();
+                let st = g.entry(k_offset.clone()).or_insert(WheelGlide {
+                    offset: 0.0, max: 0.0, target: None, last: std::time::Instant::now() });
+                st.offset = p.offset[1];
+                st.max = p.max[1];
+                if st.target.is_some_and(|t| (t - p.offset[1]).abs() < 0.5) {
+                    st.target = None;
+                }
+            })
+        })
+        .on_wheel(move |_: &mut S, ev, tx| {
+            if ev.precise || ev.dy == 0.0 || ev.mods.ctrl || ev.mods.cmd {
+                return false;
+            }
+            GLIDES.with(|g| {
+                let mut g = g.borrow_mut();
+                let Some(st) = g.get_mut(&k_wheel) else { return false };
+                // A glide left over from a while ago (or overtaken by a drag) restarts from here.
+                let from = match st.target {
+                    Some(t) if st.last.elapsed().as_secs_f32() < 0.4 => t,
+                    _ => st.offset,
+                };
+                let to = (from - ev.dy).clamp(0.0, st.max);
+                st.target = Some(to);
+                st.last = std::time::Instant::now();
+                tx.scroll_to_with(k_wheel.clone(), 0.0, to, WHEEL_SPRING);
+                true
+            })
+        })
 }

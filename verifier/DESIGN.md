@@ -591,13 +591,65 @@ Results: `verifier/bench/results/2026-11-08.{md,json}`.
 Finding: the first run showed Rune at **320 % of a core while playing**. Counting
 `wl_surface.commit` with `WAYLAND_DEBUG` showed the main window presenting at 50 fps whenever a
 track played (0 fps idle). Bisecting the now-playing bar pinned it to the seek slider: its fill's
-`w_frac` changes every second, and the inherited layout spring kept animating, so every frame
-scheduled another. `.motion(Spring::NONE)` on the fill (and dropping springs on the eq bars and
-the cover rotation), plus bumping the view version only when the shown second changes, brings it
-to ~1.6 fps and 27 % CPU. Lesson for the port: anything that changes on a timer must opt out of
-motion, and a frame counter belongs in the budget checks. Still to measure from L5: frame time
-while scrolling, a 10k-track playlist, a 30-minute gapless underrun run, and a real-account run
-(network, user signs in, virtual audio only).
+`w_frac` changed on every poll and its layout spring never settled. The first fix took the
+springs off (the seek fill, the eq bars, the cover rotation), which brought it to ~1.6 fps and
+27 % CPU; the GPU work below restores those animations properly. Lesson for the port: anything
+that changes on a timer must not re-run motion, and a frame counter belongs in the budget checks.
+
+## Benchmark: GPU at 120 Hz, with frame pacing (2026-11-08)
+
+Rune is a GPU framework, and the software numbers above mostly measure lavapipe. The sandbox
+now takes `SPIKE_GPU=1` (sway's Vulkan renderer on the render node; WebKit and Rune on the
+machine's NVIDIA GPU; `/dev/snd` stays hidden) and `SPIKE_REFRESH` (the headless output's
+refresh rate). `bench.py --gpu --refresh 120` runs any number of builds (`--build
+"LABEL=BIN,VAR=VALUE"`), each run in two passes: `bench/driver.py` (memory, CPU, latency) and
+`bench/frames.py` (presented frames from the `WAYLAND_DEBUG` log: idle, playing, playing with the
+animated bars on screen, a scripted wheel scroll, opening and closing a dialog). The wheel is a
+persistent wlr virtual pointer (`bench/wheel.py`, pywayland); one-shot tools lose the axis events.
+
+Two references, because SONE itself sets `WEBKIT_DISABLE_DMABUF_RENDERER=1` when it sees NVIDIA
+("to avoid WebKitGTK GBM allocation failure"): **SONE as it ships** on this machine (WebKit's
+GPU renderer off), and **SONE with it forced on** (`WEBKIT_DISABLE_DMABUF_RENDERER=0`, which
+works here). Five alternating runs, medians. Results: `bench/results/2026-11-08-gpu-120hz.{md,json}`.
+
+| Metric | SONE as shipped | SONE, WebKit GPU forced | SONE on Rune |
+|---|---|---|---|
+| Startup, Home content shown | 2.29 s | 2.22 s | 2.08 s |
+| Memory idle (PSS) | 350 MB, 3 processes | 489 MB | 127 MB, 1 process |
+| Memory while playing (PSS) | 479 MB | 582 MB | 164 MB |
+| CPU idle | 0.5 % | 0.4 % | 0.2 % |
+| CPU while playing (includes starting playback) | 16.3 % | 39.4 % | 8.3 % |
+| CPU while playing, bars animating | 6.1 % | 22.6 % | 4.1 % |
+| Open album / artist / search | 0.52 / 0.43 / 0.20 s | 0.12 / 0.13 / 0.13 s | 0.03 / 0.10 / 0.11 s |
+| Frames/s while playing (nothing animating) | 2 | 125 | 1.2 |
+| Bars animating: frames/s, worst gap | 65, 21 ms | 125, 9 ms | 123, 10 ms |
+| Wheel scroll: frames/s, worst gap | 47, 43 ms | 83, 20 ms | 115, 10 ms |
+| Dialog open/close: frames/s, worst gap | 20, 75 ms | 50, 64 ms | 65, 9.5 ms |
+| Main binary | 43 MB (plus system WebKitGTK) | | 75 MB (not a target yet) |
+
+At 120 Hz a frame is 8.3 ms, so a worst gap near 10 ms means no dropped frames: Rune holds the
+display rate in every animation and draws nothing it doesn't need (WebKit with its GPU renderer
+presents 125 fps the whole time a track plays). Fixed-size fixtures: a 10 s track, short pages.
+
+Animations, done the Rune way (`rune-app/src/ui.rs`):
+- **Playing bars** (SONE's CSS `barBounce`): renderer-owned `Sequence` scale beats on the same
+  curve, each bar a wide block scaled inside a 3 pt clip. No rebuilds, layout or wakeups. A
+  `Cycle` opacity loop was tried first: it wakes on a timer and landed every other 120 Hz frame.
+  The album, playlist, artist and search rows also gained SONE's indicator (bars when playing,
+  accent number and title for the current track); only the queue drawer had it.
+- **Seek fill**: glides on a short spring when a seek, a click or a new track moves it; the
+  clock's once-a-second ticks land with `Tx::instant()`. The 50 fps loop came from the controller
+  republishing its view on every backend event (position syncs): each publish counted as a state
+  change, so its commit animated. It now signals only when the drawn view differs or the position
+  jumps, and clock ticks are counted apart (`controller::versions()`).
+- **Wheel scrolling**: Rune applies a notched wheel's line steps at once (40 pt a notch) and
+  leaves smoothing to the app (`WheelEvent::precise`). `smooth_wheel` glides each notch with
+  `Tx::scroll_to_with`, which keeps a running glide's speed, so a spin is one continuous motion.
+- **Cover rotation**: never used (every caller passes 0); nothing to restore.
+
+Still to measure from L5: a 10k-track playlist, a 30-minute gapless underrun run, and a
+real-account run (network, user signs in, virtual audio only). The verifier itself still runs
+in software at 60 Hz (34/34 pass with these changes).
 
 ## Build order
 
