@@ -47,7 +47,7 @@ pub fn art(hue: f32, size: f32, seed: u64, spin: f32) -> El {
         .clip_rounded(size * 0.5)
         .fill(oklch(0.3, 0.09, hue))
         .rotate(spin)
-        .rotate_motion(Spring::new(0.6, 0.0))
+        // (no rotate_motion: the disc never spins here, and a running spring keeps redrawing)
         .a11y_hidden();
     for i in 0..6 {
         let d = size * (0.92 - i as f32 * 0.14);
@@ -104,7 +104,9 @@ pub fn slider<S: 'static>(key: &str, label: &str, w: f32, h: f32, frac: f32, val
         .w(w)
         .h(24.0)
         .justify_center()
-        .child(el().w_full().h(h).radius(h / 2.0).fill(white(0.18)).child(el().absolute(0.0, 0.0).h(h).w_frac(frac).radius(h / 2.0).fill(white(0.9))))
+        // Spring::NONE: the fill moves every second while playing; a layout spring on it would
+        // keep the window redrawing at frame rate (measured: 50 fps, ~2.4 cores on lavapipe).
+        .child(el().w_full().h(h).radius(h / 2.0).fill(white(0.18)).child(el().absolute(0.0, 0.0).h(h).w_frac(frac).radius(h / 2.0).fill(white(0.9)).motion(Spring::NONE)))
 }
 
 pub fn seek<S: 'static>(v: &View, key: &str, w: f32, h: f32) -> El {
@@ -126,7 +128,7 @@ pub fn eq(v: &View) -> El {
     let mut r = row().size(16.0, 14.0).gap(2.0).items_end().a11y_hidden();
     for (i, k) in [0.7f32, 1.0, 0.55].iter().enumerate() {
         let h = if v.playing { 3.0 + 11.0 * (l * k + i as f32 * 0.13).fract().max(0.15) } else { 3.0 };
-        r = r.child(el().w(4.0).h(h).radius(1.0).fill(white(0.92)).motion(Spring::new(0.12, 0.0)));
+        r = r.child(el().w(4.0).h(h).radius(1.0).fill(white(0.92)));
     }
     r
 }

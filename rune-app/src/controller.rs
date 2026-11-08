@@ -146,10 +146,16 @@ pub fn bump() {
     VERSION.fetch_add(1, Ordering::Relaxed);
 }
 
+static SHOWN_SECOND: AtomicU64 = AtomicU64::new(u64::MAX);
+
 pub fn version() -> u64 {
-    // Bump while playing so the clock redraws; the poll interval paces it.
+    // While playing, redraw only when the displayed second changes (the clock and seek bar
+    // show whole seconds); redrawing every poll cost a full frame each time.
     if view_playing() {
-        VERSION.fetch_add(1, Ordering::Relaxed);
+        let sec = POSITION.get().map(|p| p.lock().unwrap().interpolated() as u64).unwrap_or(0);
+        if SHOWN_SECOND.swap(sec, Ordering::Relaxed) != sec {
+            VERSION.fetch_add(1, Ordering::Relaxed);
+        }
     }
     VERSION.load(Ordering::Relaxed)
 }

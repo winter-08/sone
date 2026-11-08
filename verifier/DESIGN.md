@@ -570,6 +570,35 @@ music videos, and text content of lyrics (the inventory compares controls, not t
 **Strict check:** all 34 non-quarantined scenarios pass every run (3 runs, 1400×2000). Four are
 quarantined, all exclusive-mode pause/seek/replay.
 
+## Benchmark: release builds (2026-11-08)
+
+`verifier/bench.py` runs both release builds in the verifier's sandbox (fake TIDAL, seeded
+logged-in profile, virtual audio, headless sway at 1400x900, software rendering: WebKit's
+software path, Rune on lavapipe). Five alternating runs per build, medians. `bench/driver.py`
+measures the whole process tree from /proc, so WebKit's web and network processes count.
+Results: `verifier/bench/results/2026-11-08.{md,json}`.
+
+| Metric | SONE (Tauri/WebKit) | SONE on Rune |
+|---|---|---|
+| Startup, Home content shown | 2.35 s | 2.39 s |
+| Memory idle on Home (PSS) | 363 MB, 3 processes | 206 MB, 1 process |
+| Memory while playing (PSS) | 491 MB | 322 MB |
+| CPU idle | 0.7 % | 0 % |
+| CPU while playing | 36.6 % | 27.2 % |
+| Open album / artist / search | 0.51 / 0.43 / 0.20 s | 0.13 / 0.14 / 0.14 s |
+| Main binary | 43.3 MB (plus system WebKitGTK) | 75.1 MB |
+
+Finding: the first run showed Rune at **320 % of a core while playing**. Counting
+`wl_surface.commit` with `WAYLAND_DEBUG` showed the main window presenting at 50 fps whenever a
+track played (0 fps idle). Bisecting the now-playing bar pinned it to the seek slider: its fill's
+`w_frac` changes every second, and the inherited layout spring kept animating, so every frame
+scheduled another. `.motion(Spring::NONE)` on the fill (and dropping springs on the eq bars and
+the cover rotation), plus bumping the view version only when the shown second changes, brings it
+to ~1.6 fps and 27 % CPU. Lesson for the port: anything that changes on a timer must opt out of
+motion, and a frame counter belongs in the budget checks. Still to measure from L5: frame time
+while scrolling, a 10k-track playlist, a 30-minute gapless underrun run, and a real-account run
+(network, user signs in, virtual audio only).
+
 ## Build order
 
 1. ~~Spikes~~, ~~sandbox completion~~, ~~harness v0~~, ~~port slice 1 (playback core)~~,

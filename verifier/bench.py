@@ -27,7 +27,9 @@ def one(binary: str, rundir: str, display: str) -> dict:
     env = {**os.environ, "SPIKE_SEED": json.dumps(BASE_PROFILE), "SPIKE_OUTPUT": display}
     cmd = [os.path.join(ROOT, "harness", "sandbox.sh"), rundir, binary, "--",
            "python3", "-I", os.path.join(ROOT, "bench", "driver.py"), out]
-    subprocess.run(cmd, env=env, capture_output=True, text=True, timeout=300)
+    p = subprocess.run(cmd, env=env, capture_output=True, text=True, timeout=300)
+    os.makedirs(rundir, exist_ok=True)
+    open(os.path.join(rundir, "driver.log"), "w").write(p.stdout + p.stderr)
     if not os.path.exists(out):
         raise RuntimeError(f"run failed: see {rundir}/logs")
     return json.load(open(out))
@@ -43,8 +45,29 @@ def flat(d: dict, prefix: str = "") -> dict:
     return o
 
 
+def real_binary(path: str) -> str:
+    """Follow wrapper scripts (nix's makeWrapper, rune-app/wrap.sh) to the ELF they exec."""
+    import re
+    real = os.path.realpath(path)
+    for _ in range(4):
+        # nix binary wrappers: a small ELF next to the real program, ".NAME-wrapped"
+        sib = os.path.join(os.path.dirname(real), "." + os.path.basename(real).lstrip(".") + "-wrapped")
+        if os.path.exists(sib) and os.path.getsize(real) < 1_000_000:
+            real = os.path.realpath(sib)
+            continue
+        with open(real, "rb") as f:
+            if f.read(4) == b"ELF":
+                return real
+        txt = open(real, errors="ignore").read()
+        m = re.findall(r'exec (?:-a "\S+" )?"?([^"\s]+)"?', txt)
+        if not m:
+            return real
+        real = os.path.realpath(m[-1])
+    return real
+
+
 def size_info(binary: str) -> dict:
-    real = os.path.realpath(binary)
+    real = real_binary(binary)
     info = {"binary_mb": round(os.path.getsize(real) / 1e6, 1)}
     if real.startswith("/nix/store/"):
         pkg = "/".join(real.split("/")[:4])

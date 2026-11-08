@@ -128,11 +128,11 @@ def main():
 
     lat = {}
     atspi.press("Fixture Album", "heading")
-    lat["open_album_s"] = round(wait_control("heading: Related Albums"), 3)
+    lat["open_album_s"] = round(wait_control("button: Favorite album"), 3)
     atspi.press("Home")
     wait_control("heading: Fixture Albums")
     atspi.press("Mock Ensemble", "heading")
-    lat["open_artist_s"] = round(wait_control("heading: Fans also like"), 3)
+    lat["open_artist_s"] = round(wait_control("button: Follow"), 3)
     atspi.focus("Search", "entry")
     time.sleep(0.2)
     atspi.type_text("fixture")

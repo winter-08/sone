@@ -87,7 +87,7 @@ fn poll(s: &mut App, _: f64, tx: &mut Tx) -> bool {
         tx.wake_after(Duration::from_millis(50));
     }
     let v = (controller::version(), data::version());
-    tx.wake_after(Duration::from_millis(if controller::view().playing { 100 } else { 200 }));
+    tx.wake_after(Duration::from_millis(200));
     let changed = v != s.seen;
     s.seen = v;
     changed
