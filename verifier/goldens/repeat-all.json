@@ -53,7 +53,7 @@
      "loop": "Playlist",
      "shuffle": false,
      "volume": 1.0,
-     "position_s": 1.58,
+     "position_s": 1.67,
      "track": {
       "title": "Queue A",
       "artist": [
@@ -193,7 +193,7 @@
      "loop": "None",
      "shuffle": false,
      "volume": 1.0,
-     "position_s": 2.32,
+     "position_s": 1.39,
      "track": {
       "title": "Queue A",
       "artist": [
@@ -235,7 +235,7 @@
      "loop": "None",
      "shuffle": false,
      "volume": 1.0,
-     "position_s": 2.32,
+     "position_s": 1.39,
      "track": {
       "title": "Queue A",
       "artist": [
@@ -365,8 +365,8 @@
   "opened": []
  },
  "audio": {
-  "captured_bytes": 3231048,
-  "pcm_opens": 4,
+  "captured_bytes": 3195464,
+  "pcm_opens": 3,
   "unmatched_nonsilent_bytes": 0,
   "segments": [
    {
@@ -394,7 +394,7 @@
     "container": "S16LE",
     "rate": 44100,
     "start_frame": 0,
-    "end_frame": 88542,
+    "end_frame": 84446,
     "frames": 352800,
     "full": false,
     "silence_before_frames": 4410

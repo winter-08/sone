@@ -238,7 +238,9 @@
           "LOSSLESS"
          ]
         },
-        "mixes": {}
+        "mixes": {
+         "TRACK_MIX": "000fixture0track0mix001001"
+        }
        },
        {
         "id": 1005,
@@ -290,7 +292,9 @@
           "LOSSLESS"
          ]
         },
-        "mixes": {}
+        "mixes": {
+         "TRACK_MIX": "000fixture0track0mix001005"
+        }
        },
        {
         "id": 1002,
@@ -343,7 +347,9 @@
           "HIRES_LOSSLESS"
          ]
         },
-        "mixes": {}
+        "mixes": {
+         "TRACK_MIX": "000fixture0track0mix001002"
+        }
        }
       ]
      }

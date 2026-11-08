@@ -54,7 +54,9 @@
       "LOSSLESS"
      ]
     },
-    "mixes": {}
+    "mixes": {
+     "TRACK_MIX": "000fixture0track0mix001001"
+    }
    },
    "type": "track",
    "cut": null
@@ -111,7 +113,9 @@
       "HIRES_LOSSLESS"
      ]
     },
-    "mixes": {}
+    "mixes": {
+     "TRACK_MIX": "000fixture0track0mix001002"
+    }
    },
    "type": "track",
    "cut": null
@@ -167,7 +171,9 @@
       "LOSSLESS"
      ]
     },
-    "mixes": {}
+    "mixes": {
+     "TRACK_MIX": "000fixture0track0mix001005"
+    }
    },
    "type": "track",
    "cut": null
@@ -223,7 +229,9 @@
       "LOSSLESS"
      ]
     },
-    "mixes": {}
+    "mixes": {
+     "TRACK_MIX": "000fixture0track0mix001006"
+    }
    },
    "type": "track",
    "cut": null

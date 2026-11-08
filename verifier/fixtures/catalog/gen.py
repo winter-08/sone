@@ -54,7 +54,7 @@ def track(tid):
         "album": {"id": aid, "title": al["title"], "cover": COVER, "vibrantColor": "#4a6fa5",
                   "videoCover": None, "releaseDate": al["releaseDate"]},
         "mediaMetadata": {"tags": ["LOSSLESS", "HIRES_LOSSLESS"] if v["quality"] == "HI_RES_LOSSLESS" else ["LOSSLESS"]},
-        "mixes": {},
+        "mixes": {"TRACK_MIX": f"000fixture0track0mix00{tid}"},
     }
 
 
@@ -377,6 +377,27 @@ route(r"^/v1/tracks/\d+/lyrics$", "lyrics_none.json",
 route(r"^/ws/2/isrc/[^/]+$", "musicbrainz_isrc_none.json",
       {"error": "Not Found", "help": "For usage, please see: https://musicbrainz.org/development/mmd"},
       host="musicbrainz.org", status=404)
+
+# ---- track radio (the drawer's Suggested tracks tab loads mixes.TRACK_MIX): every track's radio
+# is the same fixture mix, matched by the id prefix in the mixId query.
+TRACK_MIX = {"id": "000fixture0track0mix00", "mixType": "TRACK_MIX", "title": "Track Radio",
+             "subTitle": "Fixture Artist, Mock Ensemble", "shortSubtitle": "Fixture Artist",
+             "images": MIX_IMAGES, "detailImages": MIX_IMAGES, "sharingImages": None,
+             "contentBehavior": "UNRESTRICTED", "master": False, "isStableId": True,
+             "titleColor": "#ffffff", "updated": TS}
+route(r"^/v1/pages/mix$", "mix_track_radio.json", {
+    "selfLink": None, "id": "mix-track-radio", "title": TRACK_MIX["title"],
+    "rows": [
+        {"modules": [{"type": "MIX_HEADER", "title": "", "mix": TRACK_MIX}]},
+        {"modules": [{"type": "TRACK_LIST", "title": "",
+                      "pagedList": page([track(t) for t in (1003, 1004, 1007, 1006)])}]},
+    ],
+}, query_contains="track0mix")
+
+# ---- ListenBrainz: token validation for Settings > Scrobbling > Connect
+route(r"^/1/validate-token$", "listenbrainz_validate.json",
+      {"code": 200, "message": "Token valid.", "valid": True, "user_name": "fixture"},
+      host="api.listenbrainz.org")
 
 with open(os.path.join(OUT, "routes.json"), "w") as f:
     json.dump(routes, f, indent=1)

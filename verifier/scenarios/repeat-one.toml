@@ -2,6 +2,7 @@ name = "repeat-one"
 description = "Repeat one replays the same track instead of advancing."
 covers = ["mcp_tools:set_repeat"]
 tracks = [1005, 1006]
+quarantine = "exclusive-mode repeat replay is nondeterministic in the reference itself (recording 2026-11-08: one run stalls at 0, two play on); repeat-one-shared covers the logic"
 
 [[step]]
 label = "repeat one"

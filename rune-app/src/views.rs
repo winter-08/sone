@@ -77,11 +77,29 @@ pub struct Nav {
     pub login_mode: LoginMode,
     /// Settings is a modal over the current page (React SettingsModal).
     pub settings_open: bool,
+    pub dialog: Option<Dialog>,
+    /// Editable settings fields, filled from the saved settings when Settings opens.
+    pub discord_status: TextEdit,
+    pub lb_token: TextEdit,
+    pub overlay_host: TextEdit,
+    pub proxy_user: TextEdit,
+    /// Debounced saves (React's 500 ms timers in DiscordTab / NetworkTab).
+    pub discord_due: Option<std::time::Instant>,
+    pub proxy_due: Option<std::time::Instant>,
+    pub lb_status: Option<String>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Dialog {
+    Shortcuts,
+    About,
 }
 
 impl Default for Nav {
     fn default() -> Self {
-        Nav { page: Page::Home, back: vec![], fwd: vec![], search: TextEdit::new(""), lib: LibTab::Playlists, tab: SearchTab::All, filter: TextEdit::new(""), queue_open: false, suggest_due: None, menu_open: false, settings_tab: SettingsTab::Playback, drawer: None, login_mode: LoginMode::Pkce, settings_open: false }
+        Nav { page: Page::Home, back: vec![], fwd: vec![], search: TextEdit::new(""), lib: LibTab::Playlists, tab: SearchTab::All, filter: TextEdit::new(""), queue_open: false, suggest_due: None, menu_open: false, settings_tab: SettingsTab::Playback, drawer: None, login_mode: LoginMode::Pkce, settings_open: false, dialog: None,
+            discord_status: TextEdit::new(""), lb_token: TextEdit::new(""), overlay_host: TextEdit::new(""), proxy_user: TextEdit::new(""),
+            discord_due: None, proxy_due: None, lb_status: None }
     }
 }
 
@@ -762,9 +780,10 @@ pub fn account_menu(s: &App, v: &View) -> Option<El> {
         .child(menu_item("am-settings", "Settings", None, |s: &mut App| {
             s.nav.settings_tab = SettingsTab::Playback;
             s.nav.settings_open = true;
+            load_setting_fields(s);
         }))
-        .child(menu_item("am-shortcuts", "Shortcuts", None, |_: &mut App| {}))
-        .child(menu_item("am-about", "About", None, |_: &mut App| {}))
+        .child(menu_item("am-shortcuts", "Shortcuts", None, |s: &mut App| s.nav.dialog = Some(Dialog::Shortcuts)))
+        .child(menu_item("am-about", "About", None, |s: &mut App| s.nav.dialog = Some(Dialog::About)))
         .child(menu_item("am-logout", "Log out", None, |_: &mut App| {}));
     Some(row().pin(None, Some(56.0), Some(120.0), None).child(m))
 }
@@ -777,11 +796,102 @@ fn choice(key: &str, label: &str, selected: bool, on: impl Fn(&mut App) + 'stati
 }
 
 fn field(s: &App, key: &str, label: &str) -> El {
-    // Settings text fields are display-only in this slice; each is a real, named text input.
+    // A field that isn't wired to a setting yet (still real and named).
     let _ = s;
     let edit = rune::TextEdit::new("");
     row().h(40.0).px(12.0).radius(10.0).items_center().fill(white(0.06)).w(320.0)
         .child(text_input(&edit, t(13.0, 500.0).lh(18.0)).key(key.to_string()).label(label).single_line().grow(1.0).color(white(0.95)).placeholder(label, white(0.4)))
+}
+
+/// A settings field bound to one of the Nav edits; `changed` runs on every edit.
+fn bound_field(edit: &TextEdit, key: &str, label: &str, get: fn(&mut App) -> &mut TextEdit, changed: fn(&mut App)) -> El {
+    row().h(40.0).px(12.0).radius(10.0).items_center().fill(white(0.06)).w(320.0)
+        .child(text_input(edit, t(13.0, 500.0).lh(18.0)).key(key.to_string()).label(label).single_line().grow(1.0).color(white(0.95)).placeholder(label, white(0.4))
+            .on_edit(get)
+            .on_input_change(move |s: &mut App, _| changed(s)))
+}
+
+/// Fill the editable fields from what's saved (as the React tabs do on mount).
+pub fn load_setting_fields(s: &mut App) {
+    use sone_host_shim::Manager;
+    let st = crate::host().state::<tauri_app_lib::AppState>();
+    if let Some(set) = st.load_settings() {
+        s.nav.discord_status = TextEdit::new(&set.discord_status_text);
+        s.nav.overlay_host = TextEdit::new(&set.overlay_host);
+        s.nav.proxy_user = TextEdit::new(set.proxy.username.as_deref().unwrap_or(""));
+    }
+}
+
+/// Run the debounced saves that are due (called from App::poll).
+pub fn flush_settings(s: &mut App) {
+    use sone_host_shim::Manager;
+    let now = std::time::Instant::now();
+    if s.nav.discord_due.is_some_and(|t| now >= t) {
+        s.nav.discord_due = None;
+        let text = s.nav.discord_status.text.clone();
+        let _ = tauri_app_lib::commands::utility::set_discord_status_text(crate::host().state::<tauri_app_lib::AppState>(), text);
+    }
+    if s.nav.proxy_due.is_some_and(|t| now >= t) {
+        s.nav.proxy_due = None;
+        let st = crate::host().state::<tauri_app_lib::AppState>();
+        let mut p = tauri_app_lib::commands::utility::get_proxy_settings(st);
+        let user = s.nav.proxy_user.text.trim().to_string();
+        p.username = (!user.is_empty()).then_some(user);
+        // React's shouldSubmitProxy: half-typed enabled settings are withheld.
+        if !p.enabled || (!p.host.trim().is_empty() && p.port > 0) {
+            let h = crate::host().clone();
+            sone_host_shim::async_runtime::spawn(async move {
+                let _ = tauri_app_lib::commands::utility::set_proxy_settings(h.state::<tauri_app_lib::AppState>(), p).await;
+            });
+        }
+    }
+}
+
+fn open_url(url: &str) {
+    let _ = std::process::Command::new("xdg-open").arg(url).spawn();
+}
+
+/// The Keyboard Shortcuts and About dialogs (React ShortcutsModal / AboutModal).
+pub fn dialog(s: &App) -> Option<El> {
+    let d = s.nav.dialog?;
+    let body = match d {
+        Dialog::Shortcuts => {
+            let mut rows = col().w_full().gap(2.0);
+            for (label, keys) in [("Play / Pause", "Space"), ("Next track", "Ctrl+Right"), ("Previous track", "Ctrl+Left"), ("Volume up", "Ctrl+Up"),
+                ("Volume down", "Ctrl+Down"), ("Mute / Unmute", "Ctrl+M"), ("Like / Unlike current track", "Ctrl+L"), ("Shuffle on / off", "Ctrl+S"),
+                ("Repeat off / all / one", "Ctrl+R"), ("Focus search bar", "Ctrl+K"), ("Refresh app data", "Ctrl+Shift+R"), ("Zoom in", "Ctrl+="),
+                ("Zoom out", "Ctrl+-"), ("Reset zoom to 100%", "Ctrl+0"), ("Toggle exclusive output", "Ctrl+E"), ("Toggle bit-perfect mode", "Ctrl+B"),
+                ("Show keyboard shortcuts", "Ctrl+/"), ("Close window", "Ctrl+W"), ("Quit SONE", "Ctrl+Q")] {
+                rows = rows.child(row().w_full().h(30.0).items_center()
+                    .child(text(label.to_string()).font(t(13.0, 500.0)).color(white(0.85)))
+                    .child(spacer())
+                    .child(text(keys.to_string()).font(t(12.0, 600.0)).color(white(0.6))));
+            }
+            col().w_full().gap(14.0)
+                .child(heading("Keyboard Shortcuts", 22.0))
+                .child(rows)
+                .child(button::<App>("sc-restore", "Restore defaults", None, false))
+        }
+        Dialog::About => {
+            let link = |key: &str, label: &str, url: &'static str| button::<App>(key, label, None, false).on_press(move |_: &mut App| open_url(url));
+            let version = concat!("v", env!("CARGO_PKG_VERSION"));
+            col().w_full().gap(12.0).items_center()
+                .child(heading("SONE", 30.0))
+                .child(link("ab-version", version, "https://github.com/lullabyX/sone/releases"))
+                .child(text("The native desktop client for TIDAL on Linux.").font(t(13.0, 500.0)).color(white(0.6)))
+                .child(row().gap(8.0)
+                    .child(link("ab-github", "GitHub", "https://github.com/lullabyX/sone"))
+                    .child(link("ab-issues", "Issues", "https://github.com/lullabyX/sone/issues"))
+                    .child(link("ab-license", "GPL-3.0", "https://github.com/lullabyX/sone/blob/master/LICENSE")))
+                .child(link("ab-author", "@lullabyX", "https://github.com/lullabyX"))
+                .child(link("ab-patreon", "Support development on Patreon", "https://patreon.com/lullabyX"))
+        }
+    };
+    let panel = col().key("dialog").w(520.0).padding(24.0).radius(18.0).fill(oklch(0.17, 0.02, 270.0)).shadow(10.0, 40.0, rune::oklcha(0.0, 0.0, 0.0, 0.5))
+        .child(row().w_full().child(spacer()).child(ui::icon_button::<App>("dialog-close", "Close dialog", G::Close, 14.0, white(0.6)).on_press(|s: &mut App| s.nav.dialog = None)))
+        .child(body);
+    Some(row().pin(Some(0.0), Some(0.0), Some(0.0), Some(0.0)).items_center().justify_center().fill(rune::oklcha(0.0, 0.0, 0.0, 0.45))
+        .on_press(|s: &mut App| s.nav.dialog = None).child(panel))
 }
 
 /// The settings modal, when open.
@@ -832,19 +942,57 @@ pub fn settings_page(s: &App) -> El {
             .child(button::<App>("px-http", "HTTP", None, false))
             .child(field(s, "px-host", "host"))
             .child(field(s, "px-port", "port"))
-            .child(field(s, "px-user", "Username"))
+            .child(bound_field(&s.nav.proxy_user, "px-user", "Username", |s: &mut App| &mut s.nav.proxy_user,
+                |s: &mut App| s.nav.proxy_due = Some(std::time::Instant::now() + std::time::Duration::from_millis(500))))
             .child(button::<App>("px-test", "Test connection", None, false)),
-        SettingsTab::Scrobbling => col().w_full().gap(10.0)
-            .child(caps("ListenBrainz", 0.5))
-            .child(field(s, "lb-token", "User token"))
-            .child(row().role("button").label("listenbrainz.org/settings").cursor(rune::Cursor::Pointer).child(text("listenbrainz.org/settings").font(t(12.0, 500.0)).color(white(0.6)).a11y_hidden()))
-            .child(button::<App>("lb-connect", "Connect", None, true)),
+        SettingsTab::Scrobbling => {
+            use sone_host_shim::Manager;
+            let connected = crate::host().state::<tauri_app_lib::AppState>().load_settings()
+                .and_then(|x| x.scrobble.listenbrainz.map(|c| c.username));
+            let mut lb = if let Some(user) = connected {
+                col().w_full().gap(10.0).child(caps("ListenBrainz", 0.5))
+                    .child(text(format!("Connected as {user}")).font(t(13.0, 500.0)).color(white(0.8)))
+                    .child(button::<App>("lb-disconnect", "Disconnect", None, false).on_press(|_: &mut App| {
+                        let h = crate::host().clone();
+                        sone_host_shim::async_runtime::spawn(async move {
+                            let _ = tauri_app_lib::commands::scrobble::disconnect_provider(h.state::<tauri_app_lib::AppState>(), "listenbrainz".into()).await;
+                            controller::bump();
+                        });
+                    }))
+            } else { col().w_full().gap(10.0)
+                .child(caps("ListenBrainz", 0.5))
+                .child(bound_field(&s.nav.lb_token, "lb-token", "User token", |s: &mut App| &mut s.nav.lb_token, |_: &mut App| {}))
+                .child(row().role("button").label("listenbrainz.org/settings").cursor(rune::Cursor::Pointer).on_press(|_: &mut App| open_url("https://listenbrainz.org/settings/"))
+                    .child(text("listenbrainz.org/settings").font(t(12.0, 500.0)).color(white(0.6)).a11y_hidden()))
+                .child(button::<App>("lb-connect", "Connect", None, true).on_press(|s: &mut App| {
+                    use sone_host_shim::Manager;
+                    let token = s.nav.lb_token.text.trim().to_string();
+                    if token.is_empty() {
+                        return;
+                    }
+                    let h = crate::host().clone();
+                    sone_host_shim::async_runtime::spawn(async move {
+                        let _ = tauri_app_lib::commands::scrobble::connect_listenbrainz(h.state::<tauri_app_lib::AppState>(), token).await;
+                        controller::bump(); // saved settings changed: redraw the tab
+                    });
+                }))
+            };
+            if let Some(st) = &s.nav.lb_status {
+                lb = lb.child(text(st.clone()).font(t(12.0, 500.0)).color(white(0.6)));
+            }
+            // Last.fm and Libre.fm come first, each with its own Connect (browser sign-in).
+            col().w_full().gap(18.0)
+                .child(col().gap(8.0).child(caps("Last.fm", 0.5)).child(button::<App>("lf-connect", "Connect", None, false)))
+                .child(col().gap(8.0).child(caps("Libre.fm", 0.5)).child(button::<App>("lbfm-connect", "Connect", None, false)))
+                .child(lb)
+        }
         SettingsTab::Discord => {
             let chip = |key: &str, label: &str| row().key(key.to_string()).role("button").label(label).h(26.0).px(10.0).radius(13.0).items_center().fill(white(0.08)).cursor(rune::Cursor::Pointer)
                 .child(text(label.to_string()).font(t(11.0, 600.0)).color(white(0.85)).a11y_hidden());
             col().w_full().gap(10.0)
                 .child(caps("Status text", 0.5))
-                .child(field(s, "dc-status", "{track} by {artist} on {album}"))
+                .child(bound_field(&s.nav.discord_status, "dc-status", "{track} by {artist} on {album}", |s: &mut App| &mut s.nav.discord_status,
+                    |s: &mut App| s.nav.discord_due = Some(std::time::Instant::now() + std::time::Duration::from_millis(500))))
                 .child(row().gap(6.0).child(chip("dc-track", "{track}")).child(chip("dc-artist", "{artist}")).child(chip("dc-album", "{album}")))
         }
         SettingsTab::Mcp => col().w_full().gap(10.0)
@@ -855,8 +1003,19 @@ pub fn settings_page(s: &App) -> El {
                 .child(button::<App>("mcp-regen", "Regenerate token", None, false))),
         SettingsTab::Overlay => col().w_full().gap(10.0)
             .child(caps("Overlay server", 0.5))
-            .child(field(s, "ov-host", "127.0.0.1"))
-            .child(button::<App>("ov-apply", "Apply", None, true)),
+            .child(bound_field(&s.nav.overlay_host, "ov-host", "127.0.0.1", |s: &mut App| &mut s.nav.overlay_host, |_: &mut App| {}))
+            .child(button::<App>("ov-apply", "Apply", None, true).on_press(|s: &mut App| {
+                // Like the React tab, Apply only acts while the overlay server is enabled.
+                use sone_host_shim::Manager;
+                let st = crate::host().state::<tauri_app_lib::AppState>();
+                if st.load_settings().is_some_and(|x| x.overlay_enabled) {
+                    let host = s.nav.overlay_host.text.trim().to_string();
+                    let h = crate::host().clone();
+                    sone_host_shim::async_runtime::spawn(async move {
+                        let _ = tauri_app_lib::commands::overlay::overlay_set_host(h.state::<tauri_app_lib::AppState>(), host).await;
+                    });
+                }
+            })),
         SettingsTab::Themes => {
             let mut presets = row().w_full().gap(8.0).flex_wrap();
             for (i, name) in ["Midnight Cyan", "Violet Night", "Cyberpunk", "Noir", "Ocean", "Forest", "Ember", "Rose", "Copper", "Sakura", "Blossom", "Meadow", "Snowfall", "Daylight", "Paper"].iter().enumerate() {
@@ -937,11 +1096,15 @@ pub fn drawer(s: &App, v: &View) -> Option<El> {
     let body = match tab {
         Drawer::Queue => queue_panel(v),
         Drawer::Lyrics => lyrics(v),
-        Drawer::Suggested => text("No suggestions for this track.").font(t(13.0, 500.0)).color(white(0.5)),
-        Drawer::Credits => text("Credits load with the track.").font(t(13.0, 500.0)).color(white(0.5)),
+        Drawer::Suggested => suggested(v),
+        Drawer::Credits => credits(v),
     };
+    let mut head = col().w_full().gap(10.0).child(tabs);
+    if let Some(cur) = &v.current {
+        head = head.child(heading(&cur.title, 16.0));
+    }
     Some(col().key("drawer").w(360.0).h_full().padding(16.0).gap(12.0).fill(oklch(0.14, 0.02, 270.0))
-        .child(tabs)
+        .child(head)
         .child(col().key("drawer-scroll").grow(1.0).min_h(0.0).w_full().scroll(ScrollSpec { stick_bottom: false }).child(body)))
 }
 
@@ -1177,4 +1340,44 @@ pub fn login(s: &App, v: &View) -> El {
     col().key("login-root").w_full().h_full().fill(ui::base(270.0))
         .child(row().w_full().px(12.0).py(8.0).child(spacer()).child(window_buttons()))
         .child(col().grow(1.0).w_full().items_center().justify_center().child(c))
+}
+
+
+/// Suggested tracks: the current track's radio (React SuggestedTab: getMixItems(TRACK_MIX)).
+fn suggested(v: &View) -> El {
+    let Some(mix) = &v.track_mix else { return text("No suggestions for this track.").font(t(13.0, 500.0)).color(white(0.5)) };
+    let Some(m) = data::ready(Key::Mix(mix.clone())) else { return loading() };
+    let mut c = col().w_full().gap(2.0);
+    for (i, tr) in m["tracks"].as_array().cloned().unwrap_or_default().iter().enumerate() {
+        let id = tr["id"].as_u64().unwrap_or(0);
+        c = c.child(row().w_full().items_center()
+            .child(col().grow(1.0).min_w(0.0).child(track_row_with(format!("sg-{i}"), i + 1, tr, false, move |_: &mut App| controller::send_play_ids(vec![id]))))
+            .child(icon::<App>(&format!("sg-{i}-love"), "Add to Loved tracks", G::Heart))
+            .child(icon::<App>(&format!("sg-{i}-queue"), "Add to queue", G::List).on_press(move |_: &mut App| controller::send(Cmd::QueueIds(vec![id])))));
+    }
+    c
+}
+
+/// Credits: the track's contributors by role, then the main artist's bio (React CreditsTab).
+fn credits(v: &View) -> El {
+    let Some(cur) = &v.current else { return text("Nothing playing").font(t(13.0, 500.0)).color(white(0.5)) };
+    let mut c = col().w_full().gap(10.0);
+    match data::ready(Key::Credits(cur.id)) {
+        Some(cr) => {
+            for credit in cr.as_array().cloned().unwrap_or_default() {
+                let role = credit["type"].as_str().or(credit["creditType"].as_str()).unwrap_or("").to_string();
+                let names: Vec<String> = credit["contributors"].as_array().cloned().unwrap_or_default().iter().filter_map(|x| x["name"].as_str().map(str::to_string)).collect();
+                c = c.child(col().gap(2.0).child(caps(&role, 0.5)).child(text(names.join(", ")).font(t(13.0, 500.0)).color(white(0.9))));
+            }
+        }
+        None => c = c.child(loading()),
+    }
+    if let Some(aid) = v.artist_id {
+        c = c.child(heading("Bio", 16.0));
+        if let Some(b) = data::ready(Key::ArtistBio(aid)) {
+            let bio = b["text"].as_str().or(b.as_str()).unwrap_or("").to_string();
+            c = c.child(text(bio).font(t(13.0, 400.0)).color(white(0.7)).wrap());
+        }
+    }
+    c
 }

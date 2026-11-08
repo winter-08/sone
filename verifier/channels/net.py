@@ -9,6 +9,9 @@ from urllib.parse import parse_qsl, urlsplit
 
 # Query parameters that carry no behaviour (client fingerprinting, cache busting).
 VOLATILE_QUERY = {"deviceType", "locale", "_", "t", "ts"}
+# Credential-like values (embedded API keys, signatures, tokens): compared by presence only,
+# and never written into goldens.
+SECRET_QUERY = {"api_key", "api_sig", "token", "sk", "client_secret", "client_id"}
 # Hosts whose traffic is not compared step by step: artwork is fetched by different code paths
 # in the two builds, and the update check fires on a timer.
 UNCOMPARED_HOSTS = {"resources.tidal.com", "api.github.com"}
@@ -34,7 +37,8 @@ def normalize(flow: dict) -> str | None:
     if flow["host"] in UNCOMPARED_HOSTS:
         return None
     u = urlsplit(flow["path"])
-    q = sorted((k, v) for k, v in parse_qsl(u.query, keep_blank_values=True) if k not in VOLATILE_QUERY)
+    q = sorted((k, "<redacted>" if k in SECRET_QUERY else v)
+               for k, v in parse_qsl(u.query, keep_blank_values=True) if k not in VOLATILE_QUERY)
     qs = "&".join(f"{k}={v}" for k, v in q)
     return f"{flow['method']} {flow['host']}{u.path}{'?' + qs if qs else ''}"
 

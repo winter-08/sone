@@ -339,5 +339,18 @@
   "path_regex": "^/ws/2/isrc/[^/]+$",
   "file": "musicbrainz_isrc_none.json",
   "status": 404
+ },
+ {
+  "method": "GET",
+  "host": "api.tidal.com",
+  "path_regex": "^/v1/pages/mix$",
+  "file": "mix_track_radio.json",
+  "query_contains": "track0mix"
+ },
+ {
+  "method": "GET",
+  "host": "api.listenbrainz.org",
+  "path_regex": "^/1/validate-token$",
+  "file": "listenbrainz_validate.json"
  }
 ]

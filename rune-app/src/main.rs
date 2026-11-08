@@ -82,7 +82,8 @@ fn poll(s: &mut App, _: f64, tx: &mut Tx) -> bool {
             data::want(data::Key::Suggest(q));
         }
     }
-    if s.nav.suggest_due.is_some() {
+    views::flush_settings(s);
+    if s.nav.suggest_due.is_some() || s.nav.discord_due.is_some() || s.nav.proxy_due.is_some() {
         tx.wake_after(Duration::from_millis(50));
     }
     let v = (controller::version(), data::version());
@@ -125,6 +126,9 @@ fn view(s: &App, _: &mut Cx<App>) -> El {
     }
     if let Some(m) = views::settings_modal(s) {
         root = root.child(m);
+    }
+    if let Some(d) = views::dialog(s) {
+        root = root.child(d);
     }
     if let Some(m) = views::account_menu(s, &v) {
         root = root.child(m);

@@ -55,7 +55,9 @@
       "HIRES_LOSSLESS"
      ]
     },
-    "mixes": {}
+    "mixes": {
+     "TRACK_MIX": "000fixture0track0mix001003"
+    }
    },
    "type": "track",
    "cut": null
@@ -112,7 +114,9 @@
       "HIRES_LOSSLESS"
      ]
     },
-    "mixes": {}
+    "mixes": {
+     "TRACK_MIX": "000fixture0track0mix001004"
+    }
    },
    "type": "track",
    "cut": null
@@ -168,7 +172,9 @@
       "LOSSLESS"
      ]
     },
-    "mixes": {}
+    "mixes": {
+     "TRACK_MIX": "000fixture0track0mix001007"
+    }
    },
    "type": "track",
    "cut": null

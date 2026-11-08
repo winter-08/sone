@@ -81,6 +81,7 @@ def track_json(tid: int) -> dict:
         "artists": [artist],
         "album": album,
         "mediaMetadata": {"tags": ["LOSSLESS"]},
+        "mixes": {"TRACK_MIX": f"000fixture0track0mix00{tid}"},
     }
 
 

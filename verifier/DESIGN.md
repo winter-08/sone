@@ -539,6 +539,37 @@ quick.
 Rune build can't host; the system-browser flow is the alternative), Shortcuts and About dialogs,
 music videos, and text content of lyrics (the inventory compares controls, not text).
 
+## Port slice 4: drawer tabs, settings editing, dialogs (2026-11-08)
+
+- **Catalog:** every track carries `mixes.TRACK_MIX`, with a fixture track-radio mix; ListenBrainz
+  `validate-token` answers for user "fixture". All goldens were re-recorded.
+- **Harness:**
+  - key chords (`key = "ctrl+a"`) and `select_all` on typing;
+  - credential-like query values (`api_key`, `api_sig`, `token`, …) are redacted in the network
+    channel and never reach goldens;
+  - the unnamed-control count tolerates ±2 (popovers);
+  - `view-drawer-tabs` pauses first, so the current track can't change mid-scenario.
+- **Scenarios:** view-drawer-tabs (Suggested tracks from the radio, Credits with bio),
+  view-shortcuts, view-about (a link opens the repository URL), settings-edit (Discord status text,
+  ListenBrainz token + Connect → connected state, overlay host + Apply, proxy username; values
+  checked in `settings.json`).
+- **Port:**
+  - The drawer header shows the current track on every tab.
+  - Suggested tracks come from the track radio, with Add to queue / Add to Loved tracks.
+  - Credits shows contributors by role plus the artist bio.
+  - Shortcuts and About are dialogs; About's links open the same URLs.
+  - Settings fields are bound and saved with the React debounces: Discord 500 ms; proxy 500 ms,
+    withheld while half-typed. ListenBrainz connect/disconnect redraws from the saved state.
+    Overlay Apply acts only while the overlay is enabled, as in React.
+  - Waiver: the dialogs' close button is named (it's unnamed in the reference).
+- **Finding: `repeat-one` is nondeterministic in the reference itself.** Recording three runs
+  gave one replay stalled at 0 and two playing on, which is exactly the "candidate flake" seen
+  before. It is now quarantined with the other exclusive-mode replays, and
+  `repeat-one-shared` covers the logic.
+
+**Strict check:** all 34 non-quarantined scenarios pass every run (3 runs, 1400×2000). Four are
+quarantined, all exclusive-mode pause/seek/replay.
+
 ## Build order
 
 1. ~~Spikes~~, ~~sandbox completion~~, ~~harness v0~~, ~~port slice 1 (playback core)~~,

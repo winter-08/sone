@@ -9,4 +9,6 @@ allow = [
   "button: Repeat", "button: Repeat all", "button: Repeat one",
   "toggle button: Shuffle", "toggle button: Repeat", "toggle button: Repeat all", "toggle button: Repeat one",
   "slider: Position", "slider: Volume",
+  # the Shortcuts/About dialogs' close button is unnamed in the reference
+  "button: Close dialog",
 ]

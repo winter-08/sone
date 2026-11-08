@@ -497,7 +497,9 @@
         "LOSSLESS"
        ]
       },
-      "mixes": {}
+      "mixes": {
+       "TRACK_MIX": "000fixture0track0mix001001"
+      }
      }
     },
     {
@@ -553,7 +555,9 @@
         "HIRES_LOSSLESS"
        ]
       },
-      "mixes": {}
+      "mixes": {
+       "TRACK_MIX": "000fixture0track0mix001002"
+      }
      }
     },
     {
@@ -609,7 +613,9 @@
         "HIRES_LOSSLESS"
        ]
       },
-      "mixes": {}
+      "mixes": {
+       "TRACK_MIX": "000fixture0track0mix001003"
+      }
      }
     },
     {
@@ -665,7 +671,9 @@
         "HIRES_LOSSLESS"
        ]
       },
-      "mixes": {}
+      "mixes": {
+       "TRACK_MIX": "000fixture0track0mix001004"
+      }
      }
     },
     {
@@ -720,7 +728,9 @@
         "LOSSLESS"
        ]
       },
-      "mixes": {}
+      "mixes": {
+       "TRACK_MIX": "000fixture0track0mix001005"
+      }
      }
     },
     {
@@ -775,7 +785,9 @@
         "LOSSLESS"
        ]
       },
-      "mixes": {}
+      "mixes": {
+       "TRACK_MIX": "000fixture0track0mix001006"
+      }
      }
     },
     {
@@ -830,7 +842,9 @@
         "LOSSLESS"
        ]
       },
-      "mixes": {}
+      "mixes": {
+       "TRACK_MIX": "000fixture0track0mix001007"
+      }
      }
     }
    ]

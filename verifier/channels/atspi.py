@@ -140,9 +140,16 @@ def type_text(text: str) -> None:
 
 
 def key(name: str) -> None:
-    """One key press by XKB name, e.g. Return, Escape, Tab."""
+    """One key press by XKB name (Return, Escape, Tab), or a chord like "ctrl+a"."""
     import subprocess
-    subprocess.run(["wtype", "-k", name], check=True, timeout=10)
+    *mods, k = name.split("+")
+    cmd = ["wtype"]
+    for m in mods:
+        cmd += ["-M", m]
+    cmd += ["-k", k] if len(k) > 1 else [k]
+    for m in reversed(mods):
+        cmd += ["-m", m]
+    subprocess.run(cmd, check=True, timeout=10)
 
 
 def wait_ready(timeout: float = 30):

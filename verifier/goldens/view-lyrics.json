@@ -25,7 +25,7 @@
      "loop": "None",
      "shuffle": false,
      "volume": 1.0,
-     "position_s": 0.84,
+     "position_s": 1.02,
      "track": {
       "title": "Fixture 1001",
       "artist": [
@@ -110,7 +110,7 @@
      "loop": "None",
      "shuffle": false,
      "volume": 1.0,
-     "position_s": 1.86,
+     "position_s": 2.04,
      "track": {
       "title": "Fixture 1001",
       "artist": [
@@ -187,7 +187,7 @@
      "loop": "None",
      "shuffle": false,
      "volume": 1.0,
-     "position_s": 3.9,
+     "position_s": 4.09,
      "track": {
       "title": "Fixture 1001",
       "artist": [
@@ -271,7 +271,7 @@
      "loop": "None",
      "shuffle": false,
      "volume": 1.0,
-     "position_s": 2.3,
+     "position_s": 2.47,
      "track": {
       "title": "Fixture 1002",
       "artist": [
@@ -355,7 +355,7 @@
      "loop": "None",
      "shuffle": false,
      "volume": 1.0,
-     "position_s": 3.29,
+     "position_s": 2.47,
      "track": {
       "title": "Fixture 1002",
       "artist": [

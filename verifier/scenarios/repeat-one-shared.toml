@@ -1,0 +1,22 @@
+name = "repeat-one-shared"
+description = "Repeat one replays the same track instead of advancing."
+covers = ["mcp_tools:set_repeat"]
+tracks = [1005, 1006]
+audio = false
+profile = { exclusive_mode = false, bit_perfect = false }
+
+[[step]]
+label = "repeat one"
+mcp = { tool = "set_repeat", args = { mode = "one" } }
+[[step]]
+mcp = { tool = "play_tracks", args = { track_ids = [1005, 1006], action = "play_now" } }
+[[step]]
+wait_for = { "mpris.status" = "Playing", timeout = 10 }
+[[step]]
+label = "past the first loop"
+wait = 10.0
+[[step]]
+label = "repeat off"
+mcp = { tool = "set_repeat", args = { mode = "off" } }
+[[step]]
+mcp = { tool = "pause" }

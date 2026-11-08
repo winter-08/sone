@@ -26,7 +26,7 @@
      "loop": "None",
      "shuffle": false,
      "volume": 1.0,
-     "position_s": 0.93,
+     "position_s": 1.02,
      "track": {
       "title": "Fixture 1001",
       "artist": [
@@ -122,7 +122,7 @@
      "loop": "None",
      "shuffle": false,
      "volume": 1.0,
-     "position_s": 0.62,
+     "position_s": 0.79,
      "track": {
       "title": "Fixture 1003",
       "artist": [

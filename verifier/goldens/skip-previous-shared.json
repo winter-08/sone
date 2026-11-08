@@ -25,7 +25,7 @@
      "loop": "None",
      "shuffle": false,
      "volume": 1.0,
-     "position_s": 0.67,
+     "position_s": 0.52,
      "track": {
       "title": "Queue A",
       "artist": [
@@ -75,7 +75,7 @@
      "loop": "None",
      "shuffle": false,
      "volume": 1.0,
-     "position_s": 1.66,
+     "position_s": 1.5,
      "track": {
       "title": "Queue A",
       "artist": [
@@ -117,7 +117,7 @@
      "loop": "None",
      "shuffle": false,
      "volume": 1.0,
-     "position_s": 0.0,
+     "position_s": 0.74,
      "track": {
       "title": "Queue B",
       "artist": [
@@ -160,7 +160,7 @@
      "loop": "None",
      "shuffle": false,
      "volume": 1.0,
-     "position_s": 1.0,
+     "position_s": 0.84,
      "track": {
       "title": "Queue A",
       "artist": [
@@ -207,7 +207,7 @@
      "loop": "None",
      "shuffle": false,
      "volume": 1.0,
-     "position_s": 0.6,
+     "position_s": 0.44,
      "track": {
       "title": "Queue B",
       "artist": [
@@ -246,7 +246,7 @@
      "loop": "None",
      "shuffle": false,
      "volume": 1.0,
-     "position_s": 5.57,
+     "position_s": 5.39,
      "track": {
       "title": "Queue B",
       "artist": [
@@ -286,7 +286,7 @@
      "loop": "None",
      "shuffle": false,
      "volume": 1.0,
-     "position_s": 1.33,
+     "position_s": 1.17,
      "track": {
       "title": "Queue B",
       "artist": [
@@ -324,7 +324,7 @@
      "loop": "None",
      "shuffle": false,
      "volume": 1.0,
-     "position_s": 2.31,
+     "position_s": 2.16,
      "track": {
       "title": "Queue B",
       "artist": [

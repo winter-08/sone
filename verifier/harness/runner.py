@@ -20,7 +20,8 @@ audio (false to skip audio comparison), profile (settings.json overrides),
 quarantine (reason; record/check skip the scenario and say why), views (true: also snapshot the
 visible controls after every step, for per-view L3 comparison and scoring), settings (list of
 settings.json keys to record after every step).
-UI step forms: ui = { press = NAME [, role] } | ui = { type = TEXT, into = NAME [, role] };
+UI step forms: ui = { press = NAME [, role] [, nth] } | ui = { type = TEXT, into = NAME [, role]
+[, select_all = true] };
 key = "Return" presses one key.
 """
 import json
@@ -95,6 +96,9 @@ class Session:
             if "type" in u:  # focus a named field, then type real keystrokes
                 atspi.focus(u["into"], u.get("role"), u.get("nth", 0))
                 time.sleep(0.2)
+                if u.get("select_all"):  # replace what's there
+                    atspi.key("ctrl+a")
+                    time.sleep(0.1)
                 atspi.type_text(u["type"])
                 return None
             raise ValueError(f"unknown ui action: {u}")

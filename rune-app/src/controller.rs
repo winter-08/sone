@@ -62,6 +62,8 @@ pub enum Cmd {
     PlayArtist { id: u64, name: String, shuffle: bool },
     /// Play these track ids now (a track clicked in search or on Home).
     PlayIds(Vec<u64>),
+    /// Append these track ids to the manual queue ("Add to queue").
+    QueueIds(Vec<u64>),
     /// Remove the item at this index of the upcoming list (queue panel).
     RemoveAt(usize),
     /// Clear the upcoming list (does not stop the current track).
@@ -118,6 +120,9 @@ pub struct View {
     pub exclusive: bool,
     pub signed_in: bool,
     pub login: Login,
+    /// The current track's radio (mixes.TRACK_MIX) and main artist, for the drawer tabs.
+    pub track_mix: Option<String>,
+    pub artist_id: Option<u64>,
     /// The stream's quality badge text, as the React bar renders it.
     pub badge: Option<String>,
 }
@@ -712,6 +717,9 @@ impl Player {
             }
             Cmd::SetMaxQuality(q) => {
                 let _ = utility::set_max_quality(self.state(), q);
+            }
+            Cmd::QueueIds(ids) => {
+                self.mcp_play_tracks(&json!({"trackIds": ids, "action": "queue"})).await;
             }
             Cmd::PlayIds(ids) => {
                 self.mcp_play_tracks(&json!({"trackIds": ids, "action": "play_now"})).await;
@@ -1871,6 +1879,8 @@ impl Player {
             exclusive: self.exclusive,
             signed_in: self.signed_in,
             login: self.login.clone(),
+            track_mix: self.current.as_ref().and_then(|t| t["mixes"]["TRACK_MIX"].as_str()).map(str::to_string),
+            artist_id: self.current.as_ref().and_then(|t| t["artist"]["id"].as_u64().or(t["artists"][0]["id"].as_u64())),
             // With the stream gone (track ended), the React badge shows the track's tier.
             badge: badge_text(&self.stream_info).or_else(|| self.current.as_ref().and_then(|t| tier(t["audioQuality"].as_str()).map(str::to_string))),
         };

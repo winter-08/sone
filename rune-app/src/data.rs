@@ -30,6 +30,9 @@ pub enum Key {
     /// A TIDAL page by api path (Explore: "pages/explore", genre pages, view-all pages).
     Page(String),
     Feed,
+    Credits(u64),
+    ArtistBio(u64),
+    Mix(String),
 }
 
 #[derive(Clone)]
@@ -141,6 +144,9 @@ async fn fetch(key: &Key) -> Result<Value, String> {
         Key::Lyrics(id) => v!(metadata::get_track_lyrics(st(), *id)),
         Key::Page(path) => v!(pages::get_page_section(st(), h.clone(), path.clone())),
         Key::Feed => v!(tauri_app_lib::commands::feed::get_feed(st(), user_id())),
+        Key::Credits(id) => v!(metadata::get_track_credits(st(), *id)),
+        Key::ArtistBio(id) => v!(pages::get_artist_bio(st(), h.clone(), *id)),
+        Key::Mix(id) => v!(pages::get_mix_items(st(), id.clone())),
     })
 }
 

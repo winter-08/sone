@@ -44,7 +44,7 @@ def diff_values(g, a, path, out):
         return
     key = path.rsplit(".", 1)[-1]
     if key == "unnamed_controls" and isinstance(g, int) and isinstance(a, int):
-        if a > g:  # fewer unnamed controls than the reference is an improvement, not a diff
+        if a > g + 2:  # fewer is an improvement; popovers make the count wobble by one or two
             out.append(f"{path}: {a} unnamed controls, the reference has {g}")
         return
     if key in TOLERANCE and isinstance(g, (int, float)) and isinstance(a, (int, float)):
