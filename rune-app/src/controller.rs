@@ -125,6 +125,8 @@ pub struct View {
     pub artist_id: Option<u64>,
     /// The stream's quality badge text, as the React bar renders it.
     pub badge: Option<String>,
+    /// The current track's album cover (a CDN uuid or URL), for the bar and the miniplayer.
+    pub cover: Option<String>,
 }
 
 static VIEW: OnceLock<Mutex<View>> = OnceLock::new();
@@ -1904,6 +1906,7 @@ impl Player {
             artist_id: self.current.as_ref().and_then(|t| t["artist"]["id"].as_u64().or(t["artists"][0]["id"].as_u64())),
             // With the stream gone (track ended), the React badge shows the track's tier.
             badge: badge_text(&self.stream_info).or_else(|| self.current.as_ref().and_then(|t| tier(t["audioQuality"].as_str()).map(str::to_string))),
+            cover: self.current.as_ref().and_then(|t| t["album"]["cover"].as_str()).filter(|c| !c.is_empty()).map(str::to_string),
         };
         // Signal windows only when something they draw changed. The controller republishes on
         // every backend event (position syncs among them), and each signal is an animated

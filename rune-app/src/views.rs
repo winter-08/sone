@@ -156,9 +156,9 @@ fn heading(label: &str, size: f32) -> El {
 
 /// A clickable catalogue card: art, a heading with its name, a subtitle. The card itself is the
 /// press target (AT-SPI clicks reach it through the heading, as with the React cards).
-fn card(key: String, title: &str, sub: &str, seed: u64, round: bool, go_to: Page) -> El {
+fn card(key: String, title: &str, sub: &str, seed: u64, round: bool, img: Option<String>, go_to: Page) -> El {
     let h = ui::hue(Some(seed));
-    let art = if round { ui::art(h, 132.0, seed, 0.0) } else { ui::tile(h, 132.0, seed, 10.0) };
+    let art = if round { ui::with_image(ui::art(h, 132.0, seed, 0.0), img, 132.0, 66.0) } else { ui::with_image(ui::tile(h, 132.0, seed, 10.0), img, 132.0, 10.0) };
     // The card adds no accessible node of its own (as in the React build, where only its
     // heading is exposed); the heading carries the press so assistive tech can open it.
     let to = go_to.clone();
@@ -251,7 +251,7 @@ fn cards_for(prefix: &str, items: &[Value]) -> Vec<El> {
             let page = item_page(it)?;
             let round = data::kind(it) == "ARTIST";
             let seed = data::data(it)["id"].as_u64().unwrap_or(i as u64 + 1);
-            Some(card(format!("{prefix}-{i}"), &data::name(it), &data::artist_of(it), seed, round, page))
+            Some(card(format!("{prefix}-{i}"), &data::name(it), &data::artist_of(it), seed, round, crate::art::item_url(it, 132.0), page))
         })
         .collect()
 }
@@ -412,7 +412,7 @@ pub fn sidebar(s: &App) -> El {
     let mut list = col().w_full().gap(2.0);
     match s.nav.lib {
         LibTab::Playlists => {
-            list = list.child(lib_row("lib-loved", "Loved Tracks Collection", "Loved Tracks", "Collection", 9, None));
+            list = list.child(lib_row("lib-loved", "Loved Tracks Collection", "Loved Tracks", "Collection", 9, None, None));
             if let Some(f) = data::ready(Key::Folders) {
                 for (i, it) in f["items"].as_array().cloned().unwrap_or_default().iter().enumerate() {
                     let d = &it["data"];
@@ -422,7 +422,7 @@ pub fn sidebar(s: &App) -> El {
                     let uuid = d["uuid"].as_str().unwrap_or("").to_string();
                     // The React row's accessible name is its cover's alt text, title and subtitle.
                     let label = format!("{title} {title} {sub}");
-                    list = list.child(lib_row(&format!("lib-pl-{i}"), &label, &title, &sub, i as u64 + 20, Some(Page::Playlist(uuid))));
+                    list = list.child(lib_row(&format!("lib-pl-{i}"), &label, &title, &sub, i as u64 + 20, crate::art::item_url(it, 40.0), Some(Page::Playlist(uuid))));
                 }
             }
         }
@@ -454,9 +454,9 @@ pub fn sidebar(s: &App) -> El {
         .child(ui::smooth_wheel::<App>(col().grow(1.0).min_h(0.0).w_full().scroll(ScrollSpec { stick_bottom: false }).child(list), "lib-scroll".into()))
 }
 
-fn lib_row(key: &str, label: &str, title: &str, sub: &str, seed: u64, page: Option<Page>) -> El {
+fn lib_row(key: &str, label: &str, title: &str, sub: &str, seed: u64, img: Option<String>, page: Option<Page>) -> El {
     let mut r = row().key(key.to_string()).role("button").label(label).w_full().h(52.0).px(8.0).gap(10.0).radius(8.0).items_center().hover(white(0.06)).cursor(rune::Cursor::Pointer)
-        .child(ui::tile(ui::hue(Some(seed)), 40.0, seed, 6.0))
+        .child(ui::with_image(ui::tile(ui::hue(Some(seed)), 40.0, seed, 6.0), img, 40.0, 6.0))
         .child(col().min_w(0.0).a11y_hidden().child(text(title.to_string()).font(t(13.0, 600.0)).color(white(0.92)).truncate()).child(text(sub.to_string()).font(t(11.0, 400.0)).color(white(0.55)).truncate()));
     if let Some(p) = page {
         r = r.on_press(move |s: &mut App| go(s, p.clone()));
@@ -470,7 +470,7 @@ fn lib_list(key: Key) -> El {
     for (i, it) in v["items"].as_array().cloned().unwrap_or_default().iter().enumerate() {
         let name = data::name(it);
         let page = item_page(it).or_else(|| data::data(it)["id"].as_u64().map(Page::Album));
-        c = c.child(lib_row(&format!("lib-{key:?}-{i}"), &name, &name, &data::artist_of(it), i as u64 + 40, page));
+        c = c.child(lib_row(&format!("lib-{key:?}-{i}"), &name, &name, &data::artist_of(it), i as u64 + 40, crate::art::item_url(it, 40.0), page));
     }
     c
 }
@@ -542,7 +542,7 @@ fn home() -> El {
                 let id = data::data(it)["id"].as_u64().unwrap_or(0);
                 r = r.child(col().key(format!("home-{si}-t{i}")).role("presentation").w(148.0).padding(8.0).gap(6.0).radius(12.0).hover(white(0.06)).cursor(rune::Cursor::Pointer)
                     .on_press(move |_: &mut App| controller::send_play_ids(vec![id]))
-                    .child(ui::tile(ui::hue(Some(id)), 132.0, id, 10.0))
+                    .child(ui::with_image(ui::tile(ui::hue(Some(id)), 132.0, id, 10.0), crate::art::item_url(it, 132.0), 132.0, 10.0))
                     .child(text(data::name(it)).font(t(13.0, 600.0)).color(white(0.9)).truncate()));
             }
             s = s.child(r);
@@ -562,13 +562,13 @@ fn play_label(v: &View, source_name: &str) -> &'static str {
     }
 }
 
-fn hero(title: &str, title_heading: bool, sub: &str, seed: u64, round: bool, actions: El) -> El {
-    hero_with(title, title_heading, text(sub.to_string()).font(t(13.0, 500.0)).color(white(0.6)), seed, round, actions)
+fn hero(title: &str, title_heading: bool, sub: &str, seed: u64, round: bool, img: Option<String>, actions: El) -> El {
+    hero_with(title, title_heading, text(sub.to_string()).font(t(13.0, 500.0)).color(white(0.6)), seed, round, img, actions)
 }
 
-fn hero_with(title: &str, title_heading: bool, sub: El, seed: u64, round: bool, actions: El) -> El {
+fn hero_with(title: &str, title_heading: bool, sub: El, seed: u64, round: bool, img: Option<String>, actions: El) -> El {
     let h = ui::hue(Some(seed));
-    let art = if round { ui::art(h, 180.0, seed, 0.0) } else { ui::tile(h, 180.0, seed, 14.0) };
+    let art = if round { ui::with_image(ui::art(h, 180.0, seed, 0.0), img, 180.0, 90.0) } else { ui::with_image(ui::tile(h, 180.0, seed, 14.0), img, 180.0, 14.0) };
     let title_el = if title_heading { heading(title, 30.0) } else { text(title.to_string()).font(t(30.0, 650.0)).color(white(0.95)) };
     row().w_full().gap(24.0).items_end()
         .child(art)
@@ -632,7 +632,7 @@ fn album(id: u64, v: &View) -> El {
         .child(icon::<App>("album-fav", "Favorite album", G::Heart))
         .child(icon::<App>("album-share", "Share album", G::PopOut))
         .child(icon::<App>("album-more", "More options", G::List));
-    let mut c = col().w_full().gap(18.0).child(hero_with(&title, true, album_byline(a), id, false, actions));
+    let mut c = col().w_full().gap(18.0).child(hero_with(&title, true, album_byline(a), id, false, crate::art::item_url(a, 180.0), actions));
     let mut rows = col().w_full().gap(2.0);
     for (i, tr) in tracks.iter().enumerate() {
         let (all, src, idx) = (tracks.clone(), json!({"type": "album", "id": id, "name": title}), i);
@@ -670,7 +670,7 @@ fn artist(id: u64, v: &View) -> El {
         .child(icon::<App>("artist-share", "Share", G::PopOut))
         .child(icon::<App>("artist-more", "More", G::List));
     let fans = p["header"]["followersAmount"].as_u64().unwrap_or(0);
-    let mut c = col().w_full().gap(18.0).child(hero(&name, true, &format!("{fans} fans"), id, true, actions));
+    let mut c = col().w_full().gap(18.0).child(hero(&name, true, &format!("{fans} fans"), id, true, crate::art::artist_picture(a, 180.0), actions));
     if let Some(bio) = p["header"]["biography"]["text"].as_str() {
         c = c.child(col().gap(6.0).child(text(bio.to_string()).font(t(13.0, 400.0)).color(white(0.7)).wrap())
             .child(row().key("bio-more").role("button").label("Read more").cursor(rune::Cursor::Pointer).child(text("Read more").font(t(12.0, 650.0)).color(white(0.85)).a11y_hidden())));
@@ -732,7 +732,7 @@ fn playlist(s: &App, uuid: &str, v: &View) -> El {
         }));
     }
     col().w_full().gap(16.0)
-        .child(hero(&title, true, &format!("{creator} · {n} tracks"), 30, false, actions))
+        .child(hero(&title, true, &format!("{creator} · {n} tracks"), 30, false, crate::art::item_url(d, 180.0), actions))
         .child(row().h(40.0).px(12.0).radius(10.0).items_center().fill(white(0.06)).child(filter))
         .child(rows)
 }
@@ -1100,7 +1100,7 @@ pub fn queue_panel(v: &View) -> El {
     if let Some(cur) = &v.current {
         c = c.child(heading("NOW PLAYING", 11.0))
             .child(row().w_full().gap(10.0).items_center().padding(6.0)
-                .child(ui::tile(ui::hue(Some(cur.id)), 44.0, cur.id, 6.0))
+                .child(ui::with_image(ui::tile(ui::hue(Some(cur.id)), 44.0, cur.id, 6.0), crate::art::cover(v.cover.as_deref(), 44.0), 44.0, 6.0))
                 .child(col().grow(1.0).min_w(0.0).child(heading(&cur.title, 14.0)).child(text(cur.artist.clone()).font(t(12.0, 400.0)).color(white(0.55))))
                 .child(icon::<App>("qp-love", "Add to Loved tracks", G::Heart)));
     }
@@ -1310,7 +1310,7 @@ fn feed() -> El {
         let id = item["id"].clone();
         let (t2, k2) = (title.clone(), kind.clone());
         c = c.child(row().key(format!("feed-{i}")).w_full().h(64.0).px(10.0).gap(12.0).items_center().radius(10.0).hover(white(0.05))
-            .child(ui::tile(ui::hue(Some(i as u64 + 60)), 48.0, i as u64 + 60, 8.0))
+            .child(ui::with_image(ui::tile(ui::hue(Some(i as u64 + 60)), 48.0, i as u64 + 60, 8.0), crate::art::item_url(item, 48.0), 48.0, 8.0))
             .child(col().grow(1.0).min_w(0.0).child(text(title.clone()).font(t(14.0, 600.0)).color(white(0.95)).truncate()).child(text(sub).font(t(12.0, 400.0)).color(white(0.55)).truncate()))
             .child(icon::<App>(&format!("feed-{i}-play"), &format!("Play {title}"), G::Play).on_press(move |_: &mut App| play_feed_item(&k2, id.clone(), &t2)))
             .child(icon::<App>(&format!("feed-{i}-more"), &format!("More options for {title}"), G::List)));

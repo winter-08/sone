@@ -6,6 +6,7 @@
 //! (controller.rs), the views fetch catalogue data through the same commands (data.rs), and
 //! the Rune window draws both (views.rs, ui.rs).
 
+mod art;
 mod controller;
 mod data;
 mod glyph;
@@ -60,7 +61,7 @@ fn mini_view(_: &Mini, _: &mut Cx<Mini>) -> El {
     };
     col().key("mini-root").w_full().h_full().padding(14.0).gap(10.0).fill(ui::base(h))
         .child(row().gap(12.0).items_center()
-            .child(ui::tile(h, 56.0, v.track_id.unwrap_or(0), 8.0))
+            .child(ui::with_image(ui::tile(h, 56.0, v.track_id.unwrap_or(0), 8.0), art::cover(v.cover.as_deref(), 56.0), 56.0, 8.0))
             .child(col().grow(1.0).min_w(0.0)
                 .child(rune::text(if v.title.is_empty() { "Nothing playing".to_string() } else { v.title.clone() }).font(ui::t(14.0, 600.0)).color(ui::white(0.95)).truncate())
                 .child(rune::text(v.artist.clone()).font(ui::t(12.0, 400.0)).color(ui::white(0.6)).truncate()))
@@ -90,7 +91,8 @@ fn poll(s: &mut App, _: f64, tx: &mut Tx) -> bool {
         tx.wake_after(Duration::from_millis(50));
     }
     let (state, ticks) = controller::versions();
-    let v = (state, ticks, data::version());
+    // new data, or a downloaded cover to attach
+    let v = (state, ticks, data::version().wrapping_add(art::version() << 32));
     tx.wake_after(Duration::from_millis(200));
     let changed = v != s.seen;
     // A clock tick (or a seek bar drag) lands at once; a seek, a new track or new data animate.
@@ -116,7 +118,8 @@ fn on_key(s: &mut App, e: &KeyEvent, _: &mut Tx) -> bool {
     true
 }
 
-fn view(s: &App, _: &mut Cx<App>) -> El {
+fn view(s: &App, cx: &mut Cx<App>) -> El {
+    art::set_scale(cx.env().scale);
     let v = controller::view();
     let h = ui::hue(v.track_id);
     // Shell data (Home, folders, ...) is loaded by the controller once signed in.
@@ -161,6 +164,7 @@ fn main() {
     let logging_enabled = backend::logging::read_logging_preference(&sone_dir.join("logging.toggle"));
     let _logger = backend::logging::init_logging(sone_dir.join("logs"), logging_enabled);
 
+    art::prune_disk_cache();
     let handle = AppHandle::new();
     let _ = HOST.set(handle.clone());
     // Route every backend event to the controller before anything can emit.

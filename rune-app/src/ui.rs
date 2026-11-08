@@ -71,6 +71,16 @@ pub fn tile(hue: f32, size: f32, seed: u64, radius: f32) -> El {
         .child(art(hue, size * 1.15, seed, 0.0))
 }
 
+/// `placeholder` (an Afterglow tile or disc, `size` points square) with the image at `url`
+/// laid over it, once there is one: the placeholder shows while it downloads and decodes, and
+/// whenever there's no image. Corners follow `radius`.
+pub fn with_image(placeholder: El, url: Option<String>, size: f32, radius: f32) -> El {
+    match url.and_then(|u| crate::art::pixels(&u)) {
+        Some(px) => placeholder.child(el().absolute(0.0, 0.0).size(size, size).radius(radius).pixels_fit(&px, rune::SurfaceFit::Fill)),
+        None => placeholder,
+    }
+}
+
 pub fn icon_button<S: 'static>(key: &str, label: &str, g: G, size: f32, c: Color) -> El {
     el().key(key.to_string())
         .role("button")
@@ -216,7 +226,7 @@ pub fn nowbar<S: 'static>(v: &View, extras: El) -> El {
         .w(300.0)
         .gap(12.0)
         .items_center()
-        .child(tile(h, 48.0, seed, 8.0))
+        .child(with_image(tile(h, 48.0, seed, 8.0), crate::art::cover(v.cover.as_deref(), 48.0), 48.0, 8.0))
         .child(
             col()
                 .grow(1.0)
