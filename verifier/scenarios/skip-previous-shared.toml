@@ -1,0 +1,28 @@
+name = "skip-previous-shared"
+description = "skip_previous early in a track vs. late in a track (restart-or-go-back rule)."
+covers = ["mcp_tools:skip_previous", "mcp_tools:skip_next"]
+tracks = [1005, 1006]
+audio = false
+profile = { exclusive_mode = false, bit_perfect = false }
+
+[[step]]
+mcp = { tool = "play_tracks", args = { track_ids = [1005, 1006], action = "play_now" } }
+[[step]]
+wait_for = { "mpris.status" = "Playing", timeout = 10 }
+[[step]]
+label = "to B"
+mcp = { tool = "skip_next" }
+settle = 0.5
+[[step]]
+label = "previous early in B"
+mcp = { tool = "skip_previous" }
+[[step]]
+label = "forward to B again"
+mcp = { tool = "skip_next" }
+[[step]]
+wait = 4.5
+[[step]]
+label = "previous late in B"
+mcp = { tool = "skip_previous" }
+[[step]]
+wait = 1.0

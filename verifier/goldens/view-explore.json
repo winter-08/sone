@@ -1,0 +1,359 @@
+{
+ "scenario": "view-explore",
+ "steps": [
+  {
+   "i": 0,
+   "label": "explore",
+   "action": {
+    "ui": {
+     "press": "Explore"
+    }
+   },
+   "result": "button: Explore",
+   "state": {
+    "mpris": {
+     "status": "Paused",
+     "loop": "None",
+     "shuffle": false,
+     "volume": 1.0,
+     "position_s": 0.0,
+     "track": null
+    },
+    "now_playing": null,
+    "queue": [],
+    "controls": [
+     "button: 2020s",
+     "button: Account",
+     "button: Albums",
+     "button: Artists",
+     "button: Close",
+     "button: Explore",
+     "button: Feed",
+     "button: Fixture Mixtape Fixture Mixtape You \u00b7 4 Tracks",
+     "button: Fixture Pop",
+     "button: Focus",
+     "button: Go back",
+     "button: Go forward",
+     "button: HiRes",
+     "button: Home",
+     "button: Late Night",
+     "button: Loved Tracks Collection",
+     "button: Lyrics",
+     "button: Maximize",
+     "button: Minimize",
+     "button: Mixes",
+     "button: New",
+     "button: Play queue",
+     "button: Playlists",
+     "button: Show all",
+     "button: Sort by: Last updated",
+     "button: Synthetic Jazz",
+     "button: Top",
+     "button: View all",
+     "button: Your Library",
+     "entry: Search",
+     "heading: Decades",
+     "heading: Explore",
+     "heading: Genres",
+     "heading: Moods & Activities"
+    ]
+   },
+   "net": [
+    "GET api.tidal.com/v1/pages/explore?countryCode=US"
+   ]
+  },
+  {
+   "i": 1,
+   "label": "genre page",
+   "action": {
+    "ui": {
+     "press": "Fixture Pop"
+    }
+   },
+   "result": "button: Fixture Pop",
+   "state": {
+    "mpris": {
+     "status": "Paused",
+     "loop": "None",
+     "shuffle": false,
+     "volume": 1.0,
+     "position_s": 0.0,
+     "track": null
+    },
+    "now_playing": null,
+    "queue": [],
+    "controls": [
+     "button: Account",
+     "button: Albums",
+     "button: Artists",
+     "button: Close",
+     "button: Explore",
+     "button: Feed",
+     "button: Fixture Mixtape Fixture Mixtape You \u00b7 4 Tracks",
+     "button: Go back",
+     "button: Go forward",
+     "button: Home",
+     "button: Loved Tracks Collection",
+     "button: Lyrics",
+     "button: Maximize",
+     "button: Minimize",
+     "button: Mixes",
+     "button: Play queue",
+     "button: Playlists",
+     "button: Show all",
+     "button: Sort by: Last updated",
+     "button: Your Library",
+     "entry: Search",
+     "heading: Fixture Album",
+     "heading: Fixture Artist",
+     "heading: Fixture Mixtape",
+     "heading: Fixture Pop",
+     "heading: Fixture Pop Albums",
+     "heading: Fixture Pop Artists",
+     "heading: Fixture Pop Playlists",
+     "heading: Fixture Pop Tracks"
+    ]
+   },
+   "net": [
+    "GET api.tidal.com/v1/pages/genre_fixture_pop?countryCode=US"
+   ]
+  },
+  {
+   "i": 2,
+   "label": "back",
+   "action": {
+    "ui": {
+     "press": "Go back"
+    }
+   },
+   "result": "button: Go back",
+   "state": {
+    "mpris": {
+     "status": "Paused",
+     "loop": "None",
+     "shuffle": false,
+     "volume": 1.0,
+     "position_s": 0.0,
+     "track": null
+    },
+    "now_playing": null,
+    "queue": [],
+    "controls": [
+     "button: 2020s",
+     "button: Account",
+     "button: Albums",
+     "button: Artists",
+     "button: Close",
+     "button: Explore",
+     "button: Feed",
+     "button: Fixture Mixtape Fixture Mixtape You \u00b7 4 Tracks",
+     "button: Fixture Pop",
+     "button: Focus",
+     "button: Go back",
+     "button: Go forward",
+     "button: HiRes",
+     "button: Home",
+     "button: Late Night",
+     "button: Loved Tracks Collection",
+     "button: Lyrics",
+     "button: Maximize",
+     "button: Minimize",
+     "button: Mixes",
+     "button: New",
+     "button: Play queue",
+     "button: Playlists",
+     "button: Show all",
+     "button: Sort by: Last updated",
+     "button: Synthetic Jazz",
+     "button: Top",
+     "button: View all",
+     "button: Your Library",
+     "entry: Search",
+     "heading: Decades",
+     "heading: Explore",
+     "heading: Genres",
+     "heading: Moods & Activities"
+    ]
+   },
+   "net": []
+  },
+  {
+   "i": 3,
+   "label": "view all genres",
+   "action": {
+    "ui": {
+     "press": "View all",
+     "nth": 0
+    }
+   },
+   "result": "button: View all",
+   "state": {
+    "mpris": {
+     "status": "Paused",
+     "loop": "None",
+     "shuffle": false,
+     "volume": 1.0,
+     "position_s": 0.0,
+     "track": null
+    },
+    "now_playing": null,
+    "queue": [],
+    "controls": [
+     "button: Account",
+     "button: Albums",
+     "button: Artists",
+     "button: Close",
+     "button: Explore",
+     "button: Feed",
+     "button: Fixture Mixtape Fixture Mixtape You \u00b7 4 Tracks",
+     "button: Fixture Pop",
+     "button: Go back",
+     "button: Go forward",
+     "button: Home",
+     "button: Loved Tracks Collection",
+     "button: Lyrics",
+     "button: Maximize",
+     "button: Minimize",
+     "button: Mixes",
+     "button: Play queue",
+     "button: Playlists",
+     "button: Show all",
+     "button: Sort by: Last updated",
+     "button: Synthetic Jazz",
+     "button: Your Library",
+     "entry: Search",
+     "heading: Genres"
+    ]
+   },
+   "net": [
+    "GET api.tidal.com/v1/pages/genre_page?countryCode=US"
+   ]
+  }
+ ],
+ "errors": [],
+ "initial": {
+  "state": {
+   "mpris": {
+    "status": "Paused",
+    "loop": "None",
+    "shuffle": false,
+    "volume": 1.0,
+    "position_s": 0.0,
+    "track": null
+   },
+   "now_playing": null,
+   "queue": [],
+   "controls": [
+    "button: Account",
+    "button: Albums",
+    "button: Artists",
+    "button: Close",
+    "button: Explore",
+    "button: Feed",
+    "button: Fixture Mixtape Fixture Mixtape You \u00b7 4 Tracks",
+    "button: Go back",
+    "button: Go forward",
+    "button: Home",
+    "button: Loved Tracks Collection",
+    "button: Lyrics",
+    "button: Maximize",
+    "button: Minimize",
+    "button: Mixes",
+    "button: Play queue",
+    "button: Playlists",
+    "button: Show all",
+    "button: Sort by: Last updated",
+    "button: Your Library",
+    "entry: Search",
+    "heading: Fixture Album",
+    "heading: Fixture Albums",
+    "heading: Fixture Artist",
+    "heading: Fixture Artists",
+    "heading: Fixture Mixtape",
+    "heading: Fixture Playlists",
+    "heading: Fixture Tracks",
+    "heading: Mock Ensemble",
+    "heading: Queue Suite",
+    "heading: Synthetic Selections"
+   ]
+  },
+  "tray": [
+   "Show",
+   "Play / Pause",
+   "Next Track",
+   "Previous Track",
+   "Quit"
+  ],
+  "controls": [
+   "button: Account",
+   "button: Albums",
+   "button: Artists",
+   "button: Close",
+   "button: Explore",
+   "button: Feed",
+   "button: Fixture Mixtape Fixture Mixtape You \u00b7 4 Tracks",
+   "button: Go back",
+   "button: Go forward",
+   "button: Home",
+   "button: Loved Tracks Collection",
+   "button: Lyrics",
+   "button: Maximize",
+   "button: Minimize",
+   "button: Mixes",
+   "button: Play queue",
+   "button: Playlists",
+   "button: Show all",
+   "button: Sort by: Last updated",
+   "button: Your Library",
+   "entry: Search",
+   "heading: Fixture Album",
+   "heading: Fixture Albums",
+   "heading: Fixture Artist",
+   "heading: Fixture Artists",
+   "heading: Fixture Mixtape",
+   "heading: Fixture Playlists",
+   "heading: Fixture Tracks",
+   "heading: Mock Ensemble",
+   "heading: Queue Suite",
+   "heading: Synthetic Selections"
+  ]
+ },
+ "final": {
+  "tray": [
+   "Show",
+   "Play / Pause",
+   "Next Track",
+   "Previous Track",
+   "Quit"
+  ],
+  "controls": [
+   "button: Account",
+   "button: Albums",
+   "button: Artists",
+   "button: Close",
+   "button: Explore",
+   "button: Feed",
+   "button: Fixture Mixtape Fixture Mixtape You \u00b7 4 Tracks",
+   "button: Fixture Pop",
+   "button: Go back",
+   "button: Go forward",
+   "button: Home",
+   "button: Loved Tracks Collection",
+   "button: Lyrics",
+   "button: Maximize",
+   "button: Minimize",
+   "button: Mixes",
+   "button: Play queue",
+   "button: Playlists",
+   "button: Show all",
+   "button: Sort by: Last updated",
+   "button: Synthetic Jazz",
+   "button: Your Library",
+   "entry: Search",
+   "heading: Genres"
+  ],
+  "unnamed_controls": 7,
+  "opened": []
+ },
+ "audio": {}
+}

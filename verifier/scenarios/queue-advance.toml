@@ -1,0 +1,16 @@
+name = "queue-advance"
+description = "Three same-format tracks play through in order, gaplessly, then playback stops."
+covers = ["mcp_tools:play_tracks", "events:track-finished", "settings:gapless"]
+tracks = [1005, 1006, 1007]
+
+[[step]]
+mcp = { tool = "play_tracks", args = { track_ids = [1005, 1006, 1007], action = "play_now" } }
+[[step]]
+label = "second track"
+wait_for = { "mpris.track.title" = "Queue B", timeout = 15 }
+[[step]]
+label = "third track"
+wait_for = { "mpris.track.title" = "Queue C", timeout = 15 }
+[[step]]
+label = "end of queue"
+wait_for = { "mpris.status" = "Paused", timeout = 15 }

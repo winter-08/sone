@@ -1,0 +1,282 @@
+{
+ "overall": 0.987,
+ "scenarios": {
+  "dash-hires": {
+   "controls_recall": 1.0,
+   "controls_precision": 1.0,
+   "net": 1.0,
+   "behaviour": 1.0,
+   "audio": 1.0,
+   "total": 1.0
+  },
+  "mpris-control": {
+   "controls_recall": 1.0,
+   "controls_precision": 1.0,
+   "net": 1.0,
+   "behaviour": 1.0,
+   "audio": 1.0,
+   "total": 1.0
+  },
+  "mpris-pause-play-shared": {
+   "controls_recall": 1.0,
+   "controls_precision": 1.0,
+   "net": 1.0,
+   "behaviour": 1.0,
+   "total": 1.0
+  },
+  "pause-resume-shared": {
+   "controls_recall": 1.0,
+   "controls_precision": 1.0,
+   "net": 1.0,
+   "behaviour": 1.0,
+   "total": 1.0
+  },
+  "play-single": {
+   "controls_recall": 1.0,
+   "controls_precision": 1.0,
+   "net": 1.0,
+   "behaviour": 1.0,
+   "audio": 1.0,
+   "total": 1.0
+  },
+  "queue-advance": {
+   "controls_recall": 1.0,
+   "controls_precision": 1.0,
+   "net": 1.0,
+   "behaviour": 1.0,
+   "audio": 1.0,
+   "total": 1.0
+  },
+  "queue-ops": {
+   "controls_recall": 1.0,
+   "controls_precision": 1.0,
+   "net": 1.0,
+   "behaviour": 1.0,
+   "total": 1.0
+  },
+  "rate-switch": {
+   "controls_recall": 1.0,
+   "controls_precision": 1.0,
+   "net": 1.0,
+   "behaviour": 1.0,
+   "audio": 1.0,
+   "total": 1.0
+  },
+  "repeat-all": {
+   "controls_recall": 1.0,
+   "controls_precision": 1.0,
+   "net": 1.0,
+   "behaviour": 1.0,
+   "audio": 1.0,
+   "total": 1.0
+  },
+  "repeat-one": {
+   "controls_recall": 1.0,
+   "controls_precision": 1.0,
+   "net": 1.0,
+   "behaviour": 1.0,
+   "audio": 1.0,
+   "total": 1.0
+  },
+  "seek-shared": {
+   "controls_recall": 1.0,
+   "controls_precision": 1.0,
+   "net": 1.0,
+   "behaviour": 1.0,
+   "total": 1.0
+  },
+  "shuffle-toggle": {
+   "controls_recall": 1.0,
+   "controls_precision": 1.0,
+   "net": null,
+   "behaviour": 1.0,
+   "total": 1.0
+  },
+  "signin": {
+   "controls_recall": 1.0,
+   "controls_precision": 1.0,
+   "net": 1.0,
+   "behaviour": 1.0,
+   "total": 1.0
+  },
+  "skip-next": {
+   "controls_recall": 1.0,
+   "controls_precision": 1.0,
+   "net": 1.0,
+   "behaviour": 1.0,
+   "audio": 1.0,
+   "total": 1.0
+  },
+  "skip-previous-shared": {
+   "controls_recall": 1.0,
+   "controls_precision": 1.0,
+   "net": 1.0,
+   "behaviour": 1.0,
+   "total": 1.0
+  },
+  "tray-control": {
+   "controls_recall": 1.0,
+   "controls_precision": 1.0,
+   "net": 1.0,
+   "behaviour": 1.0,
+   "audio": 1.0,
+   "total": 1.0
+  },
+  "view-account": {
+   "controls_recall": 0.879,
+   "controls_precision": 0.989,
+   "net": null,
+   "behaviour": 0.667,
+   "total": 0.845
+  },
+  "view-album": {
+   "controls_recall": 1.0,
+   "controls_precision": 1.0,
+   "net": 1.0,
+   "behaviour": 1.0,
+   "total": 1.0
+  },
+  "view-artist": {
+   "controls_recall": 1.0,
+   "controls_precision": 1.0,
+   "net": 1.0,
+   "behaviour": 1.0,
+   "total": 1.0
+  },
+  "view-explore": {
+   "controls_recall": 0.989,
+   "controls_precision": 0.96,
+   "net": 1.0,
+   "behaviour": 1.0,
+   "total": 0.987
+  },
+  "view-feed": {
+   "controls_recall": 1.0,
+   "controls_precision": 1.0,
+   "net": 1.0,
+   "behaviour": 1.0,
+   "total": 1.0
+  },
+  "view-home": {
+   "controls_recall": 1.0,
+   "controls_precision": 1.0,
+   "net": null,
+   "behaviour": 1.0,
+   "total": 1.0
+  },
+  "view-library": {
+   "controls_recall": 1.0,
+   "controls_precision": 1.0,
+   "net": 0.667,
+   "behaviour": 1.0,
+   "total": 0.917
+  },
+  "view-lyrics": {
+   "controls_recall": 1.0,
+   "controls_precision": 1.0,
+   "net": 1.0,
+   "behaviour": 1.0,
+   "total": 1.0
+  },
+  "view-miniplayer": {
+   "controls_recall": 1.0,
+   "controls_precision": 1.0,
+   "net": 1.0,
+   "behaviour": 1.0,
+   "total": 1.0
+  },
+  "view-playlist": {
+   "controls_recall": 1.0,
+   "controls_precision": 1.0,
+   "net": 1.0,
+   "behaviour": 1.0,
+   "total": 1.0
+  },
+  "view-queue": {
+   "controls_recall": 1.0,
+   "controls_precision": 1.0,
+   "net": 1.0,
+   "behaviour": 1.0,
+   "total": 1.0
+  },
+  "view-search": {
+   "controls_recall": 1.0,
+   "controls_precision": 1.0,
+   "net": 1.0,
+   "behaviour": 1.0,
+   "total": 1.0
+  },
+  "view-settings": {
+   "controls_recall": 0.74,
+   "controls_precision": 0.965,
+   "net": null,
+   "behaviour": 0.917,
+   "total": 0.874
+  },
+  "volume-not-bitperfect": {
+   "controls_recall": 1.0,
+   "controls_precision": 1.0,
+   "net": 1.0,
+   "behaviour": 1.0,
+   "audio": 1.0,
+   "total": 1.0
+  }
+ },
+ "missing": {
+  "button: Bit-perfect": 5,
+  "button: Exclusive output": 5,
+  "button: About": 3,
+  "button: Fixture User": 3,
+  "button: Log out": 3,
+  "button: Settings": 3,
+  "button: Shortcuts": 3,
+  "heading: Fixture Artist": 13,
+  "heading: Fixture Mixtape": 13,
+  "button: HI-RES LOSSLESS FLAC \u00b7 up to 24-bit / 192 kHz": 4,
+  "button: HIGH AAC \u00b7 up to 320 kbps": 4,
+  "button: LOSSLESS FLAC \u00b7 16-bit / 44.1 kHz": 4,
+  "heading: Fixture Album": 12,
+  "heading: Fixture Albums": 12,
+  "heading: Fixture Artists": 12,
+  "heading: Fixture Playlists": 12,
+  "heading: Fixture Tracks": 12,
+  "heading: Mock Ensemble": 12,
+  "heading: Queue Suite": 12,
+  "heading: Synthetic Selections": 12,
+  "button: Custom SONE's own in-app title bar, themed to match.": 1,
+  "button: Hidden Frameless \u2014 no title bar at all.": 1,
+  "button: System Native OS title bar and window controls.": 1,
+  "button: {album}": 1,
+  "button: {artist}": 1,
+  "button: {track}": 1,
+  "entry: {track} by {artist} on {album}": 1,
+  "button: Copy": 1,
+  "button: Regenerate token": 1,
+  "button: Reveal token": 1,
+  "button: Apply": 1,
+  "entry: 127.0.0.1": 1,
+  "button: Blossom": 1,
+  "button: Copper": 1,
+  "button: Cyberpunk": 1,
+  "button: Daylight": 1,
+  "button: Ember": 1,
+  "button: Forest": 1,
+  "button: Meadow": 1,
+  "button: Midnight Cyan": 1,
+  "button: Noir": 1,
+  "button: Ocean": 1,
+  "button: Paper": 1,
+  "button: Pick accent color": 1,
+  "button: Pick background color": 1,
+  "button: Reset to default": 1,
+  "button: Rose": 1,
+  "button: Sakura": 1,
+  "button: Snowfall": 1,
+  "button: Violet Night": 1,
+  "heading: CUSTOM": 1,
+  "heading: PRESETS": 1,
+  "heading: PREVIEW": 1,
+  "button: Open folder": 1,
+  "button: Refresh": 1
+ }
+}

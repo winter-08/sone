@@ -5,7 +5,9 @@ use sha2::{Digest, Sha256};
 use std::fs;
 use std::sync::Mutex;
 use std::sync::OnceLock;
-use tauri::{AppHandle, Emitter, Manager, State, WebviewUrl, WebviewWindowBuilder};
+use tauri::{AppHandle, Emitter, Manager, State};
+#[cfg(feature = "tauri-ui")]
+use tauri::{WebviewUrl, WebviewWindowBuilder};
 
 use crate::tidal_api::{AuthTokens, DeviceAuthResponse};
 use crate::AppState;
@@ -574,7 +576,8 @@ async fn finish_embedded_pkce(
 /// `https://tidal.com/android/login/auth?code=...`, exchanges the code
 /// for tokens using embedded credentials, persists them, closes the
 /// window, and emits `pkce-login-success` (or `pkce-login-error` /
-/// `pkce-login-cancelled` on failure paths).
+/// `pkce-login-cancelled` on failure paths). Needs a webview, so Tauri builds only.
+#[cfg(feature = "tauri-ui")]
 #[tauri::command]
 pub async fn start_pkce_login_window(app: AppHandle) -> Result<(), SoneError> {
     log::debug!("[start_pkce_login_window]");

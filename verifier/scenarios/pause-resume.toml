@@ -1,0 +1,24 @@
+name = "pause-resume"
+description = "Pause holds position and output; resume continues from the same frame."
+covers = ["mcp_tools:pause", "mcp_tools:resume"]
+tracks = [1005]
+quarantine = "exclusive-mode output after pause/seek is nondeterministic in the sandbox: stalls, restarts or continues (app writer or pipewire-alsa slave: confirm on real hardware); the -shared variant covers the logic meanwhile"
+
+[[step]]
+mcp = { tool = "play_tracks", args = { track_ids = [1005], action = "play_now" } }
+[[step]]
+wait_for = { "mpris.status" = "Playing", timeout = 10 }
+[[step]]
+wait = 1.5
+[[step]]
+label = "pause"
+mcp = { tool = "pause" }
+[[step]]
+label = "still paused"
+wait = 2.0
+[[step]]
+label = "resume"
+mcp = { tool = "resume" }
+[[step]]
+label = "end"
+wait_for = { "mpris.status" = "Paused", timeout = 15 }

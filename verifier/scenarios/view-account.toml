@@ -1,0 +1,19 @@
+name = "view-account"
+description = "The account menu, and toggling bit-perfect from it (persisted to settings.json)."
+covers = ["views:account-menu", "settings:bit_perfect"]
+views = true
+audio = false
+settings = ["bit_perfect", "exclusive_mode"]
+
+[[step]]
+label = "open account menu"
+ui = { press = "Account" }
+settle = 1.5
+[[step]]
+label = "bit-perfect off"
+ui = { press = "Bit-perfect" }
+settle = 2.0
+[[step]]
+label = "close menu"
+key = "Escape"
+settle = 1.0

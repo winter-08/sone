@@ -1,0 +1,18 @@
+name = "view-album"
+description = "Open an album from Home, then play it from the album page."
+covers = ["views:album", "views:album:play"]
+views = true
+audio = false
+
+[[step]]
+label = "open album"
+ui = { press = "Fixture Album", role = "heading" }
+settle = 2.0
+[[step]]
+label = "play album"
+ui = { press = "Play" }
+[[step]]
+label = "playing"
+wait_for = { "mpris.status" = "Playing", timeout = 10 }
+[[step]]
+mcp = { tool = "pause" }

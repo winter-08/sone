@@ -1,0 +1,18 @@
+{
+ "id": 7,
+ "name": "Fixture Artist",
+ "picture": "2a9d8f00-e9c4-46a0-b1c2-d3e4f5a6b7c8",
+ "selectedAlbumCoverFallback": "2a9d8f00-e9c4-46a0-b1c2-d3e4f5a6b7c8",
+ "popularity": 50,
+ "url": "http://www.tidal.com/artist/7",
+ "artistTypes": [
+  "ARTIST"
+ ],
+ "artistRoles": [
+  {
+   "category": "Artist",
+   "categoryId": -1
+  }
+ ],
+ "mixes": {}
+}

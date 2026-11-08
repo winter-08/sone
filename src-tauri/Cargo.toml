@@ -16,14 +16,16 @@ name = "tauri_app_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]
-tauri-build = { version = "=2.6.2", features = [] }
+tauri-build = { version = "=2.6.2", features = [], optional = true }
 
 [dependencies]
-tauri = { version = "=2.11.2", features = ["image-png"] }
-tauri-plugin-single-instance = { version = "=2.4.2", features = ["deep-link"] }
-tauri-plugin-deep-link = "=2.4.9"
+tauri = { version = "=2.11.2", features = ["image-png"], optional = true }
+# The `host` feature: the backend under a native UI, with a webview-free stand-in for Tauri.
+sone-host-shim = { path = "host-shim", optional = true }
+tauri-plugin-single-instance = { version = "=2.4.2", features = ["deep-link"], optional = true }
+tauri-plugin-deep-link = { version = "=2.4.9", optional = true }
 image = "0.25"
-tauri-plugin-opener = "=2.5.4"
+tauri-plugin-opener = { version = "=2.5.4", optional = true }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 semver = "1.0.28"
@@ -36,8 +38,8 @@ reqwest = { version = "0.11", features = ["json", "socks"] }
 tokio = { version = "1", features = ["full"] }
 base64 = "0.21"
 dirs = "5"
-tauri-plugin-window-state = "=2.4.1"
-tauri-plugin-oauth = "=2.0.0"
+tauri-plugin-window-state = { version = "=2.4.1", optional = true }
+tauri-plugin-oauth = { version = "=2.0.0", optional = true }
 rand = "0.10.1"
 sha2 = "0.10.9"
 md5 = "0.7"
@@ -47,7 +49,7 @@ notify = "8.2"
 notify-debouncer-full = "0.7"
 flexi_logger = "0.31"
 thiserror = "2"
-tauri-plugin-global-shortcut = "=2.3.1"
+tauri-plugin-global-shortcut = { version = "=2.3.1", optional = true }
 aes-gcm = "0.10"
 keyring = { version = "3", features = ["sync-secret-service"] }
 zeroize = "1"
@@ -62,9 +64,9 @@ futures-util = "0.3"
 uuid = { version = "1", features = ["v4"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
-webkit2gtk = { version = "=2.0.2", features = ["v2_4"] }
-gtk = "0.18"
-gdk = "0.18"
+webkit2gtk = { version = "=2.0.2", features = ["v2_4"], optional = true }
+gtk = { version = "0.18", optional = true }
+gdk = { version = "0.18", optional = true }
 mpris-server = "0.9"
 alsa = "0.10"
 libc = "0.2"
@@ -73,8 +75,24 @@ x11rb = { version = "0.13.2", features = ["screensaver", "dpms"] }
 wayland-client = { version = "0.31", features = ["dlopen"] }
 wayland-backend = { version = "0.3", features = ["client_system", "dlopen"] }
 wayland-protocols = { version = "0.32", features = ["client", "unstable"] }
-gdkwayland-sys = "0.18"
+gdkwayland-sys = { version = "0.18", optional = true }
 
 [dev-dependencies]
 tempfile = "3"
 proptest = "1"
+
+[features]
+default = ["tauri-ui"]
+# The shipping app: Tauri + WebKitGTK frontend.
+tauri-ui = [
+  "dep:tauri", "dep:tauri-build", "dep:tauri-plugin-single-instance", "dep:tauri-plugin-deep-link",
+  "dep:tauri-plugin-opener", "dep:tauri-plugin-window-state", "dep:tauri-plugin-oauth",
+  "dep:tauri-plugin-global-shortcut", "dep:webkit2gtk", "dep:gtk", "dep:gdk", "dep:gdkwayland-sys",
+]
+# The backend alone, for a native (Rune) UI: no webview, no GTK. See host-shim/.
+host = ["dep:sone-host-shim"]
+
+[[bin]]
+name = "sone"
+path = "src/main.rs"
+required-features = ["tauri-ui"]

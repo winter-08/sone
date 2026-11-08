@@ -1,13 +1,18 @@
+// Under `host` (a native UI instead of the webview), `tauri::` resolves to the webview-free
+// stand-in in host-shim/, so the backend compiles unchanged.
+#[cfg(all(feature = "host", not(feature = "tauri-ui")))]
+extern crate sone_host_shim as tauri;
+
 mod audio;
 pub mod cache;
-mod commands;
+pub mod commands;
 mod crypto;
 mod discord;
 mod discord_ipc;
 mod embedded_config;
 mod embedded_lastfm;
 mod embedded_librefm;
-mod error;
+pub mod error;
 mod idle_inhibit;
 pub mod logging;
 #[cfg(target_os = "linux")]
@@ -19,7 +24,7 @@ mod pipeline_probe;
 mod theme_config;
 #[cfg(target_os = "linux")]
 mod tray;
-mod tidal_api;
+pub mod tidal_api;
 mod tidal_report;
 pub mod mcp;
 pub mod overlay;
@@ -40,7 +45,9 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::{Emitter, Listener, Manager};
+#[cfg(feature = "tauri-ui")]
 use tauri_plugin_deep_link::DeepLinkExt;
+#[cfg(feature = "tauri-ui")]
 use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Shortcut, ShortcutState};
 use tidal_api::{AuthTokens, TidalClient};
 use tokio::sync::Mutex;
@@ -617,9 +624,194 @@ impl AppState {
     }
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(all(target_os = "linux", feature = "tauri-ui"))]
 mod webview_proxy_auth;
 
+/// Everything the backend needs running that doesn't involve a window: shared state, the MCP
+/// and overlay servers, the saved audio mode, scrobblers, the backend's own event listeners,
+/// the theme watcher and the tray. The Tauri app calls this from its setup hook; a native UI
+/// calls it with the host shim's `AppHandle`.
+pub fn setup_core(handle: &tauri::AppHandle) {
+    handle.manage(AppState::new(handle.clone()));
+
+    // Start MCP server in background (if enabled). ensure_mcp_started
+    // holds the mcp_handle lock across the start to stay race-free.
+    {
+        let handle_for_mcp = handle.clone();
+        tauri::async_runtime::spawn(async move {
+            crate::mcp::ensure_mcp_started(&handle_for_mcp).await;
+        });
+    }
+
+    // Start Overlay server in background (if enabled).
+    {
+        let handle_for_overlay = handle.clone();
+        tauri::async_runtime::spawn(async move {
+            crate::overlay::ensure_overlay_started(&handle_for_overlay).await;
+        });
+    }
+
+    // Apply saved audio mode to audio thread
+    {
+        let state = handle.state::<AppState>();
+        let excl = state
+            .exclusive_mode
+            .load(std::sync::atomic::Ordering::Relaxed);
+        let bp = state.bit_perfect.load(std::sync::atomic::Ordering::Relaxed);
+        let dev = state.exclusive_device.lock().unwrap().clone();
+        if excl || bp {
+            state.audio_player.set_exclusive_mode(excl, dev).ok();
+        }
+        if bp {
+            state.audio_player.set_bit_perfect(true).ok();
+        }
+        let _ = state
+            .audio_player
+            .set_gapless(state.gapless.load(std::sync::atomic::Ordering::Relaxed));
+    }
+
+    // Pre-warm audio device cache in background (GStreamer probe is slow)
+    {
+        let handle = handle.clone();
+        std::thread::spawn(move || {
+            if let Ok(devices) = crate::audio::list_alsa_devices() {
+                let state = handle.state::<AppState>();
+                *state.cached_audio_devices.lock().unwrap() = Some(devices);
+            }
+        });
+    }
+
+    // Initialize scrobble providers from saved credentials
+    {
+        let handle = handle.clone();
+        tauri::async_runtime::spawn(async move {
+            let state = handle.state::<AppState>();
+            if let Some(settings) = state.load_settings() {
+                let http_client = state.proxied_http.clone();
+
+                // Last.fm
+                if let Some(ref creds) = settings.scrobble.lastfm {
+                    if crate::embedded_lastfm::has_stream_keys() {
+                        let provider = crate::scrobble::lastfm::AudioscrobblerProvider::new(
+                            "lastfm",
+                            "https://ws.audioscrobbler.com/2.0/",
+                            "https://www.last.fm/api/auth/",
+                            crate::embedded_lastfm::stream_key_a(),
+                            crate::embedded_lastfm::stream_key_b(),
+                            http_client.clone(),
+                        );
+                        provider
+                            .set_session(creds.session_key.clone(), creds.username.clone())
+                            .await;
+                        state
+                            .scrobble_manager
+                            .add_provider(Box::new(provider))
+                            .await;
+                        log::info!("Last.fm scrobbling enabled for {}", creds.username);
+                    }
+                }
+
+                // Libre.fm
+                if let Some(ref creds) = settings.scrobble.librefm {
+                    if crate::embedded_librefm::has_stream_keys() {
+                        let provider = crate::scrobble::lastfm::AudioscrobblerProvider::new(
+                            "librefm",
+                            crate::scrobble::librefm::LIBREFM_API_URL,
+                            "https://libre.fm/api/auth/",
+                            crate::embedded_librefm::stream_key_a(),
+                            crate::embedded_librefm::stream_key_b(),
+                            http_client.clone(),
+                        );
+                        provider
+                            .set_session(creds.session_key.clone(), creds.username.clone())
+                            .await;
+                        state
+                            .scrobble_manager
+                            .add_provider(Box::new(provider))
+                            .await;
+                        log::info!("Libre.fm scrobbling enabled for {}", creds.username);
+                    }
+                }
+
+                // ListenBrainz
+                if let Some(ref creds) = settings.scrobble.listenbrainz {
+                    let provider =
+                        crate::scrobble::listenbrainz::ListenBrainzProvider::new(http_client.clone());
+                    provider
+                        .set_token(creds.token.clone(), creds.username.clone())
+                        .await;
+                    state
+                        .scrobble_manager
+                        .add_provider(Box::new(provider))
+                        .await;
+                    log::info!("ListenBrainz scrobbling enabled for {}", creds.username);
+                }
+            }
+
+            // Drain retry queues in background
+            state.scrobble_manager.drain_queue().await;
+            state.tidal_reporter.drain_queue().await;
+        });
+    }
+
+    // Scrobble on track-finished (backend listener)
+    {
+        let h = handle.clone();
+        handle.listen("track-finished", move |_| {
+            let handle = h.clone();
+            tauri::async_runtime::spawn(async move {
+                let state = handle.state::<AppState>();
+                state.scrobble_manager.try_scrobble_finished().await;
+                state.tidal_reporter.try_finish().await;
+            });
+        });
+    }
+
+    // Scrobble outgoing track AND store rg/peak on gapless track-advanced
+    // (this listener has AppState, which the audio worker does not).
+    {
+        let h = handle.clone();
+        handle.listen("track-advanced", move |event| {
+            // Store this track's replay gain / peak so a live volume-normalization
+            // toggle is correct. Absent (null/NaN) → store NaN (→ unity gain).
+            // Payload: { trackId, qid, replayGain, peakAmplitude }.
+            let (rg, peak) = serde_json::from_str::<serde_json::Value>(event.payload())
+                .ok()
+                .map(|v| {
+                    (
+                        v.get("replayGain")
+                            .and_then(|x| x.as_f64())
+                            .unwrap_or(f64::NAN),
+                        v.get("peakAmplitude")
+                            .and_then(|x| x.as_f64())
+                            .unwrap_or(f64::NAN),
+                    )
+                })
+                .unwrap_or((f64::NAN, f64::NAN));
+            let st = h.state::<AppState>();
+            st.last_replay_gain
+                .store(rg.to_bits(), std::sync::atomic::Ordering::Relaxed);
+            st.last_peak_amplitude
+                .store(peak.to_bits(), std::sync::atomic::Ordering::Relaxed);
+
+            let handle = h.clone();
+            tauri::async_runtime::spawn(async move {
+                let state = handle.state::<AppState>();
+                state.scrobble_manager.try_scrobble_finished().await;
+                state.tidal_reporter.try_finish().await;
+            });
+        });
+    }
+
+    // Pick up external edits to theme.json while the app runs.
+    theme_config::spawn_theme_watcher(handle.clone());
+
+    // System tray icon (ksni — native D-Bus StatusNotifierItem)
+    #[cfg(target_os = "linux")]
+    tray::setup(handle);
+}
+
+#[cfg(feature = "tauri-ui")]
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     // File logger setup. Must happen before Tauri builds so early log
@@ -665,179 +857,12 @@ pub fn run() {
                 log::warn!("Deep link registration failed: {e}");
             }
 
-            app.manage(AppState::new(app.handle().clone()));
+            // Shared with native UIs (see setup_core): state, servers, audio mode,
+            // scrobblers, backend listeners, theme watcher, tray.
+            setup_core(app.handle());
 
             #[cfg(target_os = "linux")]
             webview_proxy_auth::install(app.handle());
-
-            // Start MCP server in background (if enabled). ensure_mcp_started
-            // holds the mcp_handle lock across the start to stay race-free.
-            {
-                let handle_for_mcp = app.handle().clone();
-                tauri::async_runtime::spawn(async move {
-                    crate::mcp::ensure_mcp_started(&handle_for_mcp).await;
-                });
-            }
-
-            // Start Overlay server in background (if enabled).
-            {
-                let handle_for_overlay = app.handle().clone();
-                tauri::async_runtime::spawn(async move {
-                    crate::overlay::ensure_overlay_started(&handle_for_overlay).await;
-                });
-            }
-
-            // Apply saved audio mode to audio thread
-            {
-                let state = app.state::<AppState>();
-                let excl = state
-                    .exclusive_mode
-                    .load(std::sync::atomic::Ordering::Relaxed);
-                let bp = state.bit_perfect.load(std::sync::atomic::Ordering::Relaxed);
-                let dev = state.exclusive_device.lock().unwrap().clone();
-                if excl || bp {
-                    state.audio_player.set_exclusive_mode(excl, dev).ok();
-                }
-                if bp {
-                    state.audio_player.set_bit_perfect(true).ok();
-                }
-                let _ = state
-                    .audio_player
-                    .set_gapless(state.gapless.load(std::sync::atomic::Ordering::Relaxed));
-            }
-
-            // Pre-warm audio device cache in background (GStreamer probe is slow)
-            {
-                let handle = app.handle().clone();
-                std::thread::spawn(move || {
-                    if let Ok(devices) = crate::audio::list_alsa_devices() {
-                        let state = handle.state::<AppState>();
-                        *state.cached_audio_devices.lock().unwrap() = Some(devices);
-                    }
-                });
-            }
-
-            // Initialize scrobble providers from saved credentials
-            {
-                let handle = app.handle().clone();
-                tauri::async_runtime::spawn(async move {
-                    let state = handle.state::<AppState>();
-                    if let Some(settings) = state.load_settings() {
-                        let http_client = state.proxied_http.clone();
-
-                        // Last.fm
-                        if let Some(ref creds) = settings.scrobble.lastfm {
-                            if crate::embedded_lastfm::has_stream_keys() {
-                                let provider = crate::scrobble::lastfm::AudioscrobblerProvider::new(
-                                    "lastfm",
-                                    "https://ws.audioscrobbler.com/2.0/",
-                                    "https://www.last.fm/api/auth/",
-                                    crate::embedded_lastfm::stream_key_a(),
-                                    crate::embedded_lastfm::stream_key_b(),
-                                    http_client.clone(),
-                                );
-                                provider
-                                    .set_session(creds.session_key.clone(), creds.username.clone())
-                                    .await;
-                                state
-                                    .scrobble_manager
-                                    .add_provider(Box::new(provider))
-                                    .await;
-                                log::info!("Last.fm scrobbling enabled for {}", creds.username);
-                            }
-                        }
-
-                        // Libre.fm
-                        if let Some(ref creds) = settings.scrobble.librefm {
-                            if crate::embedded_librefm::has_stream_keys() {
-                                let provider = crate::scrobble::lastfm::AudioscrobblerProvider::new(
-                                    "librefm",
-                                    crate::scrobble::librefm::LIBREFM_API_URL,
-                                    "https://libre.fm/api/auth/",
-                                    crate::embedded_librefm::stream_key_a(),
-                                    crate::embedded_librefm::stream_key_b(),
-                                    http_client.clone(),
-                                );
-                                provider
-                                    .set_session(creds.session_key.clone(), creds.username.clone())
-                                    .await;
-                                state
-                                    .scrobble_manager
-                                    .add_provider(Box::new(provider))
-                                    .await;
-                                log::info!("Libre.fm scrobbling enabled for {}", creds.username);
-                            }
-                        }
-
-                        // ListenBrainz
-                        if let Some(ref creds) = settings.scrobble.listenbrainz {
-                            let provider =
-                                crate::scrobble::listenbrainz::ListenBrainzProvider::new(http_client.clone());
-                            provider
-                                .set_token(creds.token.clone(), creds.username.clone())
-                                .await;
-                            state
-                                .scrobble_manager
-                                .add_provider(Box::new(provider))
-                                .await;
-                            log::info!("ListenBrainz scrobbling enabled for {}", creds.username);
-                        }
-                    }
-
-                    // Drain retry queues in background
-                    state.scrobble_manager.drain_queue().await;
-                    state.tidal_reporter.drain_queue().await;
-                });
-            }
-
-            // Scrobble on track-finished (backend listener)
-            {
-                let handle = app.handle().clone();
-                app.listen("track-finished", move |_| {
-                    let handle = handle.clone();
-                    tauri::async_runtime::spawn(async move {
-                        let state = handle.state::<AppState>();
-                        state.scrobble_manager.try_scrobble_finished().await;
-                        state.tidal_reporter.try_finish().await;
-                    });
-                });
-            }
-
-            // Scrobble outgoing track AND store rg/peak on gapless track-advanced
-            // (this listener has AppState, which the audio worker does not).
-            {
-                let handle = app.handle().clone();
-                app.listen("track-advanced", move |event| {
-                    // Store this track's replay gain / peak so a live volume-normalization
-                    // toggle is correct. Absent (null/NaN) → store NaN (→ unity gain).
-                    // Payload: { trackId, qid, replayGain, peakAmplitude }.
-                    let (rg, peak) = serde_json::from_str::<serde_json::Value>(event.payload())
-                        .ok()
-                        .map(|v| {
-                            (
-                                v.get("replayGain")
-                                    .and_then(|x| x.as_f64())
-                                    .unwrap_or(f64::NAN),
-                                v.get("peakAmplitude")
-                                    .and_then(|x| x.as_f64())
-                                    .unwrap_or(f64::NAN),
-                            )
-                        })
-                        .unwrap_or((f64::NAN, f64::NAN));
-                    let st = handle.state::<AppState>();
-                    st.last_replay_gain
-                        .store(rg.to_bits(), std::sync::atomic::Ordering::Relaxed);
-                    st.last_peak_amplitude
-                        .store(peak.to_bits(), std::sync::atomic::Ordering::Relaxed);
-
-                    let handle = handle.clone();
-                    tauri::async_runtime::spawn(async move {
-                        let state = handle.state::<AppState>();
-                        state.scrobble_manager.try_scrobble_finished().await;
-                        state.tidal_reporter.try_finish().await;
-                    });
-                });
-            }
 
             if let Some(window) = app.get_webview_window("main") {
                 let state = app.state::<AppState>();
@@ -882,13 +907,6 @@ pub fn run() {
                 let _ = window.show();
                 let _ = window.set_focus();
             }
-
-            // Pick up external edits to theme.json while the app runs.
-            theme_config::spawn_theme_watcher(app.handle().clone());
-
-            // System tray icon (ksni — native D-Bus StatusNotifierItem)
-            #[cfg(target_os = "linux")]
-            tray::setup(app);
 
             // Global media key shortcuts (non-fatal)
             if let Err(e) = app.handle().plugin(

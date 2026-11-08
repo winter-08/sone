@@ -1,0 +1,27 @@
+[
+ {
+  "type": "Main Artist",
+  "contributors": [
+   {
+    "name": "Fixture Artist",
+    "id": 7
+   }
+  ]
+ },
+ {
+  "type": "Composer",
+  "contributors": [
+   {
+    "name": "Fixture Composer"
+   }
+  ]
+ },
+ {
+  "type": "Producer",
+  "contributors": [
+   {
+    "name": "Synthetic Producer"
+   }
+  ]
+ }
+]

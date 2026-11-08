@@ -1,0 +1,322 @@
+{
+ "scenario": "seek-shared",
+ "steps": [
+  {
+   "i": 0,
+   "label": "",
+   "action": {
+    "mcp": {
+     "tool": "play_tracks",
+     "args": {
+      "track_ids": [
+       1001
+      ],
+      "action": "play_now"
+     }
+    }
+   },
+   "result": {
+    "status": "play_now"
+   },
+   "state": {
+    "mpris": {
+     "status": "Playing",
+     "loop": "None",
+     "shuffle": false,
+     "volume": 1.0,
+     "position_s": 0.69,
+     "track": {
+      "title": "Fixture 1001",
+      "artist": [
+       "Fixture Artist"
+      ],
+      "album": "Fixture Album",
+      "length_s": 10.0
+     }
+    },
+    "now_playing": {
+     "album": "Fixture Album",
+     "artist": "Fixture Artist",
+     "durationSeconds": 10,
+     "isPlaying": true,
+     "positionSeconds": 0,
+     "title": "Fixture 1001",
+     "trackId": 1001
+    },
+    "queue": []
+   },
+   "net": [
+    "GET api.tidal.com/v1/tracks/1001/playbackinfopostpaywall?assetpresentation=FULL&audioquality=HI_RES_LOSSLESS&countryCode=US&playbackmode=STREAM",
+    "GET api.tidal.com/v1/tracks/1001?countryCode=US",
+    "GET fixtures.sone.test/tone_44k16.flac"
+   ]
+  },
+  {
+   "i": 1,
+   "label": "",
+   "action": {
+    "wait_for": {
+     "mpris.status": "Playing",
+     "timeout": 10
+    }
+   },
+   "result": {
+    "met": true
+   },
+   "state": {
+    "mpris": {
+     "status": "Playing",
+     "loop": "None",
+     "shuffle": false,
+     "volume": 1.0,
+     "position_s": 1.68,
+     "track": {
+      "title": "Fixture 1001",
+      "artist": [
+       "Fixture Artist"
+      ],
+      "album": "Fixture Album",
+      "length_s": 10.0
+     }
+    },
+    "now_playing": {
+     "album": "Fixture Album",
+     "artist": "Fixture Artist",
+     "durationSeconds": 10,
+     "isPlaying": true,
+     "positionSeconds": 0,
+     "title": "Fixture 1001",
+     "trackId": 1001
+    },
+    "queue": []
+   },
+   "net": []
+  },
+  {
+   "i": 2,
+   "label": "",
+   "action": {
+    "wait": 1.0
+   },
+   "result": null,
+   "state": {
+    "mpris": {
+     "status": "Playing",
+     "loop": "None",
+     "shuffle": false,
+     "volume": 1.0,
+     "position_s": 2.67,
+     "track": {
+      "title": "Fixture 1001",
+      "artist": [
+       "Fixture Artist"
+      ],
+      "album": "Fixture Album",
+      "length_s": 10.0
+     }
+    },
+    "now_playing": {
+     "album": "Fixture Album",
+     "artist": "Fixture Artist",
+     "durationSeconds": 10,
+     "isPlaying": true,
+     "positionSeconds": 0,
+     "title": "Fixture 1001",
+     "trackId": 1001
+    },
+    "queue": []
+   },
+   "net": []
+  },
+  {
+   "i": 3,
+   "label": "seek to 6s",
+   "action": {
+    "mcp": {
+     "tool": "seek_to",
+     "args": {
+      "position_seconds": 6
+     }
+    }
+   },
+   "result": {
+    "status": "seeking"
+   },
+   "state": {
+    "mpris": {
+     "status": "Playing",
+     "loop": "None",
+     "shuffle": false,
+     "volume": 1.0,
+     "position_s": 6.57,
+     "track": {
+      "title": "Fixture 1001",
+      "artist": [
+       "Fixture Artist"
+      ],
+      "album": "Fixture Album",
+      "length_s": 10.0
+     }
+    },
+    "now_playing": {
+     "album": "Fixture Album",
+     "artist": "Fixture Artist",
+     "durationSeconds": 10,
+     "isPlaying": true,
+     "positionSeconds": 0,
+     "title": "Fixture 1001",
+     "trackId": 1001
+    },
+    "queue": []
+   },
+   "net": [
+    "GET fixtures.sone.test/tone_44k16.flac"
+   ]
+  },
+  {
+   "i": 4,
+   "label": "end",
+   "action": {
+    "wait_for": {
+     "mpris.status": "Paused",
+     "timeout": 15
+    }
+   },
+   "result": {
+    "met": true
+   },
+   "state": {
+    "mpris": {
+     "status": "Paused",
+     "loop": "None",
+     "shuffle": false,
+     "volume": 1.0,
+     "position_s": 0.0,
+     "track": {
+      "title": "Fixture 1001",
+      "artist": [
+       "Fixture Artist"
+      ],
+      "album": "Fixture Album",
+      "length_s": 10.0
+     }
+    },
+    "now_playing": {
+     "album": "Fixture Album",
+     "artist": "Fixture Artist",
+     "durationSeconds": 10,
+     "isPlaying": false,
+     "positionSeconds": 0,
+     "title": "Fixture 1001",
+     "trackId": 1001
+    },
+    "queue": []
+   },
+   "net": []
+  }
+ ],
+ "errors": [],
+ "initial": {
+  "state": {
+   "mpris": {
+    "status": "Paused",
+    "loop": "None",
+    "shuffle": false,
+    "volume": 1.0,
+    "position_s": 0.0,
+    "track": null
+   },
+   "now_playing": null,
+   "queue": []
+  },
+  "tray": [
+   "Show",
+   "Play / Pause",
+   "Next Track",
+   "Previous Track",
+   "Quit"
+  ],
+  "controls": [
+   "button: Account",
+   "button: Albums",
+   "button: Artists",
+   "button: Close",
+   "button: Explore",
+   "button: Feed",
+   "button: Fixture Mixtape Fixture Mixtape You \u00b7 4 Tracks",
+   "button: Go back",
+   "button: Go forward",
+   "button: Home",
+   "button: Loved Tracks Collection",
+   "button: Lyrics",
+   "button: Maximize",
+   "button: Minimize",
+   "button: Mixes",
+   "button: Play queue",
+   "button: Playlists",
+   "button: Show all",
+   "button: Sort by: Last updated",
+   "button: Your Library",
+   "entry: Search",
+   "heading: Fixture Album",
+   "heading: Fixture Albums",
+   "heading: Fixture Artist",
+   "heading: Fixture Artists",
+   "heading: Fixture Mixtape",
+   "heading: Fixture Playlists",
+   "heading: Fixture Tracks",
+   "heading: Mock Ensemble",
+   "heading: Queue Suite",
+   "heading: Synthetic Selections"
+  ]
+ },
+ "final": {
+  "tray": [
+   "Show",
+   "Play / Pause",
+   "Next Track",
+   "Previous Track",
+   "Quit"
+  ],
+  "controls": [
+   "button: Account",
+   "button: Albums",
+   "button: Artists",
+   "button: Close",
+   "button: Explore",
+   "button: Feed",
+   "button: Fixture Mixtape Fixture Mixtape You \u00b7 4 Tracks",
+   "button: Fullscreen player",
+   "button: Go back",
+   "button: Go forward",
+   "button: Home",
+   "button: LOSSLESS",
+   "button: Loved Tracks Collection",
+   "button: Lyrics",
+   "button: Maximize",
+   "button: Minimize",
+   "button: Mixes",
+   "button: More options",
+   "button: Open miniplayer",
+   "button: Play queue",
+   "button: Playlists",
+   "button: Show all",
+   "button: Sort by: Last updated",
+   "button: Your Library",
+   "entry: Search",
+   "heading: Fixture Album",
+   "heading: Fixture Albums",
+   "heading: Fixture Artist",
+   "heading: Fixture Artists",
+   "heading: Fixture Mixtape",
+   "heading: Fixture Playlists",
+   "heading: Fixture Tracks",
+   "heading: Mock Ensemble",
+   "heading: Queue Suite",
+   "heading: Synthetic Selections"
+  ],
+  "unnamed_controls": 31,
+  "opened": []
+ },
+ "audio": {}
+}

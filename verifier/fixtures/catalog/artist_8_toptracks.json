@@ -1,0 +1,163 @@
+{
+ "limit": 50,
+ "offset": 0,
+ "totalNumberOfItems": 3,
+ "items": [
+  {
+   "id": 1005,
+   "title": "Queue A",
+   "duration": 8,
+   "version": null,
+   "trackNumber": 1,
+   "volumeNumber": 1,
+   "audioQuality": "LOSSLESS",
+   "audioModes": [
+    "STEREO"
+   ],
+   "explicit": false,
+   "ai": false,
+   "popularity": 30,
+   "isrc": "QZFIX2401005",
+   "copyright": "(P) 2024 Fixture Records",
+   "url": "http://www.tidal.com/track/1005",
+   "streamReady": true,
+   "allowStreaming": true,
+   "premiumStreamingOnly": false,
+   "streamStartDate": "2024-01-01T00:00:00.000+0000",
+   "replayGain": 0.0,
+   "peak": 1.0,
+   "artist": {
+    "id": 8,
+    "name": "Mock Ensemble",
+    "type": "MAIN",
+    "picture": "2a9d8f00-e9c4-46a0-b1c2-d3e4f5a6b7c8"
+   },
+   "artists": [
+    {
+     "id": 8,
+     "name": "Mock Ensemble",
+     "type": "MAIN",
+     "picture": "2a9d8f00-e9c4-46a0-b1c2-d3e4f5a6b7c8"
+    }
+   ],
+   "album": {
+    "id": 78,
+    "title": "Queue Suite",
+    "cover": "2a9d8f00-e9c4-46a0-b1c2-d3e4f5a6b7c8",
+    "vibrantColor": "#4a6fa5",
+    "videoCover": null,
+    "releaseDate": "2024-03-15"
+   },
+   "mediaMetadata": {
+    "tags": [
+     "LOSSLESS"
+    ]
+   },
+   "mixes": {}
+  },
+  {
+   "id": 1006,
+   "title": "Queue B",
+   "duration": 8,
+   "version": null,
+   "trackNumber": 2,
+   "volumeNumber": 1,
+   "audioQuality": "LOSSLESS",
+   "audioModes": [
+    "STEREO"
+   ],
+   "explicit": false,
+   "ai": false,
+   "popularity": 30,
+   "isrc": "QZFIX2401006",
+   "copyright": "(P) 2024 Fixture Records",
+   "url": "http://www.tidal.com/track/1006",
+   "streamReady": true,
+   "allowStreaming": true,
+   "premiumStreamingOnly": false,
+   "streamStartDate": "2024-01-01T00:00:00.000+0000",
+   "replayGain": 0.0,
+   "peak": 1.0,
+   "artist": {
+    "id": 8,
+    "name": "Mock Ensemble",
+    "type": "MAIN",
+    "picture": "2a9d8f00-e9c4-46a0-b1c2-d3e4f5a6b7c8"
+   },
+   "artists": [
+    {
+     "id": 8,
+     "name": "Mock Ensemble",
+     "type": "MAIN",
+     "picture": "2a9d8f00-e9c4-46a0-b1c2-d3e4f5a6b7c8"
+    }
+   ],
+   "album": {
+    "id": 78,
+    "title": "Queue Suite",
+    "cover": "2a9d8f00-e9c4-46a0-b1c2-d3e4f5a6b7c8",
+    "vibrantColor": "#4a6fa5",
+    "videoCover": null,
+    "releaseDate": "2024-03-15"
+   },
+   "mediaMetadata": {
+    "tags": [
+     "LOSSLESS"
+    ]
+   },
+   "mixes": {}
+  },
+  {
+   "id": 1007,
+   "title": "Queue C",
+   "duration": 8,
+   "version": null,
+   "trackNumber": 3,
+   "volumeNumber": 1,
+   "audioQuality": "LOSSLESS",
+   "audioModes": [
+    "STEREO"
+   ],
+   "explicit": false,
+   "ai": false,
+   "popularity": 30,
+   "isrc": "QZFIX2401007",
+   "copyright": "(P) 2024 Fixture Records",
+   "url": "http://www.tidal.com/track/1007",
+   "streamReady": true,
+   "allowStreaming": true,
+   "premiumStreamingOnly": false,
+   "streamStartDate": "2024-01-01T00:00:00.000+0000",
+   "replayGain": 0.0,
+   "peak": 1.0,
+   "artist": {
+    "id": 8,
+    "name": "Mock Ensemble",
+    "type": "MAIN",
+    "picture": "2a9d8f00-e9c4-46a0-b1c2-d3e4f5a6b7c8"
+   },
+   "artists": [
+    {
+     "id": 8,
+     "name": "Mock Ensemble",
+     "type": "MAIN",
+     "picture": "2a9d8f00-e9c4-46a0-b1c2-d3e4f5a6b7c8"
+    }
+   ],
+   "album": {
+    "id": 78,
+    "title": "Queue Suite",
+    "cover": "2a9d8f00-e9c4-46a0-b1c2-d3e4f5a6b7c8",
+    "vibrantColor": "#4a6fa5",
+    "videoCover": null,
+    "releaseDate": "2024-03-15"
+   },
+   "mediaMetadata": {
+    "tags": [
+     "LOSSLESS"
+    ]
+   },
+   "mixes": {}
+  }
+ ]
+}

@@ -1,0 +1,12 @@
+# Written-down, intentional differences between the candidate (Rune) and the reference (React).
+# Each entry needs a reason. The comparator and scorer apply these; `check` and `score` say so.
+
+[extra_controls]
+# Controls the candidate exposes with a name where the reference's are unnamed or absent.
+reason = "The reference's player-bar transport and sliders have no accessible names (an accessibility defect); the candidate names them. The queue panel heading is the candidate's queue view."
+allow = [
+  "button: Play", "button: Pause", "button: Previous", "button: Next", "button: Shuffle",
+  "button: Repeat", "button: Repeat all", "button: Repeat one",
+  "toggle button: Shuffle", "toggle button: Repeat", "toggle button: Repeat all", "toggle button: Repeat one",
+  "slider: Position", "slider: Volume",
+]

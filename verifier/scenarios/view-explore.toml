@@ -1,0 +1,22 @@
+name = "view-explore"
+description = "Explore: the page, a genre page, and a View all page."
+covers = ["views:explore"]
+views = true
+audio = false
+
+[[step]]
+label = "explore"
+ui = { press = "Explore" }
+settle = 2.0
+[[step]]
+label = "genre page"
+ui = { press = "Fixture Pop" }
+settle = 2.0
+[[step]]
+label = "back"
+ui = { press = "Go back" }
+settle = 1.5
+[[step]]
+label = "view all genres"
+ui = { press = "View all", nth = 0 }
+settle = 2.0

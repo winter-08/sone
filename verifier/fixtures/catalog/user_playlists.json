@@ -1,0 +1,33 @@
+{
+ "limit": 50,
+ "offset": 0,
+ "totalNumberOfItems": 1,
+ "items": [
+  {
+   "uuid": "11111111-2222-3333-4444-555555555555",
+   "title": "Fixture Mixtape",
+   "description": "A user playlist of fixture tracks.",
+   "image": "2a9d8f00-e9c4-46a0-b1c2-d3e4f5a6b7c8",
+   "squareImage": "2a9d8f00-e9c4-46a0-b1c2-d3e4f5a6b7c8",
+   "numberOfTracks": 4,
+   "numberOfVideos": 0,
+   "creator": {
+    "id": 424242,
+    "name": "fixture"
+   },
+   "type": "USER",
+   "duration": 36,
+   "popularity": 10,
+   "publicPlaylist": true,
+   "url": "http://www.tidal.com/playlist/11111111-2222-3333-4444-555555555555",
+   "created": "2024-04-01T12:00:00.000+0000",
+   "lastUpdated": "2024-05-01T12:00:00.000+0000",
+   "lastItemAddedAt": "2024-05-01T12:00:00.000+0000",
+   "promotedArtists": [],
+   "sharingLevel": "PUBLIC",
+   "status": "READY",
+   "contentBehavior": "UNRESTRICTED",
+   "curators": []
+  }
+ ]
+}

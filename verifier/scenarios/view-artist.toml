@@ -1,0 +1,18 @@
+name = "view-artist"
+description = "Open an artist from Home, then play their top tracks."
+covers = ["views:artist", "views:artist:play"]
+views = true
+audio = false
+
+[[step]]
+label = "open artist"
+ui = { press = "Mock Ensemble", role = "heading" }
+settle = 2.0
+[[step]]
+label = "play artist"
+ui = { press = "Play" }
+[[step]]
+label = "playing"
+wait_for = { "mpris.status" = "Playing", timeout = 10 }
+[[step]]
+mcp = { tool = "pause" }

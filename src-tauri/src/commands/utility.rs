@@ -383,7 +383,9 @@ pub fn set_discord_status_text(state: State<'_, AppState>, text: String) -> Resu
 
 #[tauri::command]
 pub fn install_current_webview_proxy_auth(window: tauri::WebviewWindow) {
-    #[cfg(target_os = "linux")]
+    #[cfg(all(target_os = "linux", not(feature = "tauri-ui")))]
+    match window {}
+    #[cfg(all(target_os = "linux", feature = "tauri-ui"))]
     crate::webview_proxy_auth::install_window(&window);
 
     #[cfg(not(target_os = "linux"))]

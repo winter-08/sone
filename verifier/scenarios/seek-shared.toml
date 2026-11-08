@@ -1,0 +1,19 @@
+name = "seek-shared"
+description = "seek_to in shared (PipeWire) output mode: playback continues from the new position."
+covers = ["mcp_tools:seek_to"]
+tracks = [1001]
+audio = false
+profile = { exclusive_mode = false, bit_perfect = false }
+
+[[step]]
+mcp = { tool = "play_tracks", args = { track_ids = [1001], action = "play_now" } }
+[[step]]
+wait_for = { "mpris.status" = "Playing", timeout = 10 }
+[[step]]
+wait = 1.0
+[[step]]
+label = "seek to 6s"
+mcp = { tool = "seek_to", args = { position_seconds = 6 } }
+[[step]]
+label = "end"
+wait_for = { "mpris.status" = "Paused", timeout = 15 }

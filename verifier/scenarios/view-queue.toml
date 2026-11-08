@@ -1,0 +1,24 @@
+name = "view-queue"
+description = "The play queue panel: now playing, next up, history; remove one item, clear the rest."
+covers = ["views:queue", "views:queue:remove", "views:queue:clear"]
+views = true
+audio = false
+
+[[step]]
+mcp = { tool = "play_tracks", args = { track_ids = [1005, 1006, 1007], action = "play_now" } }
+[[step]]
+wait_for = { "mpris.status" = "Playing", timeout = 10 }
+[[step]]
+label = "open queue"
+ui = { press = "Play queue" }
+settle = 1.5
+[[step]]
+label = "remove first upcoming"
+ui = { press = "Remove" }
+settle = 1.5
+[[step]]
+label = "clear"
+ui = { press = "Clear" }
+settle = 1.5
+[[step]]
+mcp = { tool = "pause" }

@@ -37,7 +37,7 @@ rustPlatform.buildRustPackage (finalAttrs: {
     fetcherVersion = 4;
     # Update when pnpm-lock.yaml changes: set to lib.fakeHash, build, paste the
     # `got: sha256-...` value the build prints.
-    hash = "sha256-Yu1FBJv3jeHFBHX4StEe4UWGqPID7zTuvOpHjAye6hY=";
+    hash = "sha256-zaX+fsEWaNmgL2Ib3LG5+k2AYbJO/QexXnOtQeHaCDk=";
   };
 
   nativeBuildInputs = [

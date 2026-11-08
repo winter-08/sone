@@ -5,8 +5,22 @@
 //! (ScreenSaver/GNOME/login1), and the XDG portal as a last-resort fallback.
 
 mod dbus;
+#[cfg(feature = "tauri-ui")]
 mod wayland;
 mod x11;
+
+/// The Wayland layer needs the webview's GTK surface. Without a webview (the `host` build)
+/// there is none, so it never starts; the D-Bus and portal layers still run.
+#[cfg(not(feature = "tauri-ui"))]
+mod wayland {
+    pub struct WaylandInhibitor;
+    impl WaylandInhibitor {
+        pub fn start(window: &tauri::WebviewWindow) -> Option<Self> {
+            match *window {}
+        }
+        pub fn stop(self) {}
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DisplayServer {

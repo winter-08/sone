@@ -1,0 +1,5 @@
+*.pcm
+*.flac
+dash/
+cover.jpg
+__pycache__/

@@ -1,0 +1,30 @@
+name = "mpris-pause-play-shared"
+description = "MPRIS Pause/Play/PlayPause in shared (PipeWire) output mode."
+covers = ["mpris:Pause", "mpris:Play", "mpris:PlayPause"]
+tracks = [1005, 1006]
+audio = false
+profile = { exclusive_mode = false, bit_perfect = false }
+
+[[step]]
+mcp = { tool = "play_tracks", args = { track_ids = [1005, 1006], action = "play_now" } }
+[[step]]
+wait_for = { "mpris.status" = "Playing", timeout = 10 }
+[[step]]
+wait = 1.0
+[[step]]
+label = "MPRIS Pause"
+mpris = { call = "Pause" }
+[[step]]
+label = "still paused"
+wait = 1.5
+[[step]]
+label = "MPRIS Play"
+mpris = { call = "Play" }
+[[step]]
+label = "MPRIS PlayPause (pause)"
+mpris = { call = "PlayPause" }
+[[step]]
+label = "MPRIS PlayPause (play)"
+mpris = { call = "PlayPause" }
+[[step]]
+mpris = { call = "Pause" }

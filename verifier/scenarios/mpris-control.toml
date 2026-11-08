@@ -1,0 +1,23 @@
+name = "mpris-control"
+description = "Media keys path: MPRIS Next/Previous and LoopStatus, in exclusive bit-perfect mode. (Pause/Play live in mpris-pause-play-shared: exclusive-mode resume is nondeterministic below the UI, see the quarantine note.)"
+covers = ["mpris:Next", "mpris:Previous", "mpris:LoopStatus"]
+tracks = [1005, 1006, 1007]
+
+[[step]]
+mcp = { tool = "play_tracks", args = { track_ids = [1005, 1006, 1007], action = "play_now" } }
+[[step]]
+wait_for = { "mpris.status" = "Playing", timeout = 10 }
+[[step]]
+label = "MPRIS Next"
+mpris = { call = "Next" }
+[[step]]
+label = "MPRIS Previous"
+mpris = { call = "Previous" }
+[[step]]
+label = "LoopStatus Playlist"
+mpris = { set = "LoopStatus", value = "Playlist" }
+[[step]]
+label = "LoopStatus None"
+mpris = { set = "LoopStatus", value = "None" }
+[[step]]
+mpris = { call = "Pause" }

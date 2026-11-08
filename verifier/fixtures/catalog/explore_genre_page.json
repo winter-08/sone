@@ -1,0 +1,34 @@
+{
+ "selfLink": null,
+ "id": "genre_page",
+ "title": "Genres",
+ "rows": [
+  {
+   "modules": [
+    {
+     "type": "PAGE_LINKS_CLOUD",
+     "title": "",
+     "pagedList": {
+      "limit": 50,
+      "offset": 0,
+      "totalNumberOfItems": 2,
+      "items": [
+       {
+        "title": "Fixture Pop",
+        "icon": null,
+        "imageId": null,
+        "apiPath": "pages/genre_fixture_pop"
+       },
+       {
+        "title": "Synthetic Jazz",
+        "icon": null,
+        "imageId": null,
+        "apiPath": "pages/genre_synthetic_jazz"
+       }
+      ]
+     }
+    }
+   ]
+  }
+ ]
+}

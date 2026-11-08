@@ -1,0 +1,127 @@
+{
+ "selfLink": null,
+ "id": "explore",
+ "title": "Explore",
+ "rows": [
+  {
+   "modules": [
+    {
+     "type": "PAGE_LINKS_CLOUD",
+     "title": "Genres",
+     "pagedList": {
+      "limit": 50,
+      "offset": 0,
+      "totalNumberOfItems": 2,
+      "items": [
+       {
+        "title": "Fixture Pop",
+        "icon": null,
+        "imageId": null,
+        "apiPath": "pages/genre_fixture_pop"
+       },
+       {
+        "title": "Synthetic Jazz",
+        "icon": null,
+        "imageId": null,
+        "apiPath": "pages/genre_synthetic_jazz"
+       }
+      ]
+     },
+     "showMore": {
+      "title": "View all",
+      "apiPath": "pages/genre_page"
+     }
+    }
+   ]
+  },
+  {
+   "modules": [
+    {
+     "type": "PAGE_LINKS_CLOUD",
+     "title": "Moods & Activities",
+     "pagedList": {
+      "limit": 50,
+      "offset": 0,
+      "totalNumberOfItems": 2,
+      "items": [
+       {
+        "title": "Focus",
+        "icon": null,
+        "imageId": null,
+        "apiPath": "pages/mood_focus"
+       },
+       {
+        "title": "Late Night",
+        "icon": null,
+        "imageId": null,
+        "apiPath": "pages/mood_late_night"
+       }
+      ]
+     },
+     "showMore": {
+      "title": "View all",
+      "apiPath": "pages/moods_page"
+     }
+    }
+   ]
+  },
+  {
+   "modules": [
+    {
+     "type": "PAGE_LINKS_CLOUD",
+     "title": "Decades",
+     "pagedList": {
+      "limit": 50,
+      "offset": 0,
+      "totalNumberOfItems": 1,
+      "items": [
+       {
+        "title": "2020s",
+        "icon": null,
+        "imageId": null,
+        "apiPath": "pages/m_2020s"
+       }
+      ]
+     },
+     "showMore": {
+      "title": "View all",
+      "apiPath": "pages/decades_page"
+     }
+    }
+   ]
+  },
+  {
+   "modules": [
+    {
+     "type": "PAGE_LINKS",
+     "title": "Shortcuts",
+     "pagedList": {
+      "limit": 50,
+      "offset": 0,
+      "totalNumberOfItems": 3,
+      "items": [
+       {
+        "title": "New",
+        "icon": null,
+        "imageId": null,
+        "apiPath": "pages/explore_new_music"
+       },
+       {
+        "title": "Top",
+        "icon": null,
+        "imageId": null,
+        "apiPath": "pages/explore_top"
+       },
+       {
+        "title": "HiRes",
+        "icon": null,
+        "imageId": null,
+        "apiPath": "pages/hires"
+       }
+      ]
+     }
+    }
+   ]
+  }
+ ]
+}

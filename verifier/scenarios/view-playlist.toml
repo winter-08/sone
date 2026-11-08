@@ -1,0 +1,18 @@
+name = "view-playlist"
+description = "Open the user's playlist from the sidebar, then play it."
+covers = ["views:playlist", "views:playlist:play", "views:sidebar"]
+views = true
+audio = false
+
+[[step]]
+label = "open playlist"
+ui = { press = "Fixture Mixtape Fixture Mixtape You · 4 Tracks" }
+settle = 2.0
+[[step]]
+label = "play playlist"
+ui = { press = "Play" }
+[[step]]
+label = "playing"
+wait_for = { "mpris.status" = "Playing", timeout = 10 }
+[[step]]
+mcp = { tool = "pause" }

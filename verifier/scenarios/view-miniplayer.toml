@@ -1,0 +1,20 @@
+name = "view-miniplayer"
+description = "Open and close the miniplayer window while playing."
+covers = ["views:miniplayer"]
+views = true
+audio = false
+
+[[step]]
+mcp = { tool = "play_tracks", args = { track_ids = [1005, 1006], action = "play_now" } }
+[[step]]
+wait_for = { "mpris.status" = "Playing", timeout = 10 }
+[[step]]
+label = "open miniplayer"
+ui = { press = "Open miniplayer" }
+settle = 2.0
+[[step]]
+label = "close miniplayer"
+ui = { press = "Close miniplayer" }
+settle = 1.5
+[[step]]
+mcp = { tool = "pause" }

@@ -1,0 +1,22 @@
+name = "signin"
+description = "Logged-out start: the login screen, then the device-code sign-in through to Home."
+covers = ["views:login", "auth:device-code"]
+views = true
+audio = false
+logged_out = true
+settings = ["auth_tokens"]
+
+[[step]]
+label = "login screen"
+wait = 1.0
+[[step]]
+label = "choose login code"
+ui = { press = "Login Code" }
+settle = 1.5
+[[step]]
+label = "get a code"
+ui = { press = "Get Login Code" }
+settle = 2.0
+[[step]]
+label = "signed in, home"
+wait = 12.0

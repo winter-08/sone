@@ -1,0 +1,54 @@
+name = "view-settings"
+description = "Settings: every tab, and changing the streaming quality ceiling (persisted)."
+covers = ["views:settings", "settings:max_quality"]
+views = true
+audio = false
+settings = ["max_quality", "exclusive_mode", "bit_perfect", "gapless"]
+
+[[step]]
+label = "open settings"
+ui = { press = "Account" }
+settle = 1.0
+[[step]]
+ui = { press = "Settings" }
+settle = 2.0
+[[step]]
+label = "quality: lossless"
+ui = { press = "LOSSLESS FLAC · 16-bit / 44.1 kHz" }
+settle = 1.5
+[[step]]
+label = "general"
+ui = { press = "General" }
+settle = 1.0
+[[step]]
+label = "network"
+ui = { press = "Network" }
+settle = 1.0
+[[step]]
+label = "scrobbling"
+ui = { press = "Scrobbling" }
+settle = 1.0
+[[step]]
+label = "discord"
+ui = { press = "Discord" }
+settle = 1.0
+[[step]]
+label = "mcp"
+ui = { press = "MCP" }
+settle = 1.0
+[[step]]
+label = "obs overlay"
+ui = { press = "OBS Overlay" }
+settle = 1.0
+[[step]]
+label = "themes"
+ui = { press = "Themes" }
+settle = 1.0
+[[step]]
+label = "utilities"
+ui = { press = "Utilities" }
+settle = 1.0
+[[step]]
+label = "back to playback"
+ui = { press = "Playback" }
+settle = 1.0

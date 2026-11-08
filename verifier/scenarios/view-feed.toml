@@ -1,0 +1,18 @@
+name = "view-feed"
+description = "Feed: the activity list, then playing a release from it."
+covers = ["views:feed"]
+views = true
+audio = false
+
+[[step]]
+label = "feed"
+ui = { press = "Feed" }
+settle = 2.0
+[[step]]
+label = "play a release"
+ui = { press = "Play Queue Suite" }
+[[step]]
+label = "playing"
+wait_for = { "mpris.status" = "Playing", timeout = 10 }
+[[step]]
+mcp = { tool = "pause" }

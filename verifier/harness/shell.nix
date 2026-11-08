@@ -1,0 +1,47 @@
+# Tools for the verifier spikes. Usage: nix-shell verifier/harness/shell.nix --run '...'
+{ pkgs ? import (builtins.getFlake "nixpkgs") { } }:
+let
+  py = pkgs.python3.withPackages (p: [
+    p.mitmproxy
+    p.cryptography
+    p.pyatspi
+    p.pygobject3
+    p.dbus-python
+    p.numpy
+  ]);
+in
+pkgs.mkShell {
+  packages = [
+    py
+    pkgs.at-spi2-core
+    pkgs.sway
+    pkgs.wtype
+    pkgs.dbus
+    pkgs.flac
+    pkgs.sox
+    pkgs.alsa-utils
+    pkgs.gst_all_1.gstreamer
+    pkgs.strace
+    pkgs.jq
+    pkgs.curl
+    pkgs.grim
+    pkgs.pipewire
+    pkgs.wireplumber
+    pkgs.bubblewrap
+    pkgs.ffmpeg-headless
+  ];
+  SPIKE_PW_ALSA_DIR = "${pkgs.pipewire}/lib/alsa-lib";
+  SPIKE_DBUS_CONF = "${pkgs.dbus}/share/dbus-1/session.conf";
+  SPIKE_ATSPI_LAUNCHER = "${pkgs.at-spi2-core}/libexec/at-spi-bus-launcher";
+  SPIKE_XDG_DATA_DIRS = "${pkgs.at-spi2-core}/share:${pkgs.gsettings-desktop-schemas}/share/gsettings-schemas/${pkgs.gsettings-desktop-schemas.name}";
+  GST_PLUGIN_SYSTEM_PATH_1_0 = pkgs.lib.makeSearchPath "lib/gstreamer-1.0" [
+    pkgs.gst_all_1.gstreamer
+    pkgs.gst_all_1.gst-plugins-base
+    pkgs.gst_all_1.gst-plugins-good
+  ];
+  GI_TYPELIB_PATH = pkgs.lib.makeSearchPath "lib/girepository-1.0" [
+    pkgs.at-spi2-core
+    pkgs.glib
+    pkgs.gobject-introspection
+  ];
+}

@@ -1,0 +1,553 @@
+# External verifier for the Rune port
+
+How we prove that a Rune build of SONE does everything the Tauri/React build does, without
+trusting the port's own code or its own tests.
+
+- **Reference:** the current Tauri build (upstream tag, e.g. `v0.23.0`, commit `a4accb7`).
+- **Candidate:** the Rune build.
+- **Verifier:** a separate program that launches either build in the same sandbox, drives it
+  through boundaries both builds share, records what comes out, and compares.
+
+## Principles
+
+1. **Black box.** The verifier never links, imports or calls app code. It sees only what any
+   user or neighbouring program could see: the network, D-Bus, the audio device, files on disk,
+   the accessibility tree, the MCP server and input events.
+2. **The reference is the oracle.** Expected behaviour is recorded from the reference build, not
+   written by hand. A scenario is valid only once it passes, deterministically, on the reference.
+3. **Same scenario, both builds.** Every scenario runs unchanged against either build. Anything
+   build-specific lives in a thin adapter, and that adapter stays small.
+4. **Semantic, not pixel, parity.** Rune will look different. We compare what the app *does* and
+   *exposes* (calls, state, audio, labelled controls), not how it is drawn.
+5. **Coverage has a denominator.** `inventory.py` extracts the reference's surface from source.
+   The port is done when every item is covered by a passing scenario or carries a written waiver.
+6. **Verify the verifier.** Before any Rune code exists, the suite must pass on the reference,
+   and it must fail on deliberately broken reference builds (mutation checks).
+
+## What the reference exposes (from `inventory.py`, v0.23.0)
+
+| Surface | Count | Notes |
+|---|---|---|
+| Tauri commands registered | 182 | 159 invoked by the frontend. The other 23 are dead code, MCP-only or debug. |
+| Rust → UI events | 24 | `mpris:*`, `tray:*`, `pkce-login-*`, `track-finished`, `signal-path-changed`… |
+| UI-side listeners | 46 | Includes `mcp:*` (MCP actions are executed by the frontend) |
+| Views (`ViewTarget`) | 15 | home, album, playlist, artist, artistTracks, mix, favorites, search, explore, explorePage, feed, viewAll, libraryViewAll, profile, profilePlaylists |
+| Keyboard shortcuts | 19 | `src/lib/shortcuts.ts` |
+| Frontend-persisted keys | 8 | `sone.volume.v1`, `sone.shuffle.v1`… stored in **WebKitGTK localStorage** |
+| `settings.json` fields | 27 | `~/.config/sone/settings.json` |
+| MCP tools | 34 | Streamable HTTP on `127.0.0.1:<port>/<token>/mcp` |
+| External hosts | ~12 real | TIDAL (api, auth, openapi, ec, login, resources), Last.fm, Libre.fm, ListenBrainz, MusicBrainz, GitHub |
+| Unit tests | 588 vitest, 402 cargo | The vitest cases describe behaviour being moved from TS to Rust |
+
+The most important finding: **much of the core logic lives in TypeScript**. The queue, shuffle,
+repeat, autoplay and gapless prefetch live in `usePlaybackActions.ts` (~1.9k lines),
+`usePlaySource.ts` and `useGaplessPrefetch.ts`, and auth flow logic is in `useAuth.ts`. The Rust
+backend is kept, but this TS logic gets rewritten. That is where regressions will come from, so
+it gets the most verifier attention.
+
+## Sandbox
+
+Each run gets a fresh, hermetic environment. Both builds run in the identical environment.
+
+| Concern | Mechanism |
+|---|---|
+| Profile | Temp `HOME`, `XDG_CONFIG_HOME`, `XDG_CACHE_HOME`, `XDG_DATA_HOME`, `XDG_RUNTIME_DIR` (`dirs` honours these, so `settings.json` and the cache stay isolated) |
+| Session bus | `dbus-run-session`, private to the run. MPRIS, the tray (StatusNotifierItem) and AT-SPI all live on it |
+| Keyring | None by default: with no Secret Service on the private bus, SONE falls back to `sone.key`, which lets the verifier seed and read profiles. A throwaway gnome-keyring is started only for scenarios that test keyring storage itself |
+| Display | Headless Wayland compositor (`sway` with `WLR_BACKENDS=headless`, or `weston --backend=headless`), plus an Xvfb variant for X11 paths |
+| Accessibility | `at-spi2-core` bus launched inside the session |
+| Network | Every request goes through a **record/replay proxy** (mitmproxy addon). The proxy is set through `settings.json`'s `proxy` field. reqwest 0.11 uses native-tls (OpenSSL), so the proxy CA is trusted through `SSL_CERT_FILE`. Nothing reaches the real internet in verify mode |
+| Audio | Private PipeWire with a null sink provides the clock and the shared-mode output (through pipewire-pulse). `~/.asoundrc` defines `sone_capture`: a `file`-plugin PCM that writes raw frames to disk and plays them into PipeWire. That device is selected as the exclusive device. No root or `snd-aloop` needed |
+| Isolation | The whole session runs in its own network namespace (loopback only). Host system bus, `/run/user`, nscd, system PulseAudio and `/dev/snd` are hidden |
+| Discord | A fake Discord IPC server on `$XDG_RUNTIME_DIR/discord-ipc-0` records the handshake and `SET_ACTIVITY` payloads |
+| Clock | Real time, with tolerances (see Comparison). The Rune build's headless virtual clock is not used for parity runs, since the reference has no equivalent |
+
+### TIDAL fixtures
+
+- **Cassettes:** API responses recorded once from a real test account, then sanitized: tokens,
+  user IDs, emails and signed URLs replaced with stable fakes. Cassettes are never committed with
+  secrets. The sanitizer runs in CI and fails on high-entropy strings.
+- **Streams:** the replay proxy rewrites playback-info manifests to point at a local fixture
+  server. That server holds synthetic FLAC files (tone sweeps and known-pattern noise at 44.1/16,
+  96/24 and 192/24) whose decoded PCM checksums are known in advance. This makes audio output
+  bit-comparable.
+- **Auth:** the device-code and PKCE flows are replayed from cassettes. A scenario can also start
+  from a pre-seeded keyring plus `settings.json` (an already-logged-in user).
+
+## Observation channels
+
+Each channel turns one boundary into a normalized, timestamped event stream.
+
+| Channel | Observes | Drives |
+|---|---|---|
+| **MCP** | `get_now_playing`, `get_queue`, favorites, playlists | 34 tools: play, skip, seek, shuffle, repeat, volume, queue edits, playlist CRUD |
+| **MPRIS** (D-Bus) | Metadata, PlaybackStatus, Position, LoopStatus, Shuffle, Volume, signals | Play/Pause/Next/Previous/Seek/SetPosition/OpenUri |
+| **Network** | API calls: method, host, path, normalized query and body, and order where it matters | — |
+| **Audio** | PCM bytes, sample rate, bit depth, channel count, gaps, underruns | — |
+| **Accessibility** (AT-SPI) | Per-view tree of (role, name, state) | Activate controls by role and name, type text, focus |
+| **Input** | — | Key chords for the 19 shortcuts (`wtype`, or `xdotool` on Xvfb) |
+| **Tray** (SNI D-Bus) | Menu items and states | Menu activation |
+| **Discord IPC** | Activity payloads | — |
+| **Filesystem** | `settings.json` contents, cache layout | Seeded profiles |
+| **Keyring** | Stored items and attributes | Seeded tokens |
+| **Process** | Startup time, RSS, CPU, exit code, stderr panics | Launch, signal, kill |
+
+MCP deserves a note. In the reference, an MCP action goes Rust → `mcp:*` event → TS playback logic
+→ state mirrored back to Rust. So driving through MCP exercises exactly the TS logic being
+ported, through an interface the candidate must keep anyway. It is the strongest single oracle
+we have.
+
+## Verification layers
+
+### L0 Coverage gate
+
+`inventory.py --json` produces the denominator. `coverage.toml` maps every inventory item to the
+scenarios that cover it, or to a waiver with a reason and an owner. CI fails when:
+
+- an item has no scenario and no waiver
+- a scenario covering an item fails on the candidate
+- a new upstream release adds surface (`inventory.py --diff old.json`) that isn't mapped yet
+
+The last check matters because SONE ships weekly. The port is chasing a moving target.
+
+### L1 Backend contract
+
+The Rust backend is kept, so its 402 cargo tests keep running on the candidate tree unchanged.
+Every reference command a user can reach must still be reachable in the candidate. For example,
+`toggle_bit_perfect` must be triggerable from the UI or a shortcut. Reachability is proven by an
+L2 or L3 scenario, not by a code grep.
+
+### L2 Behavioural parity: the core
+
+Scenario scripts drive the app through MCP, MPRIS, the accessibility tree and input. Every
+channel is recorded. **Record mode** runs a scenario on the reference and stores the normalized
+trace as golden. **Verify mode** runs it on the candidate and diffs against the golden.
+**Differential mode** runs both builds live, side by side, for exploratory checks.
+
+Scenario families (each maps back to inventory items):
+
+- **Playback and queue:** play album, playlist, mix or radio. Next, previous, seek, end of queue.
+  Shuffle and repeat combinations. Autoplay when the queue runs out. Queue edits while playing.
+  Duplicate handling when adding to a playlist. This is the biggest family, mirroring
+  `usePlaybackActions.test.tsx` and `usePlaySource.test.tsx`.
+- **Audio paths:** shared vs exclusive ALSA. Bit-perfect on/off. Quality cap (`max_quality`).
+  Gapless transitions, checked for zero inserted silence between fixture tracks. Volume
+  normalization. Resampling events.
+- **Library:** favorite or unfavorite tracks, albums, artists, mixes and playlists. Playlist CRUD
+  and folders. Every change is checked on the network channel (the right API call) and through
+  MCP read-back.
+- **Navigation:** every one of the 15 views reachable, with the expected labelled content present
+  (L3). Back/forward and scroll restoration.
+- **Search:** queries, tabs, search history persistence.
+- **Integrations:** MPRIS round-trips. Tray actions. Scrobbles at the listen threshold (Last.fm,
+  Libre.fm, ListenBrainz request bodies). TIDAL play reports to `ec.tidal.com`. Discord
+  activity. Update check against a stubbed GitHub release.
+- **Settings:** each of the 27 `settings.json` fields toggled through the UI, with the resulting
+  file and behaviour checked.
+- **Auth:** device-code login, PKCE login and its cancel and error paths, logout clearing tokens
+  and state.
+- **Proxy:** the app's own proxy settings (HTTP and SOCKS), the fail-closed paths, and
+  `probe_proxy_reachability`.
+- **Miniplayer and windows:** open and close the miniplayer, state sync, always-on-top,
+  minimize to tray.
+- **Shortcuts:** all 19, by key chord.
+
+**Comparison rules** (golden vs candidate):
+
+- Event *sequences* must match after normalization. Timestamps are dropped. Ordering is enforced
+  only within a channel, and across channels only where the scenario declares a causal edge
+  (for example, `skip_next` then a new MPRIS track ID then an audio boundary).
+- Numeric tolerances: position ±1 s, volume ±1%, startup timing excluded from parity.
+- Network: compare the set of API calls per step, with volatile fields (timestamps, nonces,
+  session IDs) masked by declared rules. Image and CDN fetches (`resources.tidal.com`) are
+  excluded, because the reference loads them from WebKit and the candidate from Rust.
+- Audio: exact PCM equality in bit-perfect and exclusive mode. Format, continuity and
+  no-underrun checks in shared mode.
+- Each scenario runs 3 times. Any flake counts as a failure of the scenario, not a pass.
+
+### L3 UI semantic parity
+
+Both builds export the same accessibility protocol on Linux: WebKitGTK through its AT-SPI
+bridge, and Rune through AccessKit's `accesskit_unix` (the `accessibility` cargo feature must be
+enabled). One AT-SPI driver can therefore inspect and drive both.
+
+- **Per-view inventory:** for each view, snapshot the normalized set of (role, name) for
+  landmarks, buttons, inputs, list items and headings. Diff reference vs candidate. Missing
+  controls are failures. Extra controls are reported for review.
+- **Interaction:** L2 scenarios that need the UI use semantic selectors ("button named Shuffle",
+  "row containing <track title>"), never coordinates or CSS selectors.
+- **Side effect:** the Rune app must label its controls properly, which also makes it usable
+  with Orca. The reference has to pass too, so poorly labelled reference controls are fixed in
+  the adapter's selector map, not in the scenarios.
+
+Fallback, if WebKitGTK's AT-SPI tree proves unusable (spike 1): drive the reference through
+WebDriver (`tauri-driver` + `WebKitWebDriver`) and read the candidate through Rune's `--tree`
+dump. Both then feed one semantic adapter that maps to the same (role, name) model.
+
+### L4 Visual review (not a gate)
+
+Pixel parity is a non-goal. Visuals are used for:
+
+- a side-by-side gallery per view and theme (reference screenshot vs Rune `--snap`) for human
+  sign-off
+- theme checks: sampled colours on known elements match the active theme file
+- golden regression images for the *candidate*, once a view is signed off
+
+### L5 Non-functional budgets
+
+Measured in the sandbox on the same machine, candidate vs reference:
+
+- cold start to interactive home view
+- RSS at idle and after scrolling a 10k-track playlist
+- idle CPU, and CPU while playing
+- frame time while scrolling (Rune `--trace`, and compositor frame callbacks for the reference)
+- zero audio underruns over a 30-minute gapless run
+
+The goal is for the candidate to be no worse than the reference on any of these, and better on
+memory.
+
+### L6 Migration
+
+Existing users upgrade in place, so we test that too. Start the reference on a fresh profile, run
+a setup scenario (log in, set volume, shuffle, repeat, a theme, search history, a proxy), quit,
+then launch the **candidate on the same profile**. Everything must survive:
+
+- `settings.json` and keyring tokens: shared, so they should just work
+- **the 8 `sone.*` keys stored in WebKitGTK localStorage**, which a Rune app cannot see. The
+  candidate needs a one-time migration that reads WebKit's localStorage SQLite under the old
+  data directory, or users silently lose volume, shuffle, repeat, AI/explicit filters and search
+  history. This is a known porting task the verifier pins down
+- theme files and cache
+
+Also check the reverse direction for downgrades: the candidate must not write anything that
+breaks the reference on the same profile.
+
+## Waivers (expected, written down)
+
+| Item | Reason |
+|---|---|
+| Music video playback (`video` atoms, HLS) | Rune `Player` is macOS-only on Linux today. Tracked upstream in anomalyco/rune#30, #100, #112. Revisit when one lands |
+| WebKit-specific env handling (`WEBKIT_DISABLE_DMABUF_RENDERER`, `SOUP_FORCE_HTTP*`) | Not applicable without WebKit |
+| `greet`, `debug_home_page_raw` and other dead or debug commands | Not user-reachable |
+| CDN image request parity | Different fetch path by design |
+
+Every waiver names an owner and an expiry condition. Waivers live in `coverage.toml` and show up
+in the report.
+
+## Definition of done
+
+The port is accepted when, on the same release of upstream:
+
+1. L0: coverage is 100% of inventory items (scenarios or waivers), with no unmapped surface from
+   the latest upstream diff.
+2. L1: cargo tests are green on the candidate tree.
+3. L2: every scenario matches its golden on the candidate, 3 runs each, with no flakes.
+4. L3: per-view semantic diffs are empty, or reviewed and waived.
+5. L5: all budgets are met.
+6. L6: the migration suite passes in both directions.
+7. L4: a human has signed off the visual gallery.
+
+Ported TS behaviour also gets internal Rust tests. Each of the 588 vitest cases should map to a
+Rust test or a waiver. That is tracked alongside, but it is not the verifier's evidence: the
+verifier only trusts what it observes from outside.
+
+## Layout and tooling
+
+```
+verifier/
+  DESIGN.md            this file
+  verify.py            CLI: record / check / run, parallel sandboxes, report
+  inventory.py         surface extractor
+  harness/
+    shell.nix          pinned tools (nix-shell verifier/harness/shell.nix)
+    sandbox.sh         one hermetic session per run (see "Sandbox completion")
+    runner.py          executes a scenario inside the sandbox, writes trace.json
+    compare.py         golden vs trace, with the tolerance rules
+    fake_tidal.py      mitmproxy addon: fake TIDAL, fixture server, request log
+    seed_profile.py    write/read SONE's encrypted settings.json
+    make_fixtures.sh   regenerate fixtures (gen_noise.py: seeded-noise WAVs)
+  channels/            mcp.py, mpris.py, net.py, audio.py, tray.py, atspi.py
+  scenarios/           *.toml step scripts
+  goldens/             normalized traces recorded from the reference (committed)
+  fixtures/            tracks.json (committed); audio, DASH, artwork (generated)
+  runs/                per-run sandboxes, logs, traces (ignored)
+  coverage.toml        (next) inventory item -> scenarios | waiver
+```
+
+The verifier is written in **Python**, deliberately not Rust. Being a different language from the
+candidate keeps it independent. Python also has mature mitmproxy, AT-SPI (`pyatspi`), D-Bus
+(`dbus-python`) and numpy support. The pinned shell provides the compositor, PipeWire, at-spi2-core,
+mitmproxy, bwrap and ffmpeg. Builds are passed with `--bin`, so the verifier works on any build:
+
+```bash
+nix-shell verifier/harness/shell.nix --run 'python3 -I verifier/verify.py check --bin /path/to/sone'
+```
+
+A scenario (see `harness/runner.py` for every key):
+
+```toml
+name = "skip-next"
+covers = ["mcp_tools:skip_next"]
+tracks = [1005, 1006, 1007]            # fixtures the audio channel looks for
+
+[[step]]
+mcp = { tool = "play_tracks", args = { track_ids = [1005, 1006, 1007], action = "play_now" } }
+[[step]]
+wait_for = { "mpris.status" = "Playing", timeout = 10 }
+[[step]]
+label = "skip to B"
+mcp = { tool = "skip_next" }
+```
+
+After every step the runner records the MPRIS snapshot, MCP now-playing and queue, and the API
+calls the step caused. The whole run adds the tray menu, the accessibility control inventory and
+the audio analysis.
+
+## Spike results (2026-11-08, reference v0.23.0)
+
+All four approaches work. The spike code has since become `harness/` and `channels/` (see
+"Harness v0"). The spike-era fixtures were tones; they were replaced by seeded noise.
+
+| Spike | Result | What it showed |
+|---|---|---|
+| Profile seeding (unplanned) | **Go** | `settings.json` is AES-256-GCM (`SONE`, 0x01, 12-byte nonce, ciphertext). With no Secret Service on the bus, the key falls back to the raw 32-byte `sone.key`. The verifier can write a logged-in profile (fake tokens, MCP on, proxy, exclusive device) before first launch. **No real account and no login flow needed for most scenarios.** Cassettes are only needed for realistic catalogue data |
+| 1. AT-SPI | **Go, with gaps** | WebKitGTK 2.54 exposes a usable tree (about 75 nodes on Explore). Nav buttons, library tabs, search and the queue button have roles and names. `doAction("press")` on "Explore" navigated. **Gap:** the player bar's icon buttons (likely prev, play/pause, next, shuffle, repeat, like) and the volume slider are unnamed. Either give them `aria-label`s upstream (a good accessibility fix anyway) or pin them by structure in the reference adapter's selector map. The sandbox must start `at-spi2-registryd` itself, because there's no systemd to activate it |
+| 2. Proxy | **Go** (gaps resolved below) | The seeded `proxy` setting routes all reqwest and GStreamer traffic through mitmproxy, trusted through `SSL_CERT_FILE`. mitmproxy must run with `connection_strategy=lazy`, or it contacts real upstreams to fetch certificates. strace saw exactly two TCP connects, both to the proxy. **Hermeticity gaps:** the app also opens the host's **system D-Bus** and **PulseAudio** sockets, so the harness must hide both (bwrap or a mount namespace, plus a private PipeWire). WebKit-loaded images were not exercised, because the fixtures have no artwork |
+| 3. Exclusive ALSA | **Go for bytes, no-go for timing** (timing resolved below) | With `exclusive_device = "sone_capture"` (ALSA `file` plugin) and bit-perfect on, the 96 kHz/24-bit fixture came out **bit-exact** in an `S24_32LE` container, with only silence around it. But the `null` slave has no clock: playback finishes instantly, the writer floods silence (436 MB for a 10 s track), and MCP reports `isPlaying=false`, position 0. **Timing scenarios need a clocked slave.** Use a PipeWire null sink in the sandbox through `pipewire-alsa`, which also fixes the PulseAudio gap, or `snd-aloop` on CI hosts that allow kernel modules |
+| 4. Manifest rewrite | **Go** | Returning a `vnd.tidal.bts` manifest whose URL points at `fixtures.sone.test` worked. GStreamer (souphttpsrc/curlhttpsrc) fetched it through the proxy and played it. MCP showed the right now-playing and queue. The gapless prefetch of the next track appeared in the network log. **Untested:** DASH manifests (`dash+xml`), which real hi-res streams use. Add a DASH fixture (an MPD plus segments) next |
+
+Other findings:
+
+- **MCP drives and observes playback end to end.** `play_tracks`, then `get_now_playing` and
+  `get_queue`, then the network log. This makes MCP the backbone channel for L2.
+- **The tray channel needs a fake `org.kde.StatusNotifierWatcher`** on the private bus.
+  Without one, the app logs that the tray failed and no tray menu is exposed.
+- **Expected sandbox noise:** deep-link registration fails (`update-desktop-database` is
+  missing).
+- **The upstream Nix package was broken at v0.23.0:** its `pnpmDeps.hash` was stale after the
+  vite bump. It's fixed locally in `nix/package.nix`. Worth an upstream PR.
+
+## Sandbox completion (2026-11-08)
+
+The gaps the spikes found are closed. `sandbox.sh` now provides:
+
+| Piece | How | Verified |
+|---|---|---|
+| Clocked audio | Private PipeWire, WirePlumber (all hardware, bluez and logind monitors off) and pipewire-pulse, with one `support.null-audio-sink`. ALSA `sone_capture` is the `file` plugin teeing into the PipeWire ALSA plugin, so frames are captured *and* paced by a real clock | The 10 s track plays for 10 s. The capture is 1.78 MB (not 436 MB) and bit-exact (`S16LE`, 44.1 kHz). MPRIS `Position` advances in real time: 1.83, 3.84, 5.80, 7.81 s, then `Paused`/0 at end of queue |
+| Host isolation | The whole session runs in `bwrap --unshare-net` (loopback only), with tmpfs over `/run/user`, `/run/dbus`, `/run/pulse`, `/run/nscd` and `/dev/snd`, and `DBUS_SYSTEM_BUS_ADDRESS` pointed nowhere | strace: every connect to a hidden socket (system bus, nscd) fails with `ENOENT`. TCP only reaches `127.0.0.1`. There is no route to the internet even if something ignored the proxy. Shared-mode audio goes to the private pipewire-pulse |
+| Tray | `tray.py watcher` serves `org.kde.StatusNotifierWatcher`. `tray.py menu` and `tray.py click LABEL` read and drive the item's dbusmenu | Menu read back: Show / Play / Pause / Next Track / Previous Track / Quit |
+| DASH | `make_fixtures.sh` stream-copies the 96 kHz/24-bit FLAC into fMP4 segments (ffmpeg) and rewrites the MPD to absolute URLs, because SONE hands the MPD to dashdemux as a `data:` URI. Track 1004 serves it as `application/dash+xml` | dashdemux fetched `init.mp4` and segments 1–3 through the proxy. Exclusive bit-perfect output is **bit-exact** (`S24_32LE`) against the FLAC's PCM. The UI shows "24-BIT 96kHz FLAC, HI-RES LOSSLESS" |
+| Artwork | Every `resources.tidal.com/images/...` request gets `cover.jpg` | Three sizes requested through the proxy. The cover renders in the now-playing bar, so the webview trusts the proxy CA through `SSL_CERT_FILE` (glib-networking on Nix honours it) |
+
+New findings:
+
+- **MCP's `positionSeconds` stays 0** throughout playback in the reference: the state mirror
+  doesn't track position. **Use MPRIS `Position` for timing assertions.** Whether the Rune
+  port should fix this or preserve it is a decision to record as a waiver or a bug.
+- **Images are not only loaded by WebKit:** the artwork requests carried no User-Agent. The
+  earlier assumption that "the reference loads images from WebKit and the candidate from Rust"
+  needs checking before the image-exclusion rule in L2 is finalised.
+- **Stream fixtures by track ID:** 1001 BTS 44.1/16, 1002 BTS 96/24, 1003 BTS 192/24, 1004
+  DASH 96/24. Every one decodes to a known PCM checksum (`fixtures/pcm.sha256`).
+
+## Harness v0 (2026-11-08)
+
+`verify.py` runs scenarios in parallel sandboxes. `record` stores a golden only when N runs of
+the reference agree with each other; `check` compares a build against the goldens.
+
+**Status:** 18 scenarios. 15 have goldens and **pass 3 of 3 fresh runs against the reference**
+(45 runs, no flakes). 3 are quarantined (see below).
+
+| Family | Scenarios |
+|---|---|
+| Playback | play-single, queue-advance, skip-next, skip-previous-shared, pause-resume-shared, seek-shared |
+| Queue | queue-ops (append, play-next, remove, clear) |
+| Modes | repeat-one, repeat-all, shuffle-toggle |
+| Integrations | mpris-control, tray-control |
+| Audio path | dash-hires, rate-switch (44.1 → 96 → 192 kHz), volume-not-bitperfect |
+
+**The audio channel** (`channels/audio.py`) maps the raw capture back onto fixtures. All fixtures
+are seeded noise, so any 64-frame window identifies one track and one frame. The output is an
+ordered list of segments (track, frame range, full or partial, silence before), which shows
+skips, cuts, repeats, resampling and gaps in one structure. The ALSA file plugin runs with
+`truncate false`, which writes one file per PCM open (`audio.raw.0001`, …), so reopens don't
+erase earlier tracks.
+
+**Comparator tolerances:** position ±1.5 s, volume ±0.02, partial-play edges ±1.0 s, inter-track
+silence ±0.25 s. The lossless container (S16/S24_32/S32) is not compared; the sample rate is.
+Network calls are compared as a per-step set, with artwork and the update check excluded.
+Startup traffic is kept out of step 0 by waiting for 2 s of network quiet before the first step.
+
+**Sensitivity:** the comparator catches behaviour changes. Running `volume-not-bitperfect` with
+`--profile '{"bit_perfect": true}'` fails on volume (1.0, expected 0.5) and on audio (bit-exact,
+expected scaled). App-level mutation builds are still to do (build order step 3).
+
+**Reference behaviour the goldens now pin down** (decide per item whether the port preserves
+it or fixes it; a fix needs a waiver):
+
+- **Exclusive mode is not gapless:** there are 100 ms of silence between same-format tracks
+  (each track reopens the PCM). Rate changes insert 23 ms (44.1 → 96 kHz) and 50 ms
+  (96 → 192 kHz).
+- **Bit-perfect ignores volume:** `set_volume` leaves MPRIS volume at 1.0 and output bit-exact.
+- **Bit-perfect appears to force exclusive output:** with `exclusive_mode = false` and
+  `bit_perfect = true`, audio still reaches the exclusive device.
+- **Volume is owned by the frontend:** `settings.json`'s `volume` is overridden by the
+  frontend's `sone.volume.v1` in WebKit storage. That's another reason the L6 migration matters.
+- **MCP `positionSeconds` is always 0;** use MPRIS for position.
+- **Previous early in a track goes to the previous track** (skip-previous-shared, tray-control).
+
+**Quarantined, for one shared reason:** in exclusive mode, anything that pauses or seeks
+(`seek`, `pause-resume`, `skip-previous`'s late restart) is nondeterministic in the sandbox.
+Playback stalls with position frozen and only silence written, or the track restarts from
+frame 0 on resume, or it continues correctly. The same scenarios in shared mode are
+deterministic and correct (resume continues from 1.52 → 2.55 s). So this is either the app's
+exclusive ALSA writer or the PipeWire ALSA plugin underneath it. **Next step:** reproduce on a
+real DAC (`exclusive_device = "hw:…"`), outside the sandbox. If real hardware behaves, the
+sandbox needs a different clocked slave. If it doesn't, it's an upstream bug worth reporting.
+
+## Port slice 1: playback core on Rune (2026-11-08)
+
+The first candidate exists (`rune-app/`, see its README). SONE's backend runs unchanged behind
+`src-tauri`'s new `host` feature, with `tauri::` aliased to `src-tauri/host-shim`. The React
+playback logic is re-implemented in `rune-app/src/controller.rs` against
+`rune-app/PLAYBACK_SPEC.md`, and the UI is the Afterglow kit from `~/dev/music-player`. The
+Tauri build (`tauri-ui`, the default feature) still compiles; `run()` now calls the shared
+`setup_core()`.
+
+**Result: the candidate passes every non-quarantined golden on behaviour (L2), 3 of 3 runs**
+(`check --runs 3 --ignore controls,unnamed_controls`). That covers MPRIS and MCP state, the API
+calls at each step, and bit-exact audio, including DASH hi-res, rate switching, gapless timing
+and repeat. L3 (the accessibility inventory) fails as expected: SONE's sidebar, library, search
+and account views aren't ported. The candidate's own controls are all named (no unnamed
+buttons, unlike the reference's player bar).
+
+Harness changes this slice needed, applied to both builds:
+
+- **Accessibility switched on** (keyfile GSettings, `toolkit-accessibility=true`): AccessKit
+  registers only for an active assistive technology. The reference still passes all goldens in
+  full under this.
+- **Software Vulkan** (`SONE_SOFTWARE_VULKAN=1` → lavapipe via the candidate's wrapper): the
+  headless compositor has no GPU.
+- **`--ignore KEYS`** to judge a layer at a time.
+- **`mpris-control` split:** MPRIS Pause/Play moved to `mpris-pause-play-shared`. In exclusive
+  mode, the audio after a resume flaked on the *candidate* the same way the quarantined
+  scenarios flake (skipped ~0.37 s in one run, silence in the other). That's below the
+  controller, so it's the same open question as the quarantine.
+
+## Port slice 2: views, by hill climbing (2026-11-08)
+
+**Validator.** Three pieces turned the verifier into something to climb:
+
+- **Synthetic catalog** (`fixtures/catalog/`, generator `gen.py`, see its README). The fake TIDAL
+  serves Home, Search (every tab and suggestions), Album, Artist, the sidebar playlists and the
+  Playlist page from deterministic JSON. Artist 7 "Fixture Artist", artist 8 "Mock Ensemble",
+  album 77 "Fixture Album" (1001–1004), album 78 "Queue Suite" (1005–1007), playlists
+  "Fixture Mixtape" and "Synthetic Selections". `/v1/tracks/{id}` agrees with the catalog. All
+  goldens were re-recorded on it.
+- **View scenarios** with `views = true`: the runner snapshots the visible named controls after
+  every step. New step forms: `ui = { type = TEXT, into = NAME }` (AT-SPI focus, then real
+  keystrokes with `wtype`), `key = "Return"`, and `nth` to tell repeated names apart. Presses
+  fall back to the nearest actionable ancestor, so cards are clicked through their heading.
+  Scenarios: view-home, view-search (dropdown, results, every tab), view-album, view-artist,
+  view-playlist (each also plays the collection), view-library.
+- **`verify.py score`.** Per scenario it reports controls recall/precision, net recall,
+  behaviour and audio. It takes the worst of `--runs`, compares against a saved baseline
+  (`--baseline`, `--save` into `verifier/scores/`), and lists the reference controls most often
+  missing and the most common extra controls. `waivers.toml` holds written-down intentional
+  differences; so far that's the candidate naming controls the reference leaves unnamed.
+
+**The climb** (`verifier/scores/rune-*.json`, overall score):
+
+| Step | Change | Overall |
+|---|---|---|
+| baseline | playback-only Rune build | 0.417 |
+| 1 | app shell: sidebar + library, header + search with suggestions, window buttons, Home/Search/Album/Artist/Playlist pages, player-bar extras, collection play in the controller | 0.879 |
+| 2 | read the backend's flattened Home items (`_itemType`) | 0.939 |
+| 3 | tall display for Rune builds (see below) | 0.940 |
+| 4 | cards and rows presentational (heading carries the press), inner text of labelled controls hidden, no player-bar landmark, 300 ms suggestion debounce, artist Play falls back to the page's top tracks | 0.978 |
+| 5 | open the Rune window at display size (see below) | 0.986 |
+| 6 | album-page modules typed by module, playlist title as heading | **1.000** |
+
+After step 6, a strict run of all three runs first exposed a scoring blind spot. Net counted only
+*missing* requests, so per-keystroke suggestion fetches (the dropdown fetched on render) scored
+1.00. Net is now an F1, and the dropdown only peeks at the cache. **Final strict check** (`check`, behaviour and
+accessibility inventory, nothing ignored, 3 runs each, `--display 1400x2000`): **21 of 22
+scenarios pass every run (65 of 66 runs).** The exception is `repeat-one`, 1 run in 3: the
+candidate's repeat replay sometimes produces audio that the reference's never did inside the
+window, which looks like the same exclusive-mode replay/reopen nondeterminism as the quarantine.
+
+**Findings about Rune/AccessKit that the verifier surfaced:**
+
+- **AccessKit hides scroll content outside the viewport** from AT-SPI, keeping only the first
+  sibling beyond the edge, and exposes no scroll action over AT-SPI (only `click`). WebKit
+  exposes the whole page. So Rune builds are scored on a 1400×2000 display (`--display`),
+  while the reference stays at 1400×900 where its goldens were recorded. A tall WebKit window
+  made the reference's timing-sensitive React logic flaky under parallel load. Long lists will
+  need a real scroll sweep.
+- **Rune keeps a window's first bounds for AccessKit** after the compositor resizes it, so
+  content outside the original 1280×800 was clipped from the tree even on the tall display.
+  It's worth reporting upstream. Workaround: `SONE_WINDOW_SIZE` opens the window at display size.
+- **A pressable container becomes a `button`** named from all its text, unless its role is
+  `presentation`. Visible text inside a labelled control shows up as an extra `label` node
+  unless it's `a11y_hidden`.
+
+## Port slice 3: settings, sign-in, queue, lyrics, miniplayer, Explore, Feed (2026-11-08)
+
+**Validator additions:**
+- **Catalog:** Explore (pill rows, an icon grid and 11 sub-pages), Feed (three activities, a
+  mix, the seen PUT), synced lyrics for 1001/1005 (404 for the rest), credits, and the
+  MusicBrainz ISRC lookup. The device-code sign-in is now stateful: the first poll answers
+  `authorization_pending`, the next one succeeds. See catalog/README.md.
+- **Harness:**
+  - `settings = [keys]` records the decrypted `settings.json` values after each step.
+  - `logged_out = true` starts without tokens.
+  - The AT-SPI channel searches every accessible app of the process (for second windows).
+  - `xdg-open`, `$BROWSER`, firefox and chromium are stubbed inside the sandbox to record the URL
+    (`final.opened`). The reference was really launching Firefox during sign-in.
+  - Each step waits for 0.4 s of network quiet before cutting its request slice, which removes a
+    step-boundary race.
+- **Scoring:** net is an F1, so extra requests now cost.
+- **Scenarios:** view-queue, view-account, view-settings (every tab, plus the quality change
+  persisted), view-miniplayer, signin (login screen → code → Home, tokens persisted, the
+  approval URL opened), view-lyrics, view-explore, view-feed.
+
+**Port:**
+- Account menu: toggles stay open, actions close it.
+- Settings as a modal with all nine tabs; quality writes through `set_max_quality`.
+- Bit-perfect and exclusive toggles follow `setBitPerfect` (save, ramp, restore).
+- A right-hand drawer with Play queue / Suggested tracks / Lyrics / Credits tabs, with synced
+  lyric lines.
+- The miniplayer as a second Rune window.
+- Explore and genre/view-all pages: modules typed by module type; no heading on `PAGE_LINKS`.
+- Feed: grouped by age, Play / More options per row, marked seen on open.
+- Login screen: PKCE / Login Code modes, device code with the approval page opened.
+- The post-sign-in bootstrap makes the same calls AppInitializer makes. It uses the id-list
+  commands, so the library tabs still fetch when opened.
+
+Scores: step 7 (first build with the new screens) 0.987 → step 9 0.998 across 30 scenarios
+(`verifier/scores/rune-step9.json`). The per-step quiet wait shifts every timed state, so all
+30 goldens were re-recorded with it (3 of 3 runs each). **Final strict check** (behaviour and
+accessibility inventory, nothing ignored, 3 runs, 1400×2000): **29 of 30 scenarios pass every
+run.** The exception is `repeat-one`, which fails 2 runs in 3. The Rune build's repeat replay
+produces audio inside the window, and the reference's replay never does, in any recorded run.
+Both call the same `play_tidal_track` in exclusive mode, so this sits with the exclusive-mode
+replay/reopen question. It is not settled whether the reference stalls or the candidate is too
+quick.
+
+**Not covered:** the Credits and Suggested tracks tabs' content, settings fields' editing
+(present and named, not wired), the PKCE login itself (it needs the embedded webview, which the
+Rune build can't host; the system-browser flow is the alternative), Shortcuts and About dialogs,
+music videos, and text content of lyrics (the inventory compares controls, not text).
+
+## Build order
+
+1. ~~Spikes~~, ~~sandbox completion~~, ~~harness v0~~, ~~port slice 1 (playback core)~~,
+   ~~port slice 2 (views)~~ and ~~port slice 3~~ (done, see above).
+2. Settle the exclusive-mode pause/seek/resume question (now seen on both builds) without real
+   hardware: `snd-aloop` as the clocked slave (`sudo modprobe snd-aloop`, silent). Then
+   un-quarantine.
+3. Mutation checks on the reference (break shuffle, drop a scrobble, skip gapless prefetch). The
+   suite must catch each one.
+4. Expand coverage on the reference (library, search, views, settings, auth, scrobbling,
+   miniplayer, migration) and port each area as its scenarios land. Gate per area: L2 and L3
+   pass on the candidate.

@@ -1,0 +1,188 @@
+{
+ "overall": 0.939,
+ "scenarios": {
+  "dash-hires": {
+   "controls_recall": 0.97,
+   "controls_precision": 0.864,
+   "net": 1.0,
+   "behaviour": 1.0,
+   "audio": 1.0,
+   "total": 0.967
+  },
+  "mpris-control": {
+   "controls_recall": 0.97,
+   "controls_precision": 0.864,
+   "net": 1.0,
+   "behaviour": 1.0,
+   "audio": 1.0,
+   "total": 0.967
+  },
+  "mpris-pause-play-shared": {
+   "controls_recall": 0.97,
+   "controls_precision": 0.864,
+   "net": 1.0,
+   "behaviour": 1.0,
+   "total": 0.959
+  },
+  "pause-resume-shared": {
+   "controls_recall": 0.97,
+   "controls_precision": 0.864,
+   "net": 1.0,
+   "behaviour": 1.0,
+   "total": 0.959
+  },
+  "play-single": {
+   "controls_recall": 0.97,
+   "controls_precision": 0.864,
+   "net": 1.0,
+   "behaviour": 1.0,
+   "audio": 1.0,
+   "total": 0.967
+  },
+  "queue-advance": {
+   "controls_recall": 0.97,
+   "controls_precision": 0.864,
+   "net": 1.0,
+   "behaviour": 1.0,
+   "audio": 1.0,
+   "total": 0.967
+  },
+  "queue-ops": {
+   "controls_recall": 0.97,
+   "controls_precision": 0.864,
+   "net": 1.0,
+   "behaviour": 1.0,
+   "total": 0.959
+  },
+  "rate-switch": {
+   "controls_recall": 0.97,
+   "controls_precision": 0.864,
+   "net": 1.0,
+   "behaviour": 1.0,
+   "audio": 1.0,
+   "total": 0.967
+  },
+  "repeat-all": {
+   "controls_recall": 0.97,
+   "controls_precision": 0.864,
+   "net": 1.0,
+   "behaviour": 1.0,
+   "audio": 1.0,
+   "total": 0.967
+  },
+  "repeat-one": {
+   "controls_recall": 0.97,
+   "controls_precision": 0.864,
+   "net": 1.0,
+   "behaviour": 1.0,
+   "audio": 1.0,
+   "total": 0.967
+  },
+  "seek-shared": {
+   "controls_recall": 0.97,
+   "controls_precision": 0.864,
+   "net": 1.0,
+   "behaviour": 1.0,
+   "total": 0.959
+  },
+  "shuffle-toggle": {
+   "controls_recall": 0.97,
+   "controls_precision": 0.864,
+   "net": null,
+   "behaviour": 1.0,
+   "total": 0.945
+  },
+  "skip-next": {
+   "controls_recall": 0.97,
+   "controls_precision": 0.864,
+   "net": 1.0,
+   "behaviour": 1.0,
+   "audio": 1.0,
+   "total": 0.967
+  },
+  "skip-previous-shared": {
+   "controls_recall": 0.97,
+   "controls_precision": 0.864,
+   "net": 1.0,
+   "behaviour": 1.0,
+   "total": 0.959
+  },
+  "tray-control": {
+   "controls_recall": 0.97,
+   "controls_precision": 0.864,
+   "net": 1.0,
+   "behaviour": 1.0,
+   "audio": 1.0,
+   "total": 0.967
+  },
+  "view-album": {
+   "controls_recall": 0.946,
+   "controls_precision": 0.827,
+   "net": 1.0,
+   "behaviour": 1.0,
+   "total": 0.943
+  },
+  "view-artist": {
+   "controls_recall": 0.891,
+   "controls_precision": 0.854,
+   "net": 0.625,
+   "behaviour": 0.25,
+   "total": 0.655
+  },
+  "view-home": {
+   "controls_recall": 0.968,
+   "controls_precision": 0.857,
+   "net": null,
+   "behaviour": 1.0,
+   "total": 0.942
+  },
+  "view-library": {
+   "controls_recall": 0.967,
+   "controls_precision": 0.853,
+   "net": 1.0,
+   "behaviour": 1.0,
+   "total": 0.955
+  },
+  "view-playlist": {
+   "controls_recall": 0.97,
+   "controls_precision": 0.831,
+   "net": 1.0,
+   "behaviour": 1.0,
+   "total": 0.95
+  },
+  "view-search": {
+   "controls_recall": 0.929,
+   "controls_precision": 0.752,
+   "net": 1.0,
+   "behaviour": 0.571,
+   "total": 0.813
+  },
+  "volume-not-bitperfect": {
+   "controls_recall": 0.97,
+   "controls_precision": 0.864,
+   "net": 1.0,
+   "behaviour": 1.0,
+   "audio": 1.0,
+   "total": 0.967
+  }
+ },
+ "missing": {
+  "heading: Fixture Tracks": 46,
+  "heading: Queue Suite": 6,
+  "heading: Related Albums": 5,
+  "heading: Fans also like": 5,
+  "heading: Fixture Artist": 6,
+  "button: 16-BIT 44.1kHz FLAC LOSSLESS": 4,
+  "button: Fullscreen player": 4,
+  "button: Open miniplayer": 4,
+  "button: Pause": 2,
+  "button: Resume": 2,
+  "heading: Fixture Mixtape": 9,
+  "heading: Synthetic Selections": 4,
+  "button: Fixture Mixtape Fixture Mixtape You \u00b7 4 Tracks": 2,
+  "button: Loved Tracks Collection": 2,
+  "button: Sort by: Last updated": 2,
+  "heading: Fixture Album": 1,
+  "heading: Mock Ensemble": 1
+ }
+}

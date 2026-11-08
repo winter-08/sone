@@ -1,0 +1,562 @@
+{
+ "scenario": "view-lyrics",
+ "steps": [
+  {
+   "i": 0,
+   "label": "",
+   "action": {
+    "mcp": {
+     "tool": "play_tracks",
+     "args": {
+      "track_ids": [
+       1001,
+       1002
+      ],
+      "action": "play_now"
+     }
+    }
+   },
+   "result": {
+    "status": "play_now"
+   },
+   "state": {
+    "mpris": {
+     "status": "Playing",
+     "loop": "None",
+     "shuffle": false,
+     "volume": 1.0,
+     "position_s": 0.84,
+     "track": {
+      "title": "Fixture 1001",
+      "artist": [
+       "Fixture Artist"
+      ],
+      "album": "Fixture Album",
+      "length_s": 10.0
+     }
+    },
+    "now_playing": {
+     "album": "Fixture Album",
+     "artist": "Fixture Artist",
+     "durationSeconds": 10,
+     "isPlaying": true,
+     "positionSeconds": 0,
+     "title": "Fixture 1001",
+     "trackId": 1001
+    },
+    "queue": [
+     1002
+    ],
+    "controls": [
+     "button: 16-BIT 44.1kHz FLAC LOSSLESS",
+     "button: Account",
+     "button: Albums",
+     "button: Artists",
+     "button: Close",
+     "button: Explore",
+     "button: Feed",
+     "button: Fixture Mixtape Fixture Mixtape You \u00b7 4 Tracks",
+     "button: Fullscreen player",
+     "button: Go back",
+     "button: Go forward",
+     "button: Home",
+     "button: Loved Tracks Collection",
+     "button: Lyrics",
+     "button: Maximize",
+     "button: Minimize",
+     "button: Mixes",
+     "button: More options",
+     "button: Open miniplayer",
+     "button: Play queue",
+     "button: Playlists",
+     "button: Show all",
+     "button: Sort by: Last updated",
+     "button: Your Library",
+     "entry: Search",
+     "heading: Fixture Album",
+     "heading: Fixture Albums",
+     "heading: Fixture Artist",
+     "heading: Fixture Artists",
+     "heading: Fixture Mixtape",
+     "heading: Fixture Playlists",
+     "heading: Fixture Tracks",
+     "heading: Mock Ensemble",
+     "heading: Queue Suite",
+     "heading: Synthetic Selections"
+    ]
+   },
+   "net": [
+    "GET api.tidal.com/v1/tracks/1001/playbackinfopostpaywall?assetpresentation=FULL&audioquality=HI_RES_LOSSLESS&countryCode=US&playbackmode=STREAM",
+    "GET api.tidal.com/v1/tracks/1001?countryCode=US",
+    "GET api.tidal.com/v1/tracks/1002?countryCode=US",
+    "GET fixtures.sone.test/tone_44k16.flac"
+   ]
+  },
+  {
+   "i": 1,
+   "label": "",
+   "action": {
+    "wait_for": {
+     "mpris.status": "Playing",
+     "timeout": 10
+    }
+   },
+   "result": {
+    "met": true
+   },
+   "state": {
+    "mpris": {
+     "status": "Playing",
+     "loop": "None",
+     "shuffle": false,
+     "volume": 1.0,
+     "position_s": 1.86,
+     "track": {
+      "title": "Fixture 1001",
+      "artist": [
+       "Fixture Artist"
+      ],
+      "album": "Fixture Album",
+      "length_s": 10.0
+     }
+    },
+    "now_playing": {
+     "album": "Fixture Album",
+     "artist": "Fixture Artist",
+     "durationSeconds": 10,
+     "isPlaying": true,
+     "positionSeconds": 0,
+     "title": "Fixture 1001",
+     "trackId": 1001
+    },
+    "queue": [
+     1002
+    ],
+    "controls": [
+     "button: 16-BIT 44.1kHz FLAC LOSSLESS",
+     "button: Account",
+     "button: Albums",
+     "button: Artists",
+     "button: Close",
+     "button: Explore",
+     "button: Feed",
+     "button: Fixture Mixtape Fixture Mixtape You \u00b7 4 Tracks",
+     "button: Fullscreen player",
+     "button: Go back",
+     "button: Go forward",
+     "button: Home",
+     "button: Loved Tracks Collection",
+     "button: Lyrics",
+     "button: Maximize",
+     "button: Minimize",
+     "button: Mixes",
+     "button: More options",
+     "button: Open miniplayer",
+     "button: Play queue",
+     "button: Playlists",
+     "button: Show all",
+     "button: Sort by: Last updated",
+     "button: Your Library",
+     "entry: Search",
+     "heading: Fixture Album",
+     "heading: Fixture Albums",
+     "heading: Fixture Artist",
+     "heading: Fixture Artists",
+     "heading: Fixture Mixtape",
+     "heading: Fixture Playlists",
+     "heading: Fixture Tracks",
+     "heading: Mock Ensemble",
+     "heading: Queue Suite",
+     "heading: Synthetic Selections"
+    ]
+   },
+   "net": []
+  },
+  {
+   "i": 2,
+   "label": "open lyrics",
+   "action": {
+    "ui": {
+     "press": "Lyrics"
+    }
+   },
+   "result": "button: Lyrics",
+   "state": {
+    "mpris": {
+     "status": "Playing",
+     "loop": "None",
+     "shuffle": false,
+     "volume": 1.0,
+     "position_s": 3.9,
+     "track": {
+      "title": "Fixture 1001",
+      "artist": [
+       "Fixture Artist"
+      ],
+      "album": "Fixture Album",
+      "length_s": 10.0
+     }
+    },
+    "now_playing": {
+     "album": "Fixture Album",
+     "artist": "Fixture Artist",
+     "durationSeconds": 10,
+     "isPlaying": true,
+     "positionSeconds": 0,
+     "title": "Fixture 1001",
+     "trackId": 1001
+    },
+    "queue": [
+     1002
+    ],
+    "controls": [
+     "button: 16-BIT 44.1kHz FLAC LOSSLESS",
+     "button: Account",
+     "button: Albums",
+     "button: Artists",
+     "button: Close",
+     "button: Credits",
+     "button: Explore",
+     "button: Feed",
+     "button: Fixture Mixtape Fixture Mixtape You \u00b7 4 Tracks",
+     "button: Fullscreen player",
+     "button: Go back",
+     "button: Go forward",
+     "button: Home",
+     "button: Loved Tracks Collection",
+     "button: Lyrics",
+     "button: Maximize",
+     "button: Minimize",
+     "button: Mixes",
+     "button: More options",
+     "button: Open miniplayer",
+     "button: Play queue",
+     "button: Playlists",
+     "button: Show all",
+     "button: Sort by: Last updated",
+     "button: Suggested tracks",
+     "button: Your Library",
+     "entry: Search",
+     "heading: Fixture 1001",
+     "heading: Fixture Album",
+     "heading: Fixture Albums",
+     "heading: Fixture Artist",
+     "heading: Fixture Artists",
+     "heading: Fixture Mixtape",
+     "heading: Fixture Playlists",
+     "heading: Fixture Tracks",
+     "heading: Mock Ensemble",
+     "heading: Queue Suite",
+     "heading: Synthetic Selections"
+    ]
+   },
+   "net": [
+    "GET api.tidal.com/v1/tracks/1001/lyrics?countryCode=US"
+   ]
+  },
+  {
+   "i": 3,
+   "label": "track without lyrics",
+   "action": {
+    "mcp": {
+     "tool": "skip_next"
+    }
+   },
+   "result": {
+    "status": "ok"
+   },
+   "state": {
+    "mpris": {
+     "status": "Playing",
+     "loop": "None",
+     "shuffle": false,
+     "volume": 1.0,
+     "position_s": 2.3,
+     "track": {
+      "title": "Fixture 1002",
+      "artist": [
+       "Fixture Artist"
+      ],
+      "album": "Fixture Album",
+      "length_s": 10.0
+     }
+    },
+    "now_playing": {
+     "album": "Fixture Album",
+     "artist": "Fixture Artist",
+     "durationSeconds": 10,
+     "isPlaying": true,
+     "positionSeconds": 0,
+     "title": "Fixture 1002",
+     "trackId": 1002
+    },
+    "queue": [],
+    "controls": [
+     "button: 24-BIT 96kHz FLAC HI-RES LOSSLESS",
+     "button: Account",
+     "button: Albums",
+     "button: Artists",
+     "button: Close",
+     "button: Credits",
+     "button: Explore",
+     "button: Feed",
+     "button: Fixture Mixtape Fixture Mixtape You \u00b7 4 Tracks",
+     "button: Fullscreen player",
+     "button: Go back",
+     "button: Go forward",
+     "button: Home",
+     "button: Loved Tracks Collection",
+     "button: Lyrics",
+     "button: Maximize",
+     "button: Minimize",
+     "button: Mixes",
+     "button: More options",
+     "button: Open miniplayer",
+     "button: Play queue",
+     "button: Playlists",
+     "button: Show all",
+     "button: Sort by: Last updated",
+     "button: Suggested tracks",
+     "button: Your Library",
+     "entry: Search",
+     "heading: Fixture 1002",
+     "heading: Fixture Album",
+     "heading: Fixture Albums",
+     "heading: Fixture Artist",
+     "heading: Fixture Artists",
+     "heading: Fixture Mixtape",
+     "heading: Fixture Playlists",
+     "heading: Fixture Tracks",
+     "heading: Mock Ensemble",
+     "heading: Queue Suite",
+     "heading: Synthetic Selections"
+    ]
+   },
+   "net": [
+    "GET api.tidal.com/v1/tracks/1002/lyrics?countryCode=US",
+    "GET api.tidal.com/v1/tracks/1002/playbackinfopostpaywall?assetpresentation=FULL&audioquality=HI_RES_LOSSLESS&countryCode=US&playbackmode=STREAM",
+    "GET fixtures.sone.test/noise_96k24.flac"
+   ]
+  },
+  {
+   "i": 4,
+   "label": "",
+   "action": {
+    "mcp": {
+     "tool": "pause"
+    }
+   },
+   "result": {
+    "status": "ok"
+   },
+   "state": {
+    "mpris": {
+     "status": "Paused",
+     "loop": "None",
+     "shuffle": false,
+     "volume": 1.0,
+     "position_s": 3.29,
+     "track": {
+      "title": "Fixture 1002",
+      "artist": [
+       "Fixture Artist"
+      ],
+      "album": "Fixture Album",
+      "length_s": 10.0
+     }
+    },
+    "now_playing": {
+     "album": "Fixture Album",
+     "artist": "Fixture Artist",
+     "durationSeconds": 10,
+     "isPlaying": false,
+     "positionSeconds": 0,
+     "title": "Fixture 1002",
+     "trackId": 1002
+    },
+    "queue": [],
+    "controls": [
+     "button: 24-BIT 96kHz FLAC HI-RES LOSSLESS",
+     "button: Account",
+     "button: Albums",
+     "button: Artists",
+     "button: Close",
+     "button: Credits",
+     "button: Explore",
+     "button: Feed",
+     "button: Fixture Mixtape Fixture Mixtape You \u00b7 4 Tracks",
+     "button: Fullscreen player",
+     "button: Go back",
+     "button: Go forward",
+     "button: Home",
+     "button: Loved Tracks Collection",
+     "button: Lyrics",
+     "button: Maximize",
+     "button: Minimize",
+     "button: Mixes",
+     "button: More options",
+     "button: Open miniplayer",
+     "button: Play queue",
+     "button: Playlists",
+     "button: Show all",
+     "button: Sort by: Last updated",
+     "button: Suggested tracks",
+     "button: Your Library",
+     "entry: Search",
+     "heading: Fixture 1002",
+     "heading: Fixture Album",
+     "heading: Fixture Albums",
+     "heading: Fixture Artist",
+     "heading: Fixture Artists",
+     "heading: Fixture Mixtape",
+     "heading: Fixture Playlists",
+     "heading: Fixture Tracks",
+     "heading: Mock Ensemble",
+     "heading: Queue Suite",
+     "heading: Synthetic Selections"
+    ]
+   },
+   "net": []
+  }
+ ],
+ "errors": [],
+ "initial": {
+  "state": {
+   "mpris": {
+    "status": "Paused",
+    "loop": "None",
+    "shuffle": false,
+    "volume": 1.0,
+    "position_s": 0.0,
+    "track": null
+   },
+   "now_playing": null,
+   "queue": [],
+   "controls": [
+    "button: Account",
+    "button: Albums",
+    "button: Artists",
+    "button: Close",
+    "button: Explore",
+    "button: Feed",
+    "button: Fixture Mixtape Fixture Mixtape You \u00b7 4 Tracks",
+    "button: Go back",
+    "button: Go forward",
+    "button: Home",
+    "button: Loved Tracks Collection",
+    "button: Lyrics",
+    "button: Maximize",
+    "button: Minimize",
+    "button: Mixes",
+    "button: Play queue",
+    "button: Playlists",
+    "button: Show all",
+    "button: Sort by: Last updated",
+    "button: Your Library",
+    "entry: Search",
+    "heading: Fixture Album",
+    "heading: Fixture Albums",
+    "heading: Fixture Artist",
+    "heading: Fixture Artists",
+    "heading: Fixture Mixtape",
+    "heading: Fixture Playlists",
+    "heading: Fixture Tracks",
+    "heading: Mock Ensemble",
+    "heading: Queue Suite",
+    "heading: Synthetic Selections"
+   ]
+  },
+  "tray": [
+   "Show",
+   "Play / Pause",
+   "Next Track",
+   "Previous Track",
+   "Quit"
+  ],
+  "controls": [
+   "button: Account",
+   "button: Albums",
+   "button: Artists",
+   "button: Close",
+   "button: Explore",
+   "button: Feed",
+   "button: Fixture Mixtape Fixture Mixtape You \u00b7 4 Tracks",
+   "button: Go back",
+   "button: Go forward",
+   "button: Home",
+   "button: Loved Tracks Collection",
+   "button: Lyrics",
+   "button: Maximize",
+   "button: Minimize",
+   "button: Mixes",
+   "button: Play queue",
+   "button: Playlists",
+   "button: Show all",
+   "button: Sort by: Last updated",
+   "button: Your Library",
+   "entry: Search",
+   "heading: Fixture Album",
+   "heading: Fixture Albums",
+   "heading: Fixture Artist",
+   "heading: Fixture Artists",
+   "heading: Fixture Mixtape",
+   "heading: Fixture Playlists",
+   "heading: Fixture Tracks",
+   "heading: Mock Ensemble",
+   "heading: Queue Suite",
+   "heading: Synthetic Selections"
+  ]
+ },
+ "final": {
+  "tray": [
+   "Show",
+   "Play / Pause",
+   "Next Track",
+   "Previous Track",
+   "Quit"
+  ],
+  "controls": [
+   "button: 24-BIT 96kHz FLAC HI-RES LOSSLESS",
+   "button: Account",
+   "button: Albums",
+   "button: Artists",
+   "button: Close",
+   "button: Credits",
+   "button: Explore",
+   "button: Feed",
+   "button: Fixture Mixtape Fixture Mixtape You \u00b7 4 Tracks",
+   "button: Fullscreen player",
+   "button: Go back",
+   "button: Go forward",
+   "button: Home",
+   "button: Loved Tracks Collection",
+   "button: Lyrics",
+   "button: Maximize",
+   "button: Minimize",
+   "button: Mixes",
+   "button: More options",
+   "button: Open miniplayer",
+   "button: Play queue",
+   "button: Playlists",
+   "button: Show all",
+   "button: Sort by: Last updated",
+   "button: Suggested tracks",
+   "button: Your Library",
+   "entry: Search",
+   "heading: Fixture 1002",
+   "heading: Fixture Album",
+   "heading: Fixture Albums",
+   "heading: Fixture Artist",
+   "heading: Fixture Artists",
+   "heading: Fixture Mixtape",
+   "heading: Fixture Playlists",
+   "heading: Fixture Tracks",
+   "heading: Mock Ensemble",
+   "heading: Queue Suite",
+   "heading: Synthetic Selections"
+  ],
+  "unnamed_controls": 32,
+  "opened": []
+ },
+ "audio": {}
+}

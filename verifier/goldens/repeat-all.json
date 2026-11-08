@@ -1,0 +1,404 @@
+{
+ "scenario": "repeat-all",
+ "steps": [
+  {
+   "i": 0,
+   "label": "repeat all",
+   "action": {
+    "mcp": {
+     "tool": "set_repeat",
+     "args": {
+      "mode": "all"
+     }
+    }
+   },
+   "result": {
+    "status": "all"
+   },
+   "state": {
+    "mpris": {
+     "status": "Paused",
+     "loop": "Playlist",
+     "shuffle": false,
+     "volume": 1.0,
+     "position_s": 0.0,
+     "track": null
+    },
+    "now_playing": null,
+    "queue": []
+   },
+   "net": []
+  },
+  {
+   "i": 1,
+   "label": "",
+   "action": {
+    "mcp": {
+     "tool": "play_tracks",
+     "args": {
+      "track_ids": [
+       1005,
+       1006
+      ],
+      "action": "play_now"
+     }
+    }
+   },
+   "result": {
+    "status": "play_now"
+   },
+   "state": {
+    "mpris": {
+     "status": "Playing",
+     "loop": "Playlist",
+     "shuffle": false,
+     "volume": 1.0,
+     "position_s": 1.58,
+     "track": {
+      "title": "Queue A",
+      "artist": [
+       "Mock Ensemble"
+      ],
+      "album": "Queue Suite",
+      "length_s": 8.0
+     }
+    },
+    "now_playing": {
+     "album": "Queue Suite",
+     "artist": "Mock Ensemble",
+     "durationSeconds": 8,
+     "isPlaying": true,
+     "positionSeconds": 0,
+     "title": "Queue A",
+     "trackId": 1005
+    },
+    "queue": [
+     1006
+    ]
+   },
+   "net": [
+    "GET api.tidal.com/v1/tracks/1005/playbackinfopostpaywall?assetpresentation=FULL&audioquality=HI_RES_LOSSLESS&countryCode=US&playbackmode=STREAM",
+    "GET api.tidal.com/v1/tracks/1005?countryCode=US",
+    "GET api.tidal.com/v1/tracks/1006?countryCode=US",
+    "GET fixtures.sone.test/qa_44k16.flac"
+   ]
+  },
+  {
+   "i": 2,
+   "label": "",
+   "action": {
+    "wait_for": {
+     "mpris.track.title": "Queue B",
+     "timeout": 15
+    }
+   },
+   "result": {
+    "met": true
+   },
+   "state": {
+    "mpris": {
+     "status": "Playing",
+     "loop": "Playlist",
+     "shuffle": false,
+     "volume": 1.0,
+     "position_s": 0.0,
+     "track": {
+      "title": "Queue B",
+      "artist": [
+       "Mock Ensemble"
+      ],
+      "album": "Queue Suite",
+      "length_s": 8.0
+     }
+    },
+    "now_playing": {
+     "album": "Queue Suite",
+     "artist": "Mock Ensemble",
+     "durationSeconds": 8,
+     "isPlaying": true,
+     "positionSeconds": 0,
+     "title": "Queue B",
+     "trackId": 1006
+    },
+    "queue": []
+   },
+   "net": [
+    "GET api.tidal.com/v1/tracks/1006/playbackinfopostpaywall?assetpresentation=FULL&audioquality=HI_RES_LOSSLESS&countryCode=US&playbackmode=STREAM",
+    "GET fixtures.sone.test/qb_44k16.flac"
+   ]
+  },
+  {
+   "i": 3,
+   "label": "wrapped to A",
+   "action": {
+    "wait_for": {
+     "mpris.track.title": "Queue A",
+     "timeout": 15
+    }
+   },
+   "result": {
+    "met": true
+   },
+   "state": {
+    "mpris": {
+     "status": "Playing",
+     "loop": "Playlist",
+     "shuffle": false,
+     "volume": 1.0,
+     "position_s": 0.0,
+     "track": {
+      "title": "Queue A",
+      "artist": [
+       "Mock Ensemble"
+      ],
+      "album": "Queue Suite",
+      "length_s": 8.0
+     }
+    },
+    "now_playing": {
+     "album": "Queue Suite",
+     "artist": "Mock Ensemble",
+     "durationSeconds": 8,
+     "isPlaying": true,
+     "positionSeconds": 0,
+     "title": "Queue A",
+     "trackId": 1005
+    },
+    "queue": [
+     1006
+    ]
+   },
+   "net": [
+    "GET api.tidal.com/v1/tracks/1005/playbackinfopostpaywall?assetpresentation=FULL&audioquality=HI_RES_LOSSLESS&countryCode=US&playbackmode=STREAM",
+    "GET fixtures.sone.test/qa_44k16.flac"
+   ]
+  },
+  {
+   "i": 4,
+   "label": "",
+   "action": {
+    "mcp": {
+     "tool": "set_repeat",
+     "args": {
+      "mode": "off"
+     }
+    }
+   },
+   "result": {
+    "status": "off"
+   },
+   "state": {
+    "mpris": {
+     "status": "Playing",
+     "loop": "None",
+     "shuffle": false,
+     "volume": 1.0,
+     "position_s": 2.32,
+     "track": {
+      "title": "Queue A",
+      "artist": [
+       "Mock Ensemble"
+      ],
+      "album": "Queue Suite",
+      "length_s": 8.0
+     }
+    },
+    "now_playing": {
+     "album": "Queue Suite",
+     "artist": "Mock Ensemble",
+     "durationSeconds": 8,
+     "isPlaying": true,
+     "positionSeconds": 0,
+     "title": "Queue A",
+     "trackId": 1005
+    },
+    "queue": [
+     1006
+    ]
+   },
+   "net": []
+  },
+  {
+   "i": 5,
+   "label": "",
+   "action": {
+    "mcp": {
+     "tool": "pause"
+    }
+   },
+   "result": {
+    "status": "ok"
+   },
+   "state": {
+    "mpris": {
+     "status": "Paused",
+     "loop": "None",
+     "shuffle": false,
+     "volume": 1.0,
+     "position_s": 2.32,
+     "track": {
+      "title": "Queue A",
+      "artist": [
+       "Mock Ensemble"
+      ],
+      "album": "Queue Suite",
+      "length_s": 8.0
+     }
+    },
+    "now_playing": {
+     "album": "Queue Suite",
+     "artist": "Mock Ensemble",
+     "durationSeconds": 8,
+     "isPlaying": false,
+     "positionSeconds": 0,
+     "title": "Queue A",
+     "trackId": 1005
+    },
+    "queue": [
+     1006
+    ]
+   },
+   "net": []
+  }
+ ],
+ "errors": [],
+ "initial": {
+  "state": {
+   "mpris": {
+    "status": "Paused",
+    "loop": "None",
+    "shuffle": false,
+    "volume": 1.0,
+    "position_s": 0.0,
+    "track": null
+   },
+   "now_playing": null,
+   "queue": []
+  },
+  "tray": [
+   "Show",
+   "Play / Pause",
+   "Next Track",
+   "Previous Track",
+   "Quit"
+  ],
+  "controls": [
+   "button: Account",
+   "button: Albums",
+   "button: Artists",
+   "button: Close",
+   "button: Explore",
+   "button: Feed",
+   "button: Fixture Mixtape Fixture Mixtape You \u00b7 4 Tracks",
+   "button: Go back",
+   "button: Go forward",
+   "button: Home",
+   "button: Loved Tracks Collection",
+   "button: Lyrics",
+   "button: Maximize",
+   "button: Minimize",
+   "button: Mixes",
+   "button: Play queue",
+   "button: Playlists",
+   "button: Show all",
+   "button: Sort by: Last updated",
+   "button: Your Library",
+   "entry: Search",
+   "heading: Fixture Album",
+   "heading: Fixture Albums",
+   "heading: Fixture Artist",
+   "heading: Fixture Artists",
+   "heading: Fixture Mixtape",
+   "heading: Fixture Playlists",
+   "heading: Fixture Tracks",
+   "heading: Mock Ensemble",
+   "heading: Queue Suite",
+   "heading: Synthetic Selections"
+  ]
+ },
+ "final": {
+  "tray": [
+   "Show",
+   "Play / Pause",
+   "Next Track",
+   "Previous Track",
+   "Quit"
+  ],
+  "controls": [
+   "button: 16-BIT 44.1kHz FLAC LOSSLESS",
+   "button: Account",
+   "button: Albums",
+   "button: Artists",
+   "button: Close",
+   "button: Explore",
+   "button: Feed",
+   "button: Fixture Mixtape Fixture Mixtape You \u00b7 4 Tracks",
+   "button: Fullscreen player",
+   "button: Go back",
+   "button: Go forward",
+   "button: Home",
+   "button: Loved Tracks Collection",
+   "button: Lyrics",
+   "button: Maximize",
+   "button: Minimize",
+   "button: Mixes",
+   "button: More options",
+   "button: Open miniplayer",
+   "button: Play queue",
+   "button: Playlists",
+   "button: Show all",
+   "button: Sort by: Last updated",
+   "button: Your Library",
+   "entry: Search",
+   "heading: Fixture Album",
+   "heading: Fixture Albums",
+   "heading: Fixture Artist",
+   "heading: Fixture Artists",
+   "heading: Fixture Mixtape",
+   "heading: Fixture Playlists",
+   "heading: Fixture Tracks",
+   "heading: Mock Ensemble",
+   "heading: Queue Suite",
+   "heading: Synthetic Selections"
+  ],
+  "unnamed_controls": 31,
+  "opened": []
+ },
+ "audio": {
+  "captured_bytes": 3231048,
+  "pcm_opens": 4,
+  "unmatched_nonsilent_bytes": 0,
+  "segments": [
+   {
+    "track": 1005,
+    "container": "S16LE",
+    "rate": 44100,
+    "start_frame": 0,
+    "end_frame": 352800,
+    "frames": 352800,
+    "full": true,
+    "silence_before_frames": null
+   },
+   {
+    "track": 1006,
+    "container": "S16LE",
+    "rate": 44100,
+    "start_frame": 0,
+    "end_frame": 352800,
+    "frames": 352800,
+    "full": true,
+    "silence_before_frames": 4410
+   },
+   {
+    "track": 1005,
+    "container": "S16LE",
+    "rate": 44100,
+    "start_frame": 0,
+    "end_frame": 88542,
+    "frames": 352800,
+    "full": false,
+    "silence_before_frames": 4410
+   }
+  ]
+ }
+}

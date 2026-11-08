@@ -1,0 +1,10 @@
+{
+  "_comment": "Track id -> fixture. Shared by the fake TIDAL (what to serve) and the audio channel (what to look for). 'file' is relative to fixtures/; 'pcm' is the exact decoded PCM. All audio is seeded noise (see harness/gen_noise.py).",
+  "1001": {"title": "Fixture 1001", "file": "tone_44k16.flac",         "pcm": "tone_44k16.pcm",  "rate": 44100,  "bits": 16, "quality": "LOSSLESS",        "duration": 10},
+  "1002": {"title": "Fixture 1002", "file": "noise_96k24.flac",        "pcm": "noise_96k24.pcm", "rate": 96000,  "bits": 24, "quality": "HI_RES_LOSSLESS", "duration": 10},
+  "1003": {"title": "Fixture 1003", "file": "tone_192k24.flac",        "pcm": "tone_192k24.pcm", "rate": 192000, "bits": 24, "quality": "HI_RES_LOSSLESS", "duration": 10},
+  "1004": {"title": "Fixture 1004", "file": "dash/noise/manifest.mpd", "pcm": "noise_96k24.pcm", "rate": 96000,  "bits": 24, "quality": "HI_RES_LOSSLESS", "duration": 10},
+  "1005": {"title": "Queue A",      "file": "qa_44k16.flac",           "pcm": "qa_44k16.pcm",    "rate": 44100,  "bits": 16, "quality": "LOSSLESS",        "duration": 8},
+  "1006": {"title": "Queue B",      "file": "qb_44k16.flac",           "pcm": "qb_44k16.pcm",    "rate": 44100,  "bits": 16, "quality": "LOSSLESS",        "duration": 8},
+  "1007": {"title": "Queue C",      "file": "qc_44k16.flac",           "pcm": "qc_44k16.pcm",    "rate": 44100,  "bits": 16, "quality": "LOSSLESS",        "duration": 8}
+}

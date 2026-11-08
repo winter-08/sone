@@ -1,0 +1,282 @@
+{
+ "scenario": "signin",
+ "steps": [
+  {
+   "i": 0,
+   "label": "login screen",
+   "action": {
+    "wait": 1.0
+   },
+   "result": null,
+   "state": {
+    "mpris": {
+     "status": "Paused",
+     "loop": "None",
+     "shuffle": false,
+     "volume": 1.0,
+     "position_s": 0.0,
+     "track": null
+    },
+    "now_playing": null,
+    "queue": [],
+    "controls": [
+     "button: Close",
+     "button: Login Code",
+     "button: Maximize",
+     "button: Minimize",
+     "button: Open in browser instead",
+     "button: PKCE",
+     "button: Sign in with TIDAL",
+     "button: Use custom credentials",
+     "heading: ONE"
+    ],
+    "settings": {
+     "auth_tokens": null
+    }
+   },
+   "net": []
+  },
+  {
+   "i": 1,
+   "label": "choose login code",
+   "action": {
+    "ui": {
+     "press": "Login Code"
+    }
+   },
+   "result": "button: Login Code",
+   "state": {
+    "mpris": {
+     "status": "Paused",
+     "loop": "None",
+     "shuffle": false,
+     "volume": 1.0,
+     "position_s": 0.0,
+     "track": null
+    },
+    "now_playing": null,
+    "queue": [],
+    "controls": [
+     "button: Close",
+     "button: Get Login Code",
+     "button: Login Code",
+     "button: Maximize",
+     "button: Minimize",
+     "button: PKCE",
+     "button: Use custom credentials",
+     "heading: ONE"
+    ],
+    "settings": {
+     "auth_tokens": null
+    }
+   },
+   "net": []
+  },
+  {
+   "i": 2,
+   "label": "get a code",
+   "action": {
+    "ui": {
+     "press": "Get Login Code"
+    }
+   },
+   "result": "button: Get Login Code",
+   "state": {
+    "mpris": {
+     "status": "Paused",
+     "loop": "None",
+     "shuffle": false,
+     "volume": 1.0,
+     "position_s": 0.0,
+     "track": null
+    },
+    "now_playing": null,
+    "queue": [],
+    "controls": [
+     "button: Cancel",
+     "button: Close",
+     "button: Maximize",
+     "button: Minimize",
+     "button: Open https://link.tidal.com",
+     "heading: ONE"
+    ],
+    "settings": {
+     "auth_tokens": null
+    }
+   },
+   "net": [
+    "POST auth.tidal.com/v1/oauth2/device_authorization"
+   ]
+  },
+  {
+   "i": 3,
+   "label": "signed in, home",
+   "action": {
+    "wait": 12.0
+   },
+   "result": null,
+   "state": {
+    "mpris": {
+     "status": "Paused",
+     "loop": "None",
+     "shuffle": false,
+     "volume": 1.0,
+     "position_s": 0.0,
+     "track": null
+    },
+    "now_playing": null,
+    "queue": [],
+    "controls": [
+     "button: Account",
+     "button: Albums",
+     "button: Artists",
+     "button: Close",
+     "button: Explore",
+     "button: Feed",
+     "button: Fixture Mixtape Fixture Mixtape You \u00b7 4 Tracks",
+     "button: Go back",
+     "button: Go forward",
+     "button: Home",
+     "button: Loved Tracks Collection",
+     "button: Lyrics",
+     "button: Maximize",
+     "button: Minimize",
+     "button: Mixes",
+     "button: Play queue",
+     "button: Playlists",
+     "button: Show all",
+     "button: Sort by: Last updated",
+     "button: Your Library",
+     "entry: Search",
+     "heading: Fixture Album",
+     "heading: Fixture Albums",
+     "heading: Fixture Artist",
+     "heading: Fixture Artists",
+     "heading: Fixture Mixtape",
+     "heading: Fixture Playlists",
+     "heading: Fixture Tracks",
+     "heading: Mock Ensemble",
+     "heading: Queue Suite",
+     "heading: Synthetic Selections"
+    ],
+    "settings": {
+     "auth_tokens": {
+      "access_token": "fake-access",
+      "refresh_token": "fake-refresh",
+      "expires_in": 86400,
+      "token_type": "Bearer",
+      "user_id": 424242
+     }
+    }
+   },
+   "net": [
+    "GET api.tidal.com/v1/sessions",
+    "GET api.tidal.com/v1/users/424242/favorites/albums?countryCode=US&limit=20&offset=0&order=DATE&orderDirection=DESC",
+    "GET api.tidal.com/v1/users/424242/favorites/artists?countryCode=US&limit=20&offset=0&order=DATE&orderDirection=DESC",
+    "GET api.tidal.com/v1/users/424242/favorites/ids?countryCode=US",
+    "GET api.tidal.com/v1/users/424242/favorites/tracks?countryCode=US&limit=50&offset=0&order=DATE&orderDirection=DESC",
+    "GET api.tidal.com/v1/users/424242/favorites/videos?countryCode=US&limit=50&offset=0&order=DATE&orderDirection=DESC",
+    "GET api.tidal.com/v1/users/424242?countryCode=US",
+    "GET api.tidal.com/v2/favorites/mixes?countryCode=US&limit=50&offset=0&order=DATE&orderDirection=DESC",
+    "GET api.tidal.com/v2/feed/activities?countryCode=US&platform=WEB&userId=424242",
+    "GET api.tidal.com/v2/home/feed/static?countryCode=US&platform=WEB",
+    "GET api.tidal.com/v2/my-collection/playlists/folders?countryCode=US&folderId=root&limit=50&offset=0&order=DATE_UPDATED&orderDirection=DESC",
+    "POST auth.tidal.com/v1/oauth2/token"
+   ]
+  }
+ ],
+ "errors": [],
+ "initial": {
+  "state": {
+   "mpris": {
+    "status": "Paused",
+    "loop": "None",
+    "shuffle": false,
+    "volume": 1.0,
+    "position_s": 0.0,
+    "track": null
+   },
+   "now_playing": null,
+   "queue": [],
+   "controls": [
+    "button: Close",
+    "button: Login Code",
+    "button: Maximize",
+    "button: Minimize",
+    "button: Open in browser instead",
+    "button: PKCE",
+    "button: Sign in with TIDAL",
+    "button: Use custom credentials",
+    "heading: ONE"
+   ],
+   "settings": {
+    "auth_tokens": null
+   }
+  },
+  "tray": [
+   "Show",
+   "Play / Pause",
+   "Next Track",
+   "Previous Track",
+   "Quit"
+  ],
+  "controls": [
+   "button: Close",
+   "button: Login Code",
+   "button: Maximize",
+   "button: Minimize",
+   "button: Open in browser instead",
+   "button: PKCE",
+   "button: Sign in with TIDAL",
+   "button: Use custom credentials",
+   "heading: ONE"
+  ]
+ },
+ "final": {
+  "tray": [
+   "Show",
+   "Play / Pause",
+   "Next Track",
+   "Previous Track",
+   "Quit"
+  ],
+  "controls": [
+   "button: Account",
+   "button: Albums",
+   "button: Artists",
+   "button: Close",
+   "button: Explore",
+   "button: Feed",
+   "button: Fixture Mixtape Fixture Mixtape You \u00b7 4 Tracks",
+   "button: Go back",
+   "button: Go forward",
+   "button: Home",
+   "button: Loved Tracks Collection",
+   "button: Lyrics",
+   "button: Maximize",
+   "button: Minimize",
+   "button: Mixes",
+   "button: Play queue",
+   "button: Playlists",
+   "button: Show all",
+   "button: Sort by: Last updated",
+   "button: Your Library",
+   "entry: Search",
+   "heading: Fixture Album",
+   "heading: Fixture Albums",
+   "heading: Fixture Artist",
+   "heading: Fixture Artists",
+   "heading: Fixture Mixtape",
+   "heading: Fixture Playlists",
+   "heading: Fixture Tracks",
+   "heading: Mock Ensemble",
+   "heading: Queue Suite",
+   "heading: Synthetic Selections"
+  ],
+  "unnamed_controls": 30,
+  "opened": [
+   "https://link.tidal.com/FAKE1"
+  ]
+ },
+ "audio": {}
+}

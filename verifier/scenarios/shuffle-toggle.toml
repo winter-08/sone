@@ -1,0 +1,23 @@
+name = "shuffle-toggle"
+description = "Shuffle on/off through MCP and MPRIS; shuffled order itself is random, so only flags are compared."
+covers = ["mcp_tools:toggle_shuffle"]
+audio = false
+
+[[step]]
+label = "shuffle on"
+mcp = { tool = "toggle_shuffle" }
+observe = ["mpris.shuffle"]
+[[step]]
+mcp = { tool = "play_tracks", args = { track_ids = [1005, 1006, 1007], action = "play_now" } }
+observe = ["mpris.shuffle", "mpris.status"]
+[[step]]
+label = "queue is a permutation"
+wait = 1.0
+observe = ["mpris.shuffle"]
+[[step]]
+label = "shuffle off via MPRIS"
+mpris = { set = "Shuffle", value = false }
+observe = ["mpris.shuffle"]
+[[step]]
+mcp = { tool = "pause" }
+observe = ["mpris.status"]

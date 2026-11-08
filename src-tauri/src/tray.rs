@@ -149,7 +149,7 @@ impl ksni::Tray for SoneTray {
 /// Spawn the ksni tray on the tokio runtime. Non-blocking — registers the
 /// tray handle in Tauri state once the D-Bus connection is established.
 /// If it fails, logs a warning and disables minimize-to-tray.
-pub fn setup(app: &tauri::App) {
+pub fn setup(app: &tauri::AppHandle) {
     let icon_bytes = include_bytes!("../icons/icon.png");
     let icon = match image::load_from_memory(icon_bytes) {
         Ok(img) => {
@@ -168,12 +168,12 @@ pub fn setup(app: &tauri::App) {
     };
 
     let tray = SoneTray {
-        app_handle: app.handle().clone(),
+        app_handle: app.clone(),
         tooltip: "Sone".into(),
         icon,
     };
 
-    let app_handle = app.handle().clone();
+    let app_handle = app.clone();
     tauri::async_runtime::spawn(async move {
         // In Flatpak/Snap sandbox, ksni can't own a well-known D-Bus name
         // (would need --own-name with a dynamic PID-based name).
