@@ -671,7 +671,7 @@ impl Player {
     /// first pages of favourites, mixes, the feed (for the bell), Home and the playlist folders.
     fn bootstrap_library(&self) {
         use crate::data::{self, Key};
-        for k in [Key::Home, Key::Folders, Key::Feed, Key::Profile] {
+        for k in [Key::Home("static".into()), Key::Folders, Key::Feed, Key::Profile] {
             data::forget(&k);
             data::want(k);
         }

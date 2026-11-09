@@ -12,6 +12,7 @@ mod controller;
 mod data;
 mod glyph;
 mod hls_relay;
+mod home;
 mod icons;
 mod interact;
 mod ui;

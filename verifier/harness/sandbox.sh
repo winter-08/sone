@@ -181,6 +181,9 @@ seed_log="$RUN/logs/seed.json"
 if [[ -n "${SPIKE_PROFILE_DIR:-}" ]]; then
   mkdir -p "$XDG_CONFIG_HOME/sone"
   cp "$SPIKE_PROFILE_DIR/sone.key" "$SPIKE_PROFILE_DIR/settings.json" "$XDG_CONFIG_HOME/sone/"
+  # Its response cache too, when it has one: cached pages then render offline (stale ones are
+  # served at once while the refresh fails quietly against the fake TIDAL).
+  if [[ -d "$SPIKE_PROFILE_DIR/cache" ]]; then cp -r "$SPIKE_PROFILE_DIR/cache" "$XDG_CONFIG_HOME/sone/"; fi
   seed_log=/dev/null  # the decrypted settings hold real tokens
 fi
 if [[ -n "${SPIKE_SEED:-}" ]]; then

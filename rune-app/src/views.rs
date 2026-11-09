@@ -103,6 +103,11 @@ pub struct Nav {
     pub search_sel: Option<usize>,
     /// The music video player (video_ui.rs).
     pub video: crate::video_ui::Player,
+    /// Home: the feed tab ("static" is For you) and how many further pages of it to show.
+    pub home_tab: String,
+    pub home_pages: usize,
+    /// The page content's width inside its padding (measured; Home sizes grids and cards by it).
+    pub content_w: f32,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -118,7 +123,7 @@ impl Default for Nav {
         Nav { page: Page::Home, back: vec![], fwd: vec![], search: TextEdit::new(""), lib: LibTab::Playlists, tab: SearchTab::All, filter: TextEdit::new(""), queue_open: false, suggest_due: None, menu_open: false, settings_tab: SettingsTab::Playback, drawer: None, login_mode: LoginMode::Pkce, settings_open: false, dialog: None,
             discord_status: TextEdit::new(""), lb_token: TextEdit::new(""), overlay_host: TextEdit::new(""), proxy_user: TextEdit::new(""),
             discord_due: None, proxy_due: None, lb_status: None, ctx: None, create: None, lyric_line: None, lyrics_scrolled: false, search_open: false, search_sel: None,
-            video: Default::default() }
+            video: Default::default(), home_tab: "static".into(), home_pages: 0, content_w: 1000.0 }
     }
 }
 
@@ -178,7 +183,7 @@ fn icon<S: 'static>(key: &str, label: &str, g: G) -> El {
     ui::icon_button::<S>(key, label, g, 18.0, white(0.75))
 }
 
-fn heading(label: &str, size: f32) -> El {
+pub(crate) fn heading(label: &str, size: f32) -> El {
     text(label.to_string()).font(t(size, 650.0)).color(white(0.95)).role("heading").label(label)
 }
 
@@ -196,14 +201,20 @@ pub(crate) fn accent() -> rune::Color {
 /// shows a play button (bottom-left, accent, 40 pt) and a heart (bottom-right, 32 pt), or for an
 /// artist a centred 48 pt play button. Like React's, those buttons carry no accessible name.
 fn card(key: String, title: &str, sub: &str, seed: u64, round: bool, img: Option<String>, item: Option<Value>, go_to: Page) -> El {
+    card_w(148.0, key, title, sub, seed, round, img, item, go_to)
+}
+
+/// [`card`] `w` points wide (Home sizes its cards to the row, as React's card-scroll does).
+pub(crate) fn card_w(w: f32, key: String, title: &str, sub: &str, seed: u64, round: bool, img: Option<String>, item: Option<Value>, go_to: Page) -> El {
+    let a = w - 16.0;
     use crate::interact::{self, Anchor, Fav, Media, Say};
     let h = ui::hue(Some(seed));
-    let mut art = if round { ui::with_image(ui::art(h, 132.0, seed, 0.0), img, 132.0, 66.0) } else { ui::with_image(ui::tile(h, 132.0, seed, 10.0), img, 132.0, 10.0) };
+    let mut art = if round { ui::with_image(ui::art(h, a, seed, 0.0), img, a, a / 2.0) } else { ui::with_image(ui::tile(h, a, seed, 10.0), img, a, 10.0) };
     let kind = item.as_ref().and_then(Media::of);
     if let (Some(it), Some(kind)) = (item.clone(), kind) {
         let play_it = it.clone();
         if kind == Media::Artist {
-            art = art.child(el().absolute(42.0, 42.0).key(format!("{key}-play")).role("button").size(48.0, 48.0).radius(24.0).fill(rune::oklcha(0.0, 0.0, 0.0, 0.45))
+            art = art.child(el().absolute(a / 2.0 - 24.0, a / 2.0 - 24.0).key(format!("{key}-play")).role("button").size(48.0, 48.0).radius(24.0).fill(rune::oklcha(0.0, 0.0, 0.0, 0.45))
                 .items_center().justify_center().group_opacity(0.0, 1.0).cursor(rune::Cursor::Pointer)
                 .on_press(move |_: &mut App| interact::play_media(&play_it, kind))
                 .child(glyph(G::Play, 28.0, white(1.0))));
@@ -214,11 +225,11 @@ fn card(key: String, title: &str, sub: &str, seed: u64, round: bool, img: Option
             let on = interact::is_fav(fav_kind, &id);
             let label = data::name(&it);
             art = art
-                .child(el().absolute(10.0, 82.0).key(format!("{key}-play")).role("button").size(40.0, 40.0).radius(20.0).fill(accent())
+                .child(el().absolute(10.0, a - 50.0).key(format!("{key}-play")).role("button").size(40.0, 40.0).radius(20.0).fill(accent())
                     .items_center().justify_center().group_opacity(0.0, 1.0).press_scale(0.94).cursor(rune::Cursor::Pointer)
                     .on_press(move |_: &mut App| interact::play_media(&play_it, kind))
                     .child(glyph(G::Play, 20.0, oklch(0.18, 0.02, 270.0))))
-                .child(el().absolute(90.0, 90.0).key(format!("{key}-fav")).role("button").size(32.0, 32.0).radius(16.0).fill(rune::oklcha(0.0, 0.0, 0.0, 0.5))
+                .child(el().absolute(a - 42.0, a - 42.0).key(format!("{key}-fav")).role("button").size(32.0, 32.0).radius(16.0).fill(rune::oklcha(0.0, 0.0, 0.0, 0.5))
                     .items_center().justify_center().group_opacity(0.0, 1.0).cursor(rune::Cursor::Pointer)
                     .on_press(move |_: &mut App| interact::toggle_fav(fav_kind, id.clone(), label.clone(), Say::Nothing))
                     .child(glyph(if on { G::HeartFilled } else { G::Heart }, 16.0, if on { accent() } else { white(0.95) })));
@@ -230,7 +241,7 @@ fn card(key: String, title: &str, sub: &str, seed: u64, round: bool, img: Option
     let mut c = col()
         .key(key)
         .role("presentation")
-        .w(148.0)
+        .w(w)
         .gap(6.0)
         .padding(8.0)
         .radius(12.0)
@@ -322,7 +333,7 @@ fn grid(cards: Vec<El>) -> El {
     r
 }
 
-fn item_page(item: &Value) -> Option<Page> {
+pub(crate) fn item_page(item: &Value) -> Option<Page> {
     let d = data::data(item);
     match data::kind(item).as_str() {
         "ALBUM" => d["id"].as_u64().map(Page::Album),
@@ -347,7 +358,7 @@ fn cards_for(prefix: &str, items: &[Value]) -> Vec<El> {
         .collect()
 }
 
-fn loading() -> El {
+pub(crate) fn loading() -> El {
     text("Loading…").font(t(13.0, 500.0)).color(white(0.45))
 }
 
@@ -769,7 +780,7 @@ pub fn bar_extras(v: &View) -> El {
 
 pub fn page(s: &App, v: &View) -> El {
     let body = match &s.nav.page {
-        Page::Home => home(),
+        Page::Home => crate::home::home(s),
         Page::Explore => explore(),
         Page::ExploreSub(path, title) => explore_sub(path, title),
         Page::Mix(id, title, sub) => mix_page(id, title, sub, v),
@@ -783,40 +794,15 @@ pub fn page(s: &App, v: &View) -> El {
     };
     // `.cache()`: without it Rune culls content outside the viewport, from paint and from the
     // accessibility tree, so screen readers (and the verifier) would miss everything below the fold.
-    ui::smooth_wheel::<App>(col().grow(1.0).min_h(0.0).w_full().scroll(ScrollSpec { stick_bottom: false }).child(col().w_full().px(28.0).py(20.0).gap(18.0).cache().child(body)), format!("page-{:?}", s.nav.page))
-}
-
-fn home() -> El {
-    let Some(v) = data::ready(Key::Home) else { return loading() };
-    let mut c = col().w_full().gap(22.0);
-    for (si, sec) in v["home"]["sections"].as_array().cloned().unwrap_or_default().iter().enumerate() {
-        let title = sec["title"].as_str().unwrap_or("");
-        let items = sec["items"].as_array().cloned().unwrap_or_default();
-        let cards = cards_for(&format!("home-{si}"), &items);
-        let mut s = col().w_full().gap(10.0);
-        if !title.is_empty() {
-            // The React shortcuts grid has no heading.
-            if sec["sectionType"].as_str() != Some("SHORTCUT_LIST") {
-                s = s.child(heading(title, 20.0));
-            }
-        }
-        if cards.is_empty() {
-            // Track sections: unnamed tiles (the React track cards carry no accessible name).
-            let mut r = row().gap(10.0).flex_wrap();
-            for (i, it) in items.iter().enumerate() {
-                let id = data::data(it)["id"].as_u64().unwrap_or(0);
-                r = r.child(col().key(format!("home-{si}-t{i}")).role("presentation").w(148.0).padding(8.0).gap(6.0).radius(12.0).hover(white(0.06)).cursor(rune::Cursor::Pointer)
-                    .on_press(move |_: &mut App| controller::send_play_ids(vec![id]))
-                    .child(ui::with_image(ui::tile(ui::hue(Some(id)), 132.0, id, 10.0), crate::art::item_url(it, 132.0), 132.0, 10.0))
-                    .child(text(data::name(it)).font(t(13.0, 600.0)).color(white(0.9)).truncate()));
-            }
-            s = s.child(r);
-        } else {
-            s = s.child(grid(cards));
-        }
-        c = c.child(s);
-    }
-    c
+    // React's PageContainer: content at most 1520 pt wide, centred, so a wide window doesn't
+    // stretch rows across the whole screen. Its width is measured for Home's grids and rows.
+    let content = col().w_full().max_w(1520.0).px(24.0).py(24.0).gap(18.0).cache()
+        .on_drawn_layout_tx(|s: &mut App, r, tx| {
+            let w = (r[2] - 48.0).max(200.0);
+            if (s.nav.content_w - w).abs() >= 1.0 { s.nav.content_w = w } else { tx.live_only() }
+        })
+        .child(body);
+    ui::smooth_wheel::<App>(col().grow(1.0).min_h(0.0).w_full().scroll(ScrollSpec { stick_bottom: false }).child(row().w_full().justify_center().child(content)), format!("page-{:?}", s.nav.page))
 }
 
 fn play_label(v: &View, source_name: &str) -> &'static str {
@@ -1230,7 +1216,7 @@ pub fn flush_settings(s: &mut App) {
     }
 }
 
-fn open_url(url: &str) {
+pub(crate) fn open_url(url: &str) {
     let _ = std::process::Command::new("xdg-open").arg(url).spawn();
 }
 

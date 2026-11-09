@@ -14,7 +14,10 @@ use tauri_app_lib::commands::{library, metadata, pages, search};
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum Key {
-    Home,
+    /// A Home feed tab by slug ("static" is For you, "editorial" Staff Picks, …).
+    Home(String),
+    /// The next page of a Home tab's sections, by the cursor the previous page ended with.
+    HomeMore(String, String),
     Folders,
     Suggest(String),
     Search(String),
@@ -122,7 +125,8 @@ async fn fetch(key: &Key) -> Result<Value, String> {
         };
     }
     j(match key {
-        Key::Home => v!(pages::get_home_page(st(), h.clone(), None)),
+        Key::Home(slug) => v!(pages::get_home_page(st(), h.clone(), Some(slug.clone()))),
+        Key::HomeMore(slug, cursor) => v!(pages::get_home_page_more(st(), Some(slug.clone()), cursor.clone())),
         Key::Folders => v!(library::get_playlist_folders(st(), h.clone(), "root".into(), None, 0, 50, "DATE_UPDATED".into(), "DESC".into(), None)),
         Key::Suggest(q) => v!(search::get_suggestions(st(), q.clone(), 10)),
         Key::Search(q) => v!(search::search_tidal(st(), q.clone(), 50)),
