@@ -17,7 +17,8 @@ search for `fixture`.
 - Albums: 77, 78
 - Artists: 7, 8
 - Playlists: Fixture Mixtape, Synthetic Selections
-- Videos: none
+- Videos: none, except for a query containing `video` (e.g. `fixture video`), which serves
+  `search_video.json`: the same results plus video 9001 (see "Videos")
 - Suggestions: "fixture", "fixture album", "fixture artist", plus the same four direct hits
 
 ## Catalog
@@ -134,3 +135,19 @@ fake_tidal.py answers with state (not routes.json):
 The app also opens `https://link.tidal.com/FAKE1` in the default browser. In the sandbox that
 launches whatever browser is on PATH, which cannot reach anything (the sandbox network is loopback only).
 The embedded PKCE webview ("Sign in with TIDAL") is not supported.
+
+## Videos
+
+| Id | Title | Artist | Stream |
+|---|---|---|---|
+| 9001 | Fixture Video (Music Video, 6 s, MP4_720P) | Fixture Artist (7) | `fixtures/video/master.m3u8` |
+
+`/v1/videos/9001` serves `video_9001.json`. Every video's `playbackinfopostpaywall` (built into
+`fake_tidal.py`) answers TIDAL's "emu" manifest, base64 JSON whose one URL is
+`https://fixtures.sone.test/video/master.m3u8`: an HLS master playlist with 360p and 720p
+variants, each three MPEG-TS segments (2 s, 2 s, 1.96 s) of H.264 (SMPTE bars with the frame
+number, 25 fps, a keyframe every second) and AAC (a 440 Hz tone, 48 kHz stereo), made with
+GStreamer's `hlssink2`. The fixture host adds `Access-Control-Allow-Origin: *` to playlists and
+segments, as TIDAL's CDN does. The React build's web view still can't play it inside the
+sandbox ("Unable to play this video", without a request), so there's no golden for video;
+`verifier/video_check.py` checks the Rune player on its own.

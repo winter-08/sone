@@ -221,14 +221,18 @@ pub fn transport<S: 'static>(v: &View, prefix: &str, play_size: f32) -> El {
 
 /// The now-playing bar, tinted by the track.
 /// `track_actions` sit after the title, as React's PlayerBar has its heart and More there.
-pub fn nowbar<S: 'static>(v: &View, track_actions: El, extras: El) -> El {
+pub fn nowbar<S: 'static>(v: &View, track_actions: El, extras: El, on_cover: Option<fn(&mut S)>) -> El {
     let h = hue(v.track_id);
     let seed = v.track_id.unwrap_or(0);
+    let mut cover = with_image(tile(h, 48.0, seed, 8.0), crate::art::cover(v.cover.as_deref(), 48.0), 48.0, 8.0);
+    if let Some(f) = on_cover {
+        cover = el().key("bar-cover").role("button").label("Expand video").radius(8.0).cursor(rune::Cursor::Pointer).press_scale(0.95).on_press(f).child(cover);
+    }
     let left = row()
         .w(300.0)
         .gap(12.0)
         .items_center()
-        .child(with_image(tile(h, 48.0, seed, 8.0), crate::art::cover(v.cover.as_deref(), 48.0), 48.0, 8.0))
+        .child(cover)
         .child(
             // shrinks (and truncates) rather than grows, so the heart follows the title
             col()

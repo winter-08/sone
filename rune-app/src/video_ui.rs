@@ -1,0 +1,288 @@
+//! The music video player and video cards (React VideoPlayer, MediaCard `aspect="video"`).
+//!
+//! A video plays as the current queue item (controller.rs, video.rs). The player is a
+//! full-window layer over everything, the bar included: the picture, letterboxed on black, with
+//! a top bar (title, artist, minimise) and a bottom bar (seek, favourite, transport, volume,
+//! quality, fullscreen) that fade out after three seconds without the pointer moving, as React's
+//! do. Minimising keeps the video playing behind the app; the player bar then shows it, and its
+//! picture opens the player again. Escape closes the video (React useEscapeDismiss).
+
+use crate::controller::{self, Cmd, View};
+use crate::glyph::{G, glyph};
+use crate::interact::{self, Fav, Say};
+use crate::ui::{self, t, white};
+use crate::video;
+use crate::App;
+use rune::{El, Tx, col, el, row, spacer, text};
+use serde_json::{Value, json};
+use std::time::{Duration, Instant};
+
+const CONTROLS_IDLE: Duration = Duration::from_secs(3);
+
+/// A video as a queue item (itemHelpers videoToTrack): `itemType: "video"` is what makes the
+/// controller play it through video.rs.
+pub fn video_track(d: &Value) -> Value {
+    let artist = if d["artist"].is_object() { d["artist"].clone() } else { d["artists"][0].clone() };
+    json!({
+        "id": d["id"], "title": d["title"], "itemType": "video", "imageId": d["imageId"],
+        "duration": d["duration"], "explicit": d["explicit"], "artist": artist, "artists": d["artists"],
+    })
+}
+
+fn image_url(id: &str, pt: f32) -> Option<String> {
+    crate::art::cover(Some(id), pt)
+}
+
+/// A 16:9 card; pressing it plays the video with the rest of `list` queued after it (React
+/// SearchView handlePlayVideo: videos play through the queue so prev/next walk the grid).
+pub fn video_card(key: String, d: &Value, list: &[Value], idx: usize, source: Value) -> El {
+    const W: f32 = 220.0;
+    const H: f32 = 124.0;
+    let id = d["id"].as_u64().unwrap_or(0);
+    let title = d["title"].as_str().unwrap_or("").to_string();
+    let artist = d["artist"]["name"].as_str().or(d["artists"][0]["name"].as_str()).unwrap_or("").to_string();
+    let h = ui::hue(Some(id));
+    let mut art = el().size(W, H).radius(10.0).clip_rounded(10.0).fill(rune::oklch(0.22, 0.07, h)).a11y_hidden();
+    if let Some(px) = d["imageId"].as_str().and_then(|i| image_url(i, W)).and_then(|u| crate::art::pixels(&u, W)) {
+        art = art.child(el().absolute(0.0, 0.0).size(W, H).pixels_fit(&px, rune::SurfaceFit::Fill));
+    }
+    let tracks: Vec<Value> = list.iter().map(video_track).collect();
+    let play = move |_: &mut App| {
+        let mut ordered = tracks[idx.min(tracks.len())..].to_vec();
+        ordered.extend_from_slice(&tracks[..idx.min(tracks.len())]);
+        controller::send(Cmd::PlayCollection { tracks: ordered, source: source.clone(), album_mode: false, shuffle: false });
+    };
+    let on = interact::is_fav(Fav::Video, &id.to_string());
+    let (fid, fl) = (id.to_string(), title.clone());
+    let play2 = play.clone();
+    art = art
+        .child(el().absolute(10.0, H - 50.0).key(format!("{key}-play")).role("button").size(40.0, 40.0).radius(20.0).fill(crate::views::accent())
+            .items_center().justify_center().group_opacity(0.0, 1.0).press_scale(0.94).cursor(rune::Cursor::Pointer)
+            .on_press(play2)
+            .child(glyph(G::Play, 20.0, rune::oklch(0.18, 0.02, 270.0))))
+        .child(el().absolute(W - 42.0, H - 42.0).key(format!("{key}-fav")).role("button").size(32.0, 32.0).radius(16.0).fill(rune::oklcha(0.0, 0.0, 0.0, 0.5))
+            .items_center().justify_center().group_opacity(0.0, 1.0).cursor(rune::Cursor::Pointer)
+            .on_press(move |_: &mut App| interact::toggle_fav(Fav::Video, fid.clone(), fl.clone(), Say::Nothing))
+            .child(glyph(if on { G::HeartFilled } else { G::Heart }, 16.0, if on { crate::views::accent() } else { white(0.95) })));
+    let heading_play = play.clone();
+    col().key(key).role("presentation").w(W + 16.0).gap(6.0).padding(8.0).radius(12.0)
+        .hover(white(0.06)).hover_group().cursor(rune::Cursor::Pointer)
+        .on_press(play)
+        .child(art)
+        .child(text(title.clone()).font(t(13.0, 650.0)).color(white(0.95)).truncate().role("heading").label(title).on_press(heading_play))
+        .child(text(artist).font(t(11.0, 400.0)).color(white(0.55)).truncate())
+}
+
+/// Cards for every video in `items` (bare video objects or `{type: VIDEO, item}` wrappers).
+pub fn video_cards(prefix: &str, items: &[Value], source: Value) -> Vec<El> {
+    let list: Vec<Value> = items.iter().map(|it| crate::data::data(it).clone()).collect();
+    list.iter().enumerate().map(|(i, d)| video_card(format!("{prefix}-{i}"), d, &list, i, source.clone())).collect()
+}
+
+/// Window state for the player: open over the app or minimised to the bar, controls shown.
+#[derive(Default)]
+pub struct Player {
+    pub expanded: bool,
+    pub seen_session: u64,
+    pub hide_at: Option<Instant>,
+    pub controls: bool,
+    pub quality_menu: bool,
+    pub fullscreen: bool,
+}
+
+/// From the window's poll: a newly started video opens the player; the controls hide when the
+/// pointer has rested. Returns whether anything the view draws changed, and when to look again.
+pub fn tick(s: &mut App) -> (bool, Option<Duration>) {
+    let (is_video, session, open) = controller::video_status();
+    let p = &mut s.nav.video;
+    let mut changed = false;
+    // No video, or it was closed (it ended with nothing after it, or Escape): no player.
+    if !is_video || !open {
+        if p.expanded {
+            p.expanded = false;
+            p.quality_menu = false;
+            changed = true;
+        }
+        return (changed, None);
+    }
+    if session != p.seen_session {
+        p.seen_session = session;
+        p.expanded = true;
+        p.controls = true;
+        p.hide_at = Some(Instant::now() + CONTROLS_IDLE);
+        changed = true;
+    }
+    if !p.expanded {
+        return (changed, None);
+    }
+    match p.hide_at {
+        Some(at) if p.quality_menu => p.hide_at = Some(at.max(Instant::now() + CONTROLS_IDLE)),
+        Some(at) if Instant::now() >= at => {
+            p.hide_at = None;
+            if p.controls {
+                p.controls = false;
+                changed = true;
+            }
+        }
+        _ => {}
+    }
+    (changed, p.hide_at.map(|at| at.saturating_duration_since(Instant::now())))
+}
+
+fn show_controls(s: &mut App, tx: &mut Tx) {
+    let p = &mut s.nav.video;
+    // Pointer moves can arrive every frame; re-arm at most twice a second, and otherwise tell
+    // Rune nothing it draws changed, so a resting pointer costs no rebuilds.
+    let due = p.hide_at.is_none_or(|at| at.saturating_duration_since(Instant::now()) < CONTROLS_IDLE - Duration::from_millis(500));
+    if due || !p.controls {
+        p.controls = true;
+        p.hide_at = Some(Instant::now() + CONTROLS_IDLE);
+    } else {
+        tx.live_only();
+    }
+}
+
+pub fn minimize(s: &mut App, tx: &mut Tx) {
+    let p = &mut s.nav.video;
+    p.expanded = false;
+    p.quality_menu = false;
+    if p.fullscreen {
+        p.fullscreen = false;
+        tx.toggle_maximized();
+    }
+}
+
+/// Escape and the close path: stop the video and dismiss the player (React closeVideo).
+pub fn close(s: &mut App) {
+    controller::send(Cmd::CloseVideo);
+    let p = &mut s.nav.video;
+    p.expanded = false;
+    p.quality_menu = false;
+}
+
+/// Escape while the player is open: the quality menu first, then fullscreen, then the video.
+pub fn on_escape(s: &mut App, tx: &mut Tx) -> bool {
+    if !s.nav.video.expanded {
+        return false;
+    }
+    let p = &mut s.nav.video;
+    if p.quality_menu {
+        p.quality_menu = false;
+    } else if p.fullscreen {
+        p.fullscreen = false;
+        tx.toggle_maximized();
+    } else {
+        close(s);
+    }
+    true
+}
+
+fn btn(key: &str, label: &str, g: G, size: f32, c: rune::Color) -> El {
+    ui::icon_button::<App>(key, label, g, size, c)
+}
+
+pub fn overlay(s: &App, v: &View) -> Option<El> {
+    let info = v.video.as_ref()?;
+    let p = &s.nav.video;
+    if !p.expanded {
+        return None;
+    }
+    let state = video::state();
+    let shown = p.controls || p.quality_menu || !matches!(state, Some(video::State::Playing));
+    let faded = |e: El| e.opacity(if shown { 1.0 } else { 0.0 }).opacity_motion(rune::Spring::new(0.3, 0.0));
+
+    let mut layer = el().key("video-layer").role("dialog").label(info.title.clone()).pin(Some(0.0), Some(0.0), Some(0.0), Some(0.0))
+        .fill(rune::oklch(0.0, 0.0, 0.0))
+        .modal(false, |s: &mut App| close(s))
+        .cursor(if shown { rune::Cursor::Default } else { rune::Cursor::Hidden })
+        .on_pointer_move_local(|s: &mut App, _, tx| show_controls(s, tx));
+
+    // The poster until the first frame (React's <video poster>), then the picture itself.
+    if video::size().is_none() {
+        if let Some(px) = info.image.as_deref().and_then(|i| image_url(i, 1280.0)).and_then(|u| crate::art::pixels(&u, 1280.0)) {
+            layer = layer.child(el().pin(Some(0.0), Some(0.0), Some(0.0), Some(0.0)).pixels_fit(&px, rune::SurfaceFit::Fit).a11y_hidden());
+        }
+    }
+    layer = layer.child(el().key("video-picture").pin(Some(0.0), Some(0.0), Some(0.0), Some(0.0)).a11y_hidden()
+        .native_surface(video::surface(), rune::SurfaceFit::Fit)
+        .on_press(|_: &mut App| controller::send(Cmd::TogglePlay)));
+
+    // Loading pulse, or the failure line.
+    match &state {
+        Some(video::State::Failed(_)) => {
+            layer = layer.child(row().pin(Some(0.0), Some(0.0), Some(0.0), Some(0.0)).items_center().justify_center()
+                .child(text("Unable to play this video").font(t(14.0, 500.0)).color(white(0.6))));
+        }
+        Some(video::State::Loading) | None => {
+            static PULSE: std::sync::OnceLock<Vec<rune::Beat>> = std::sync::OnceLock::new();
+            let beats = PULSE.get_or_init(|| (0..=3600).map(|i| rune::Beat::new(i as f64 * 0.5).opacity(if i % 2 == 0 { 0.35 } else { 1.0 })).collect());
+            layer = layer.child(row().pin(Some(0.0), Some(0.0), Some(0.0), Some(0.0)).items_center().justify_center().a11y_hidden()
+                .child(el().key("video-loading").sequence(rune::Sequence::new(beats)).child(glyph(G::Loader, 40.0, white(0.9)))));
+        }
+        _ => {}
+    }
+
+    // Top: title, explicit badge, artist; minimise.
+    let mut title_row = row().gap(8.0).items_center().min_w(0.0)
+        .child(text(info.title.clone()).font(t(17.0, 700.0)).color(white(0.97)).truncate().role("heading"));
+    if info.explicit {
+        title_row = title_row.child(text("E").font(t(10.0, 700.0)).color(rune::oklch(0.15, 0.0, 0.0)).px(4.0).radius(3.0).fill(white(0.7)));
+    }
+    let top = row().key("video-top").pin(Some(0.0), Some(0.0), Some(0.0), None).px(24.0).pt(20.0).pb(40.0).items_start()
+        .linear_gradient(std::f32::consts::FRAC_PI_2 * 2.0, [(0.0, rune::oklcha(0.0, 0.0, 0.0, 0.6)), (1.0, rune::oklcha(0.0, 0.0, 0.0, 0.0))])
+        .child(col().shrink().min_w(0.0).gap(2.0).child(title_row)
+            .child(text(info.artist.clone()).font(t(13.0, 400.0)).color(white(0.6)).truncate()))
+        .child(spacer())
+        .child(btn("video-minimize", "Minimize video", G::Close, 22.0, white(0.7)).on_press_tx(|s: &mut App, tx: &mut Tx| minimize(s, tx)));
+
+    // Bottom: seek with times; favourite | transport | volume, quality, fullscreen.
+    let fav = interact::is_fav(Fav::Video, &info.id.to_string());
+    let (fid, fl) = (info.id.to_string(), info.title.clone());
+    let quality_label = match v.video_quality.as_str() { "MEDIUM" => "Medium", "LOW" => "Low", _ => "High" };
+    let quality = row().key("video-quality").role("button").label("Quality").h(32.0).px(8.0).gap(6.0).radius(8.0).items_center()
+        .hover(white(0.08)).cursor(rune::Cursor::Pointer)
+        .on_press(|s: &mut App| s.nav.video.quality_menu = !s.nav.video.quality_menu)
+        .child(glyph(G::Settings, 16.0, if p.quality_menu { crate::views::accent() } else { white(0.6) }))
+        .child(text(quality_label).font(ui::tnum(t(13.0, 500.0))).color(white(0.7)).a11y_hidden());
+    let seek = row().w_full().gap(12.0).items_center()
+        .child(text(ui::fmt_time(v.position)).font(ui::tnum(t(11.0, 500.0))).color(white(0.6)).w(44.0).align(rune::Align::End))
+        .child(col().grow(1.0).child(ui::seek::<App>(v, "video-seek", 10000.0, 4.0).w_full()))
+        .child(text(ui::fmt_time(v.duration)).font(ui::tnum(t(11.0, 500.0))).color(white(0.6)).w(44.0));
+    let controls = row().w_full().mt(14.0).items_center()
+        .child(row().w(260.0).gap(4.0).items_center()
+            .child(btn("video-fav", if fav { "Remove from favorites" } else { "Add to favorites" }, if fav { G::HeartFilled } else { G::Heart }, 16.0, if fav { crate::views::accent() } else { white(0.6) })
+                .on_press(move |_: &mut App| interact::toggle_fav(Fav::Video, fid.clone(), fl.clone(), Say::Nothing))))
+        .child(spacer())
+        .child(ui::transport::<App>(v, "video", 36.0))
+        .child(spacer())
+        .child(row().w(260.0).gap(8.0).items_center().justify_end()
+            .child(ui::volume::<App>(v, "video-volume", 100.0))
+            .child(quality)
+            .child(btn("video-fullscreen", if p.fullscreen { "Exit fullscreen" } else { "Fullscreen" }, if p.fullscreen { G::Minimize } else { G::Maximize }, 16.0, white(0.6))
+                .on_press_tx(|s: &mut App, tx: &mut Tx| {
+                    s.nav.video.fullscreen = !s.nav.video.fullscreen;
+                    tx.toggle_maximized();
+                })));
+    let bottom = col().key("video-bottom").pin(Some(0.0), None, Some(0.0), Some(0.0)).px(24.0).pb(20.0).pt(48.0)
+        .linear_gradient(0.0, [(0.0, rune::oklcha(0.0, 0.0, 0.0, 0.7)), (1.0, rune::oklcha(0.0, 0.0, 0.0, 0.0))])
+        .child(seek)
+        .child(controls);
+    layer = layer.child(faded(top)).child(faded(bottom));
+
+    if p.quality_menu {
+        let mut menu = col().key("video-quality-menu").role("menu").label("Quality").pin(None, None, Some(24.0), Some(76.0)).w(140.0).py(4.0).radius(10.0)
+            .fill(rune::oklch(0.2, 0.02, 270.0)).border(1.0, white(0.08)).shadow(6.0, 24.0, rune::oklcha(0.0, 0.0, 0.0, 0.5));
+        for (q, label) in [("HIGH", "High"), ("MEDIUM", "Medium"), ("LOW", "Low")] {
+            let on = v.video_quality == q;
+            menu = menu.child(row().key(format!("video-q-{q}")).role("menuitemradio").label(label).checked(on).h(32.0).px(12.0).items_center()
+                .hover(white(0.06)).cursor(rune::Cursor::Pointer)
+                .on_press(move |s: &mut App| {
+                    s.nav.video.quality_menu = false;
+                    controller::send(Cmd::SetVideoQuality(q.to_string()));
+                })
+                .child(text(label).font(t(13.0, 500.0)).color(if on { crate::views::accent() } else { white(0.8) }).a11y_hidden()));
+        }
+        layer = layer.child(menu);
+    }
+    Some(layer)
+}

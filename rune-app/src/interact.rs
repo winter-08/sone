@@ -56,6 +56,7 @@ pub enum Fav {
     Playlist,
     Artist,
     Mix,
+    Video,
 }
 
 #[derive(Default)]
@@ -65,6 +66,7 @@ struct Favs {
     playlists: HashSet<String>,
     artists: HashSet<String>,
     mixes: HashSet<String>,
+    videos: HashSet<String>,
 }
 
 impl Favs {
@@ -75,6 +77,7 @@ impl Favs {
             Fav::Playlist => &mut self.playlists,
             Fav::Artist => &mut self.artists,
             Fav::Mix => &mut self.mixes,
+            Fav::Video => &mut self.videos,
         }
     }
 }
@@ -92,7 +95,7 @@ pub fn load_favorites_once() {
     sone_host_shim::async_runtime::spawn(async move {
         let u = data::user_id();
         let s = state;
-        let (all, mx, _videos) = tokio::join!(
+        let (all, mx, videos) = tokio::join!(
             library::get_all_favorite_ids(s(), u),
             library::get_favorite_mix_ids(s()),
             library::get_favorite_video_ids(s(), u)
@@ -108,6 +111,7 @@ pub fn load_favorites_once() {
             f.playlists = set(&v["playlists"]);
         }
         if let Ok(v) = mx { f.mixes = v.into_iter().collect() }
+        if let Ok(v) = videos { f.videos = v.into_iter().map(|id| id.to_string()).collect() }
         drop(f);
         FAVS_LOADED.store(true, Ordering::Relaxed);
         bump();
@@ -161,6 +165,8 @@ pub fn toggle_fav(k: Fav, id: String, label: String, say: Say) {
             (Fav::Artist, false) => library::remove_favorite_artist(s(), u, num).await,
             (Fav::Mix, true) => library::add_favorite_mix(s(), id.clone()).await,
             (Fav::Mix, false) => library::remove_favorite_mix(s(), id.clone()).await,
+            (Fav::Video, true) => library::add_favorite_video(s(), u, num).await,
+            (Fav::Video, false) => library::remove_favorite_video(s(), u, num).await,
         };
         let l = clip(&label, 28);
         match res {

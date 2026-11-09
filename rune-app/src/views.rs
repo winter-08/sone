@@ -101,6 +101,8 @@ pub struct Nav {
     /// elsewhere closes it), and the entry ↑/↓ highlighted.
     pub search_open: bool,
     pub search_sel: Option<usize>,
+    /// The music video player (video_ui.rs).
+    pub video: crate::video_ui::Player,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -115,7 +117,8 @@ impl Default for Nav {
     fn default() -> Self {
         Nav { page: Page::Home, back: vec![], fwd: vec![], search: TextEdit::new(""), lib: LibTab::Playlists, tab: SearchTab::All, filter: TextEdit::new(""), queue_open: false, suggest_due: None, menu_open: false, settings_tab: SettingsTab::Playback, drawer: None, login_mode: LoginMode::Pkce, settings_open: false, dialog: None,
             discord_status: TextEdit::new(""), lb_token: TextEdit::new(""), overlay_host: TextEdit::new(""), proxy_user: TextEdit::new(""),
-            discord_due: None, proxy_due: None, lb_status: None, ctx: None, create: None, lyric_line: None, lyrics_scrolled: false, search_open: false, search_sel: None }
+            discord_due: None, proxy_due: None, lb_status: None, ctx: None, create: None, lyric_line: None, lyrics_scrolled: false, search_open: false, search_sel: None,
+            video: Default::default() }
     }
 }
 
@@ -697,6 +700,15 @@ fn lib_list(key: Key) -> El {
 pub fn bar_track_actions(v: &View) -> El {
     let Some(c) = &v.current else { return el() };
     use crate::interact::{self, Anchor, Fav, Say};
+    // A video's heart is a video favourite (PlayerBar FavoriteButton); it has no track menu.
+    if let Some(vi) = &v.video {
+        let loved = interact::is_fav(Fav::Video, &vi.id.to_string());
+        let (id, title) = (vi.id.to_string(), vi.title.clone());
+        return el().key("bar-love").role("button").size(28.0, 28.0).radius(14.0).items_center().justify_center()
+            .hover(white(0.06)).press_scale(0.9).cursor(rune::Cursor::Pointer)
+            .on_press(move |_: &mut App| interact::toggle_fav(Fav::Video, id.clone(), title.clone(), Say::Nothing))
+            .child(glyph(if loved { G::HeartFilled } else { G::Heart }, 16.0, if loved { accent() } else { white(0.45) }));
+    }
     let loved = interact::is_fav(Fav::Track, &c.id.to_string());
     let (id, title) = (c.id.to_string(), c.title.clone());
     let cur = interact::json_of_track(c.id, &c.title, &c.artist);
@@ -729,7 +741,26 @@ pub fn bar_extras(v: &View) -> El {
             } else {
                 icon::<App>("mini", "Open miniplayer", G::PopOut).on_press(|_: &mut App| crate::set_mini(true))
             })
-            .child(icon::<App>("full", "Fullscreen player", G::Maximize));
+            .child({
+                let full = icon::<App>("full", "Fullscreen player", G::Maximize);
+                // PlayerBar MaximizeButton: for a video, the video player, maximised; a closed
+                // (or restored) video starts again first.
+                if v.video.is_some() {
+                    let open = v.video_open;
+                    full.on_press_tx(move |s: &mut App, tx: &mut Tx| {
+                        if !open {
+                            controller::send(Cmd::TogglePlay);
+                        }
+                        s.nav.video.expanded = true;
+                        if !s.nav.video.fullscreen {
+                            s.nav.video.fullscreen = true;
+                            tx.toggle_maximized();
+                        }
+                    })
+                } else {
+                    full
+                }
+            });
     }
     r
 }
@@ -956,6 +987,10 @@ fn artist(id: u64, v: &View) -> El {
                 rows = rows.child(track_row(format!("ar-s{si}-t{i}"), i + 1, tr, move |_: &mut App| controller::send_play_ids(vec![tid])));
             }
             c = c.child(rows);
+        } else if items.iter().any(|it| data::kind(it) == "VIDEO") {
+            // ArtistPage's video module: 16:9 cards that play through the queue.
+            let vids: Vec<Value> = items.iter().filter(|it| data::kind(it) == "VIDEO").cloned().collect();
+            c = c.child(grid(crate::video_ui::video_cards(&format!("ar-s{si}"), &vids, json!({"type": "artist", "id": id, "name": name}))));
         } else {
             c = c.child(grid(cards_for(&format!("ar-s{si}"), &items)));
         }
@@ -1044,6 +1079,8 @@ fn search_page(s: &App, q: &str) -> El {
     let tracks: Vec<Value> = v["tracks"].as_array().cloned().unwrap_or_default();
     let typed = |k: &str, arr: &str| -> Vec<Value> { v[arr].as_array().cloned().unwrap_or_default().into_iter().map(|d| json!({"type": k, "data": d})).collect() };
     let (albums, artists, playlists) = (typed("ALBUM", "albums"), typed("ARTIST", "artists"), typed("PLAYLIST", "playlists"));
+    let videos: Vec<Value> = v["videos"]["items"].as_array().or(v["videos"].as_array()).cloned().unwrap_or_default();
+    let video_source = json!({"type": "search", "id": q, "name": format!("Search: {q}")});
     let track_rows = |limit: usize| {
         let mut rows = col().w_full().gap(2.0);
         for (i, tr) in tracks.iter().take(limit).enumerate() {
@@ -1059,11 +1096,13 @@ fn search_page(s: &App, q: &str) -> El {
             .child(section("Tracks", track_rows(5)))
             .child(section("Albums", grid(cards_for("sr-al", &albums))))
             .child(section("Artists", grid(cards_for("sr-ar", &artists))))
-            .child(section("Playlists", grid(cards_for("sr-pl", &playlists)))),
+            .child(section("Playlists", grid(cards_for("sr-pl", &playlists))))
+            .child(if videos.is_empty() { el() } else { section("Videos", grid(crate::video_ui::video_cards("sr-vid", &videos[..videos.len().min(4)], video_source.clone()))) }),
         SearchTab::Tracks => track_rows(usize::MAX),
         SearchTab::Albums => grid(cards_for("sr-al", &albums)),
         SearchTab::Artists => grid(cards_for("sr-ar", &artists)),
         SearchTab::Playlists => grid(cards_for("sr-pl", &playlists)),
+        SearchTab::Videos if !videos.is_empty() => grid(crate::video_ui::video_cards("sr-vid", &videos, video_source.clone())),
         SearchTab::Videos => text("No videos").font(t(13.0, 500.0)).color(white(0.5)),
     };
     col().w_full().gap(16.0).child(heading(&format!("Results for \"{q}\""), 26.0)).child(tabs).child(body)

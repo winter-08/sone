@@ -159,6 +159,16 @@ def route(flow: http.HTTPFlow) -> bool:
                                 "trackReplayGain": 0.0, "trackPeakAmplitude": 1.0,
                                 "albumReplayGain": 0.0, "albumPeakAmplitude": 1.0})
             return True
+        # Music videos (catalog/README.md, "Videos"): every video plays fixtures/video, an HLS
+        # master playlist with 360p and 720p variants, as TIDAL's "emu" manifest points at one.
+        if m := re.fullmatch(r"/v1/videos/(\d+)/playbackinfopostpaywall", path):
+            manifest = json.dumps({"mimeType": "application/vnd.apple.mpegurl",
+                                   "urls": [f"https://{FIXTURE_HOST}/video/master.m3u8"]}).encode()
+            respond(flow, 200, {"videoId": int(m.group(1)), "streamType": "ON_DEMAND",
+                                "assetPresentation": "FULL", "videoQuality": "HIGH",
+                                "manifestMimeType": "application/vnd.tidal.emu",
+                                "manifest": base64.b64encode(manifest).decode()})
+            return True
         if m := re.fullmatch(r"/v1/tracks/(\d+)", path):
             respond(flow, 200, track_json(int(m.group(1))))
             return True
@@ -184,7 +194,16 @@ def route(flow: http.HTTPFlow) -> bool:
         root = os.path.realpath(ctx.options.fixtures)
         p = os.path.realpath(os.path.join(root, path.lstrip("/")))
         if p.startswith(root + os.sep) and os.path.isfile(p):
-            serve_file(flow, p, "audio/mp4" if p.endswith(".mp4") else "audio/flac")
+            if flow.request.method == "OPTIONS":
+                # CORS preflight from the web view's hls.js (TIDAL's CDN allows any origin).
+                flow.response = http.Response.make(204, b"", {"Access-Control-Allow-Origin": "*",
+                                                             "Access-Control-Allow-Headers": "*",
+                                                             "Access-Control-Allow-Methods": "GET, HEAD, OPTIONS"})
+                return True
+            ctype = {".mp4": "audio/mp4", ".m3u8": "application/vnd.apple.mpegurl", ".ts": "video/mp2t"}
+            serve_file(flow, p, ctype.get(os.path.splitext(p)[1], "audio/flac"))
+            if p.endswith((".m3u8", ".ts")):
+                flow.response.headers["Access-Control-Allow-Origin"] = "*"
             return True
 
     if host == "resources.tidal.com" and path.startswith("/images/"):

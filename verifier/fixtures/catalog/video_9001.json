@@ -1,0 +1,38 @@
+{
+ "id": 9001,
+ "title": "Fixture Video",
+ "volumeNumber": 1,
+ "trackNumber": 1,
+ "releaseDate": "2024-02-01T00:00:00.000+0000",
+ "imagePath": null,
+ "imageId": "2a9d8f00-e9c4-46a0-b1c2-d3e4f5a6b7c8",
+ "vibrantColor": "#a0c4ff",
+ "duration": 6,
+ "quality": "MP4_720P",
+ "streamReady": true,
+ "adSupportedStreamReady": true,
+ "djReady": true,
+ "stemReady": false,
+ "streamStartDate": "2024-02-01T00:00:00.000+0000",
+ "allowStreaming": true,
+ "explicit": false,
+ "popularity": 20,
+ "type": "Music Video",
+ "adsUrl": null,
+ "adsPrePaywallOnly": true,
+ "artist": {
+  "id": 7,
+  "name": "Fixture Artist",
+  "type": "MAIN",
+  "picture": "2a9d8f00-e9c4-46a0-b1c2-d3e4f5a6b7c8"
+ },
+ "artists": [
+  {
+   "id": 7,
+   "name": "Fixture Artist",
+   "type": "MAIN",
+   "picture": "2a9d8f00-e9c4-46a0-b1c2-d3e4f5a6b7c8"
+  }
+ ],
+ "album": null
+}

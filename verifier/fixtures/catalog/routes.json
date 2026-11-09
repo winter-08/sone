@@ -3,6 +3,26 @@
   "method": "GET",
   "host": "api.tidal.com",
   "path_regex": "^/v2/search/?$",
+  "file": "search_video.json",
+  "query_contains": "video"
+ },
+ {
+  "method": "GET",
+  "host": "api.tidal.com",
+  "path_regex": "^/v1/search/?$",
+  "file": "search_video.json",
+  "query_contains": "video"
+ },
+ {
+  "method": "GET",
+  "host": "api.tidal.com",
+  "path_regex": "^/v1/videos/9001$",
+  "file": "video_9001.json"
+ },
+ {
+  "method": "GET",
+  "host": "api.tidal.com",
+  "path_regex": "^/v2/search/?$",
   "file": "search.json"
  },
  {

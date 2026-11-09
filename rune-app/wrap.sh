@@ -9,7 +9,9 @@ bin="$(cd "$(dirname "$0")" && pwd)/target/$profile/sone-rune"
 out="$bin-wrapped"
 cat > "$out" <<WRAP
 #!/usr/bin/env bash
-export LD_LIBRARY_PATH="$LD_LIBRARY_PATH\${LD_LIBRARY_PATH:+:\$LD_LIBRARY_PATH}"
+# /run/opengl-driver/lib last: NixOS's GPU driver libraries (libcuda, libnvcuvid for the NVDEC
+# video decoder), found only there, so nothing the build ships is shadowed.
+export LD_LIBRARY_PATH="$LD_LIBRARY_PATH\${LD_LIBRARY_PATH:+:\$LD_LIBRARY_PATH}:/run/opengl-driver/lib"
 export GST_PLUGIN_SYSTEM_PATH_1_0="$GST_PLUGIN_SYSTEM_PATH_1_0"
 export GIO_EXTRA_MODULES="$GIO_EXTRA_MODULES"
 if [[ -n "\${SONE_SOFTWARE_VULKAN:-}" ]]; then

@@ -11,9 +11,12 @@ mod bio;
 mod controller;
 mod data;
 mod glyph;
+mod hls_relay;
 mod icons;
 mod interact;
 mod ui;
+mod video;
+mod video_ui;
 mod views;
 
 use rune::{AppSpec, Cx, El, Key, KeyEvent, ScrollSpec, Tx, col, el, row};
@@ -94,7 +97,7 @@ fn poll(s: &mut App, _: f64, tx: &mut Tx) -> bool {
         tx.wake_after(Duration::from_millis(50));
     }
     // menus and favourites (interact.rs): favourite ids once signed in, async results, toasts
-    if controller::view().signed_in {
+    if controller::signed_in() {
         interact::load_favorites_once();
     }
     interact::apply_pending(s);
@@ -104,6 +107,11 @@ fn poll(s: &mut App, _: f64, tx: &mut Tx) -> bool {
     interact::settle_create(s);
     if let Some(next) = interact::toast_tick() {
         tx.wake_after(next.min(Duration::from_millis(200)));
+    }
+    // The video player: open it for a new video, fade its controls when the pointer rests.
+    let (video_changed, video_next) = video_ui::tick(s);
+    if let Some(next) = video_next {
+        tx.wake_after(next + Duration::from_millis(5));
     }
     let (state, ticks) = controller::versions();
     // (Covers don't appear here: art.rs fills their pixels in place, without a rebuild.)
@@ -118,7 +126,7 @@ fn poll(s: &mut App, _: f64, tx: &mut Tx) -> bool {
     if changed && !lyric_moved && ((state, v.2) == (s.seen.0, s.seen.2) || ui::dragging()) {
         tx.instant();
     }
-    changed |= lyric_moved;
+    changed |= lyric_moved || video_changed;
     s.seen = v;
     changed
 }
@@ -148,9 +156,9 @@ fn lyric_tick(s: &mut App, tx: &mut Tx) -> bool {
     true
 }
 
-fn on_key(s: &mut App, e: &KeyEvent, _: &mut Tx) -> bool {
-    // a context menu is the top Escape layer (React dismissStack)
-    if matches!(e.key, Key::Escape) && interact::on_escape(s) {
+fn on_key(s: &mut App, e: &KeyEvent, tx: &mut Tx) -> bool {
+    // a context menu is the top Escape layer (React dismissStack), then the video player
+    if matches!(e.key, Key::Escape) && (interact::on_escape(s) || video_ui::on_escape(s, tx)) {
         return true;
     }
     // "/" (outside a text field) and Ctrl+K focus the search bar
@@ -187,7 +195,9 @@ fn view(s: &App, cx: &mut Cx<App>) -> El {
     if let Some(d) = views::drawer(s, &v) {
         body = body.child(d);
     }
-    let mut root = col().key("root").w_full().h_full().fill(ui::base(h)).child(body).child(ui::nowbar::<App>(&v, views::bar_track_actions(&v), views::bar_extras(&v)));
+    // A minimised video's picture in the bar opens the player again (PlayerBar "Expand video").
+    let expand: Option<fn(&mut App)> = v.video.as_ref().map(|_| (|s: &mut App| s.nav.video.expanded = true) as fn(&mut App));
+    let mut root = col().key("root").w_full().h_full().fill(ui::base(h)).child(body).child(ui::nowbar::<App>(&v, views::bar_track_actions(&v), views::bar_extras(&v), expand));
     if let Some(d) = views::dropdown(s) {
         root = root.child(d);
     }
@@ -202,6 +212,9 @@ fn view(s: &App, cx: &mut Cx<App>) -> El {
     }
     for o in interact::overlay(s) {
         root = root.child(o);
+    }
+    if let Some(p) = video_ui::overlay(s, &v) {
+        root = root.child(p);
     }
     if let Some(t) = interact::toast_layer() {
         root = root.child(t);
@@ -240,6 +253,8 @@ fn main() {
         families: ("Inter", "ui-monospace"),
         poll: Some(poll),
         on_key: Some(on_key),
+        // Video frames (video.rs) wake the window as they arrive.
+        setup: Some(|_: &mut App, w| video::set_waker(w)),
         ..AppSpec::new("SONE", initial_size(), || App { seen: (0, 0, 0), nav: views::Nav::default() }, view)
     };
     let mut app = rune::App::new(spec);

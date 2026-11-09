@@ -10,8 +10,12 @@
 //! recomputed and pushed only when they changed, which is what React's store subscriptions
 //! and effects did (§0.3, §8).
 //!
-//! Not in this slice yet (logged when hit): music videos, MCP `play_source` /
-//! `shuffle_source`, autoplay radio, and toasts beyond a one-line notice.
+//! Music videos are queue items (`itemType: "video"`, as in React's playTrack): starting one
+//! stops the audio and opens it in video.rs; pause, seek, volume, next/previous, repeat and
+//! MPRIS act on it; its end advances the queue; any audio track closes it.
+//!
+//! Not in this slice yet (logged when hit): MCP `play_source` / `shuffle_source`, autoplay
+//! radio, and toasts beyond a one-line notice.
 
 use serde_json::{Value, json};
 use sone_host_shim::{AppHandle, Manager};
@@ -78,6 +82,21 @@ pub enum Cmd {
     /// "Get Login Code": start the device-code sign-in with the embedded credentials.
     StartDeviceLogin,
     CancelLogin,
+    /// The video player's quality menu: re-resolve the stream at HIGH / MEDIUM / LOW and carry on
+    /// from the same moment (VideoPlayer handleQualityChange).
+    SetVideoQuality(String),
+    /// The video overlay's close on a finished video (VideoPlayer onEnded → closeVideo).
+    CloseVideo,
+}
+
+/// The current item when it is a music video (React currentVideoAtom).
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct VideoInfo {
+    pub id: u64,
+    pub title: String,
+    pub artist: String,
+    pub image: Option<String>,
+    pub explicit: bool,
 }
 
 /// The sign-in screen's state (React Login).
@@ -129,6 +148,13 @@ pub struct View {
     pub badge: Option<String>,
     /// The current track's album cover (a CDN uuid or URL), for the bar and the miniplayer.
     pub cover: Option<String>,
+    /// The current item is a music video (video.rs plays it).
+    pub video: Option<VideoInfo>,
+    /// Counts videos started, so the window can open the overlay for each new one.
+    pub video_session: u64,
+    pub video_quality: String,
+    /// A video is loaded in video.rs (playing, paused or loading), not closed.
+    pub video_open: bool,
 }
 
 static VIEW: OnceLock<Mutex<View>> = OnceLock::new();
@@ -186,6 +212,16 @@ pub fn clock() -> (f64, bool) {
     (pos, playing)
 }
 
+/// What the video player's window state follows: whether the current item is a video, how
+/// many videos have started, and whether one is loaded (without cloning the whole view).
+pub fn video_status() -> (bool, u64, bool) {
+    VIEW.get().map(|v| { let v = v.lock().unwrap(); (v.video.is_some(), v.video_session, v.video_open) }).unwrap_or((false, 0, false))
+}
+
+pub fn signed_in() -> bool {
+    VIEW.get().map(|v| v.lock().unwrap().signed_in).unwrap_or(false)
+}
+
 pub fn now_playing() -> (Option<u64>, bool) {
     VIEW.get().map(|v| { let v = v.lock().unwrap(); (v.track_id, v.playing) }).unwrap_or((None, false))
 }
@@ -210,7 +246,7 @@ pub fn on_backend_event(name: &str, payload: &str) {
     let relevant = name.starts_with("mcp:")
         || name.starts_with("mpris:")
         || name.starts_with("tray:")
-        || matches!(name, "track-finished" | "track-advanced" | "audio-error" | "audio-resampled" | "audio-bit-depth-changed" | "scrobble-auth-error");
+        || matches!(name, "video-ended" | "video-error" | "track-finished" | "track-advanced" | "audio-error" | "audio-resampled" | "audio-bit-depth-changed" | "scrobble-auth-error");
     if relevant {
         if let Some(tx) = TX.get() {
             let _ = tx.send(Msg::Event(name.to_string(), payload.to_string()));
@@ -251,6 +287,7 @@ const MAX_CONSECUTIVE_FAILS: u32 = 3;
 const GAPLESS_DEBOUNCE: Duration = Duration::from_millis(250);
 const GAPLESS_FAILURE_MEMO: Duration = Duration::from_millis(10_000);
 const POLL_EVERY: Duration = Duration::from_millis(2000);
+const VIDEO_POLL_EVERY: Duration = Duration::from_millis(500);
 const SEEK_CORRECTION: Duration = Duration::from_millis(300);
 const SETTLE_WINDOW: Duration = Duration::from_millis(3000);
 const SAVE_DEBOUNCE: Duration = Duration::from_millis(2000);
@@ -346,7 +383,13 @@ fn artist_primary(t: &Value) -> String {
 fn album_title(t: &Value) -> Option<String> {
     t["album"]["title"].as_str().filter(|s| !s.is_empty()).map(str::to_string)
 }
+fn is_video(t: &Value) -> bool {
+    t["itemType"].as_str() == Some("video")
+}
 fn art_url(t: &Value) -> String {
+    if is_video(t) {
+        return t["imageId"].as_str().filter(|c| !c.is_empty()).map(|c| format!("https://resources.tidal.com/images/{}/320x180.jpg", c.replace('-', "/"))).unwrap_or_default();
+    }
     match t["album"]["cover"].as_str() {
         Some(c) if c.starts_with("http") => c.to_string(),
         Some(c) if !c.is_empty() => format!("https://resources.tidal.com/images/{}/320x320.jpg", c.replace('-', "/")),
@@ -492,6 +535,8 @@ struct Player {
     login_seq: u64,
     login_creds: Option<(String, String, String)>, // device code, client id, secret
     pubd: Published,
+    video_session: u64,
+    video_quality: String,
 }
 
 impl Player {
@@ -534,6 +579,8 @@ impl Player {
             login_seq: 0,
             login_creds: None,
             pubd: Published::default(),
+            video_session: 0,
+            video_quality: "HIGH".into(),
         }
     }
 
@@ -747,6 +794,24 @@ impl Player {
                 self.login = Login::Idle;
                 self.login_creds = None;
             }
+            Cmd::SetVideoQuality(q) => {
+                if self.video_quality != q && self.current_is_video() {
+                    self.video_quality = q;
+                    let (id, at, was_playing) = (self.current.as_ref().map(tid).unwrap_or(0), crate::video::position().unwrap_or(0.0), self.playing);
+                    match self.start_video(id, at).await {
+                        Ok(()) => {
+                            if !was_playing {
+                                crate::video::pause();
+                            }
+                        }
+                        Err(e) => self.toast(format!("Couldn't switch quality: {e}")),
+                    }
+                }
+            }
+            Cmd::CloseVideo => {
+                crate::video::close();
+                self.playing = false;
+            }
             Cmd::SetMaxQuality(q) => {
                 let _ = utility::set_max_quality(self.state(), q);
             }
@@ -811,9 +876,14 @@ impl Player {
             }
             "mpris:stop" => {
                 self.resume_seq_gen = None;
+                crate::video::close();
                 let _ = playback::stop_track(self.state()).await;
                 self.pending_next = None;
                 self.playing = false;
+            }
+            "mpris:seek" if self.current_is_video() => {
+                let new = (crate::video::position().unwrap_or(0.0) + p.as_f64().unwrap_or(0.0)).max(0.0);
+                self.seek_to(new).await;
             }
             "mpris:seek" => {
                 let cur = playback::get_playback_position(self.state()).await.unwrap_or(0.0) as f64;
@@ -836,6 +906,20 @@ impl Player {
                         self.play_single(t).await;
                     }
                 }
+            }
+            // A video's end advances like a track's; when nothing follows (the same video is still
+            // current), the player closes (VideoPlayer onEnded).
+            "video-ended" => {
+                let before = self.current.as_ref().map(qid_of);
+                self.play_next(false, false).await;
+                if self.current_is_video() && self.current.as_ref().map(qid_of) == before && self.prefs.repeat != 2 {
+                    crate::video::close();
+                    self.playing = false;
+                }
+            }
+            "video-error" => {
+                self.playing = false;
+                self.toast("Unable to play this video");
             }
             // §3
             "track-finished" => {
@@ -896,8 +980,38 @@ impl Player {
         self.later(SEEK_CORRECTION, Msg::SeekCorrection(seq));
     }
 
+    /// Start `t`: a music video through video.rs (stopping the audio first, as
+    /// startVideoSession does), or a track through play_tidal_track (closing any video, the
+    /// React mutual exclusion in playTrack).
+    async fn invoke_play(&mut self, t: &Value) -> Result<Value, SoneError> {
+        if is_video(t) {
+            let _ = playback::stop_track(self.state()).await;
+            self.pending_next = None;
+            self.start_video(tid(t), 0.0).await?;
+            return Ok(Value::Null);
+        }
+        if crate::video::is_open() {
+            crate::video::close();
+        }
+        self.invoke_play_track(tid(t)).await
+    }
+
+    /// Resolve the video's HLS stream at the chosen quality and open it at `at` seconds.
+    async fn start_video(&mut self, id: u64, at: f64) -> Result<(), SoneError> {
+        // The stream goes through hls_relay.rs on the shared HTTP client, so the user's proxy
+        // applies; when the plan blocks traffic, say so instead of failing quietly.
+        if let Err(b) = self.state().proxied_http.client() {
+            return Err(SoneError::ProxyBlocked { reason: b.to_string() });
+        }
+        let info = playback::get_video_stream_info(self.state(), id, Some(self.video_quality.clone())).await?;
+        let url = crate::hls_relay::wrap(&info.url).map_err(SoneError::Audio)?;
+        crate::video::open(&url, if self.bit_perfect { 1.0 } else { self.prefs.volume }, at).map_err(SoneError::Audio)?;
+        self.video_session += 1;
+        Ok(())
+    }
+
     /// play_tidal_track with the device_busy retry (UPA:198-219).
-    async fn invoke_play(&mut self, id: u64) -> Result<Value, SoneError> {
+    async fn invoke_play_track(&mut self, id: u64) -> Result<Value, SoneError> {
         let h = self.h.clone();
         let mut attempt = 0;
         loop {
@@ -946,7 +1060,9 @@ impl Player {
         stamped["_contextFrom"] = self.context_source.clone().unwrap_or(Value::Null);
         self.mark_loading(true);
         self.set_current(Some(stamped.clone()));
-        let res = self.invoke_play(tid(&stamped)).await;
+        // Every newly chosen video starts at High (VideoPlayer resets its quality per video).
+        self.video_quality = "HIGH".into();
+        let res = self.invoke_play(&stamped).await;
         if pgen != self.generation {
             return Err(Fail::Transient);
         }
@@ -1005,6 +1121,10 @@ impl Player {
     }
 
     async fn notify_started(&mut self, t: &Value, chosen_by_user: bool) {
+        // Videos don't scrobble or report plays (startVideoSession doesn't).
+        if is_video(t) {
+            return;
+        }
         let payload = scrobble::TrackStartedPayload {
             artist: artist_join(t),
             artist_primary: artist_primary(t),
@@ -1214,7 +1334,7 @@ impl Player {
             if self.prefs.repeat == 2 && !explicit {
                 if let Some(cur) = self.current.clone() {
                     self.mark_loading(true);
-                    match self.invoke_play(tid(&cur)).await {
+                    match self.invoke_play(&cur).await {
                         Ok(info) => {
                             self.stream_info = Some(info);
                             self.playing = true;
@@ -1445,7 +1565,7 @@ impl Player {
                 prev["_contextFrom"] = self.context_source.clone().unwrap_or(Value::Null);
                 self.mark_loading(true);
                 self.set_current(Some(prev.clone()));
-                match self.invoke_play(tid(&prev)).await {
+                match self.invoke_play(&prev).await {
                     Ok(info) => {
                         self.stream_info = Some(info);
                         self.playing = true;
@@ -1494,7 +1614,7 @@ impl Player {
                         }
                         self.mark_loading(true);
                         self.set_current(Some(prev.clone()));
-                        match self.invoke_play(tid(&prev)).await {
+                        match self.invoke_play(&prev).await {
                             Ok(info) => {
                                 self.stream_info = Some(info);
                                 self.playing = true;
@@ -1536,8 +1656,17 @@ impl Player {
         }
     }
 
+    fn current_is_video(&self) -> bool {
+        self.current.as_ref().is_some_and(is_video)
+    }
+
     async fn pause(&mut self) {
         self.user_paused = true;
+        if self.current_is_video() {
+            crate::video::pause();
+            self.playing = false;
+            return;
+        }
         if playback::pause_track(self.state()).await.is_ok() {
             self.playing = false;
         }
@@ -1546,10 +1675,17 @@ impl Player {
     async fn resume(&mut self) {
         self.user_paused = false;
         let Some(cur) = self.current.clone() else { return };
-        let finished = playback::is_track_finished(self.state()).await.unwrap_or(true);
+        // A video still open resumes in place (play after its end starts it over); one that was
+        // closed or restored from the last session starts again.
+        if is_video(&cur) && crate::video::is_open() {
+            crate::video::play();
+            self.playing = true;
+            return;
+        }
+        let finished = is_video(&cur) || playback::is_track_finished(self.state()).await.unwrap_or(true);
         let res = if finished {
             self.mark_loading(true);
-            match self.invoke_play(tid(&cur)).await {
+            match self.invoke_play(&cur).await {
                 Ok(info) => {
                     self.stream_info = Some(info);
                     self.notify_seek(0.0);
@@ -1581,6 +1717,11 @@ impl Player {
     }
 
     async fn seek_to(&mut self, secs: f64) {
+        if self.current_is_video() {
+            crate::video::seek(secs);
+            self.notify_seek(secs);
+            return;
+        }
         if playback::seek_track(self.state(), secs as f32).await.is_ok() {
             self.notify_seek(secs);
         }
@@ -1631,18 +1772,19 @@ impl Player {
         }
         self.prefs.volume = level.clamp(0.0, 1.0);
         let _ = playback::set_volume(self.state(), self.prefs.volume);
+        crate::video::set_volume(self.prefs.volume);
     }
 
     // -------------------------------------------------------------- §3.3 gapless
 
     async fn gapless_refresh(&mut self) {
-        let enabled = self.gapless_supported && self.gapless_setting && !self.exclusive && !self.bit_perfect && self.current.is_some();
+        let enabled = self.gapless_supported && self.gapless_setting && !self.exclusive && !self.bit_perfect && self.current.is_some() && !self.current_is_video();
         let next = if !enabled || self.prefs.repeat == 2 {
             None
         } else {
             let head = self.manual.first().or(self.queue.first()).cloned();
             head.filter(|h| {
-                !unavailable(h)
+                !unavailable(h) && !is_video(h)
                     && match h.get("_source").filter(|s| !s.is_null()) {
                         Some(s) => self.playback_source.as_ref().map(|p| p["id"] == s["id"]).unwrap_or(false),
                         None => true,
@@ -1680,6 +1822,21 @@ impl Player {
 
     async fn poll_position(&mut self, reschedule: bool) {
         let pgen = pos().generation;
+        if self.current_is_video() {
+            // The pipeline's own clock; the bar's clock holds still while the video buffers.
+            if let Some(v) = crate::video::position() {
+                let mut p = pos();
+                if p.generation == pgen {
+                    p.last = v;
+                    p.at = Some(Instant::now());
+                    p.loading = matches!(crate::video::state(), Some(crate::video::State::Loading));
+                }
+            }
+            if reschedule && self.playing {
+                self.later(VIDEO_POLL_EVERY, Msg::PositionPoll(self.poll_seq));
+            }
+            return;
+        }
         if let Ok(v) = playback::get_playback_position(self.state()).await {
             let mut p = pos();
             if p.generation == pgen {
@@ -1800,7 +1957,7 @@ impl Player {
                     album: album_title(&cur).unwrap_or_default(),
                     art_url: art_url(&cur),
                     duration_secs: duration(&cur) as f64,
-                    url: format!("tidal://track/{}", tid(&cur)),
+                    url: format!("tidal://{}/{}", if is_video(&cur) { "video" } else { "track" }, tid(&cur)),
                     quality_text: key.2.clone(),
                     album_artist: cur["artist"]["name"].as_str().map(str::to_string),
                     track_number: cur["trackNumber"].as_u64().map(|n| n as u32),
@@ -1918,7 +2075,17 @@ impl Player {
             artist_id: self.current.as_ref().and_then(|t| t["artist"]["id"].as_u64().or(t["artists"][0]["id"].as_u64())),
             // With the stream gone (track ended), the React badge shows the track's tier.
             badge: badge_text(&self.stream_info).or_else(|| self.current.as_ref().and_then(|t| tier(t["audioQuality"].as_str()).map(str::to_string))),
-            cover: self.current.as_ref().and_then(|t| t["album"]["cover"].as_str()).filter(|c| !c.is_empty()).map(str::to_string),
+            cover: self.current.as_ref().and_then(|t| if is_video(t) { t["imageId"].as_str() } else { t["album"]["cover"].as_str() }).filter(|c| !c.is_empty()).map(str::to_string),
+            video: self.current.as_ref().filter(|t| is_video(t)).map(|t| VideoInfo {
+                id: tid(t),
+                title: display_title(t),
+                artist: artist_join(t),
+                image: t["imageId"].as_str().filter(|c| !c.is_empty()).map(str::to_string),
+                explicit: t["explicit"].as_bool().unwrap_or(false),
+            }),
+            video_session: self.video_session,
+            video_quality: self.video_quality.clone(),
+            video_open: crate::video::is_open(),
         };
         // Signal windows only when something they draw changed. The controller republishes on
         // every backend event (position syncs among them), and each signal is an animated
