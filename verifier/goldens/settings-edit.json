@@ -863,7 +863,7 @@
        "username": "fixture"
       }
      },
-     "overlay_host": "127.0.0.1",
+     "overlay_host": "127.0.0.2",
      "proxy": {
       "enabled": true,
       "proxy_type": "http",
@@ -954,7 +954,7 @@
        "username": "fixture"
       }
      },
-     "overlay_host": "127.0.0.1",
+     "overlay_host": "127.0.0.2",
      "proxy": {
       "enabled": true,
       "proxy_type": "http",
@@ -1047,7 +1047,7 @@
        "username": "fixture"
       }
      },
-     "overlay_host": "127.0.0.1",
+     "overlay_host": "127.0.0.2",
      "proxy": {
       "enabled": true,
       "proxy_type": "http",

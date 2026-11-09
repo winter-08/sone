@@ -14,6 +14,8 @@ in
 pkgs.mkShell {
   # bench/wheel.py generates its virtual-pointer bindings from this XML
   SPIKE_WLR_PROTOCOLS = "${pkgs.wlr-protocols}/share/wlr-protocols";
+  # channels/keyboard.py compiles its virtual keyboard's keymap with this
+  SPIKE_XKBCOMMON = "${pkgs.libxkbcommon}/lib/libxkbcommon.so.0";
   packages = [
     py
     pkgs.at-spi2-core

@@ -446,7 +446,8 @@ Harness changes this slice needed, applied to both builds:
   goldens were re-recorded on it.
 - **View scenarios** with `views = true`: the runner snapshots the visible named controls after
   every step. New step forms: `ui = { type = TEXT, into = NAME }` (AT-SPI focus, then real
-  keystrokes with `wtype`), `key = "Return"`, and `nth` to tell repeated names apart. Presses
+  keystrokes with `wtype`), `key = "Return"` or `"ctrl+a"` (a persistent virtual keyboard,
+  `channels/keyboard.py`), and `nth` to tell repeated names apart. Presses
   fall back to the nearest actionable ancestor, so cards are clicked through their heading.
   Scenarios: view-home, view-search (dropdown, results, every tab), view-album, view-artist,
   view-playlist (each also plays the collection), view-library.
@@ -686,10 +687,15 @@ Found on the way:
   `anchored_fit` under the search field, right-aligned, 420 pt wide, as SearchBar.tsx.
 - Fixed: Rune's album page showed the artist as plain text; each artist is now a link to their
   page (SONE's TrackArtists spans are clickable but not accessible; waived as an extra control).
-- Not a Rune bug: Ctrl+A looked broken in the search field, but the harness's chords never
-  arrive unpaced (no wl_keyboard events at all), and paced ones reach Rune (which selects all)
-  but not WebKit. So the goldens never exercised select-all; see `channels/atspi.key`. The
-  drivers clear the field with Backspace.
+- Not a Rune bug: Ctrl+A looked broken in the search field, but the harness's wtype chords never
+  arrived unpaced (no wl_keyboard events at all), and paced ones reached Rune (which selects
+  all) but not WebKit. Unpaced single keys (`key = "Escape"`) were dropped too. Fixed:
+  `channels/atspi.key` now presses keys on a persistent zwp_virtual_keyboard_v1
+  (`channels/keyboard.py`) with the full default keymap and real Control_L presses, and both
+  apps select all. Re-recorded goldens: settings-edit (the overlay host is now replaced,
+  127.0.0.1 → 127.0.0.2, where the append used to leave it unchanged) and view-account (Escape
+  now closes the account menu). The bench clears the search field with Ctrl+A, and its
+  `modal` window now includes the dialog closing (before, Escape never arrived).
 - Rune exposes only on-screen content to AT-SPI (AccessKit), so at 1400x900 a results page's
   lower sections can't be found by name (the verifier uses a 1400x2000 display for this).
 

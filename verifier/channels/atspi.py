@@ -139,24 +139,30 @@ def type_text(text: str) -> None:
     subprocess.run(["wtype", "-k", "Shift_L", "-s", "150", "--", text], check=True, timeout=10)
 
 
-def key(name: str) -> None:
-    """One key press by XKB name (Return, Escape, Tab), or a chord like "ctrl+a".
+_keyboard = None
 
-    Caveat (2026-11-08): sent this way, without pauses, a chord reaches neither app in the
-    headless sway (wtype tears its virtual keyboard down first: no wl_keyboard events at all).
-    With `-s 50` pauses Rune gets Ctrl+A and selects all, but WebKit still doesn't, so the
-    references' goldens never saw a working select-all (settings-edit's `select_all` step
-    appends). Left as is so candidate and reference get the same input; don't rely on Ctrl
-    chords in scenarios until the injector is fixed for both."""
+
+def key(name: str) -> None:
+    """One key press by XKB keysym name (Return, Escape, Tab), or a chord like "ctrl+a".
+
+    Sent through a persistent virtual keyboard (channels/keyboard.py) with the full default
+    keymap and real modifier key presses, so both WebKitGTK and Rune see Ctrl shortcuts as from
+    a physical keyboard. (wtype's chords didn't work: unpaced they reached neither app in the
+    headless sway, paced only Rune; see keyboard.py.)"""
+    import os
     import subprocess
-    *mods, k = name.split("+")
-    cmd = ["wtype"]
-    for m in mods:
-        cmd += ["-M", m]
-    cmd += ["-k", k] if len(k) > 1 else [k]
-    for m in reversed(mods):
-        cmd += ["-m", m]
-    subprocess.run(cmd, check=True, timeout=10)
+    global _keyboard
+    if _keyboard is None or _keyboard.poll() is not None:
+        _keyboard = subprocess.Popen(
+            ["python3", "-I", os.path.join(os.path.dirname(os.path.abspath(__file__)), "keyboard.py")],
+            stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True)
+        if _keyboard.stdout.readline().strip() != "ready":
+            raise RuntimeError("virtual keyboard failed to start")
+    _keyboard.stdin.write(name + "\n")
+    _keyboard.stdin.flush()
+    reply = _keyboard.stdout.readline().strip()
+    if reply != "ok":
+        raise RuntimeError(f"key {name!r}: {reply or 'keyboard exited'}")
 
 
 def wait_ready(timeout: float = 30):

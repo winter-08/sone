@@ -69,10 +69,7 @@ def search(query: str, until: str | None = None) -> float:
     itself before its results arrive)."""
     atspi.focus("Search", "entry")
     time.sleep(0.2)
-    # Clear an earlier query with End + Backspace: the harness can't send Ctrl+A to WebKit
-    # (see channels/atspi.key), and Backspace behaves the same in both apps.
-    import subprocess
-    subprocess.run(["wtype", "-k", "End"] + ["-k", "BackSpace"] * 60, check=True, timeout=10)
+    atspi.key("ctrl+a")  # typing replaces an earlier query (select-all works in both apps)
     time.sleep(0.1)
     atspi.type_text(query)
     time.sleep(0.8)  # the suggestions for this query, not the last one (debounced)
