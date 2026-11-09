@@ -97,6 +97,10 @@ pub struct Nav {
     /// Synced lyrics: the active line, and whether the user scrolled away from it.
     pub lyric_line: Option<usize>,
     pub lyrics_scrolled: bool,
+    /// The search dropdown is open (typing opens it; a pick, Enter, Escape or a click
+    /// elsewhere closes it), and the entry ↑/↓ highlighted.
+    pub search_open: bool,
+    pub search_sel: Option<usize>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -109,7 +113,7 @@ impl Default for Nav {
     fn default() -> Self {
         Nav { page: Page::Home, back: vec![], fwd: vec![], search: TextEdit::new(""), lib: LibTab::Playlists, tab: SearchTab::All, filter: TextEdit::new(""), queue_open: false, suggest_due: None, menu_open: false, settings_tab: SettingsTab::Playback, drawer: None, login_mode: LoginMode::Pkce, settings_open: false, dialog: None,
             discord_status: TextEdit::new(""), lb_token: TextEdit::new(""), overlay_host: TextEdit::new(""), proxy_user: TextEdit::new(""),
-            discord_due: None, proxy_due: None, lb_status: None, ctx: None, create: None, lyric_line: None, lyrics_scrolled: false }
+            discord_due: None, proxy_due: None, lb_status: None, ctx: None, create: None, lyric_line: None, lyrics_scrolled: false, search_open: false, search_sel: None }
     }
 }
 
@@ -366,10 +370,14 @@ pub fn header(s: &App) -> El {
         .on_input_change(|s: &mut App, _| {
             // SearchBar debounces suggestions by 300 ms (SearchBar.tsx:112-125).
             s.nav.suggest_due = Some(std::time::Instant::now() + std::time::Duration::from_millis(300));
+            s.nav.search_open = true;
+            s.nav.search_sel = None;
         })
+        .on_input_key(|s: &mut App, ev, tx| search_key(s, ev, tx))
         .on_submit(|s: &mut App, _| {
             let q = s.nav.search.text.trim().to_string();
             if !q.is_empty() {
+                s.nav.search_open = false;
                 s.nav.tab = SearchTab::All;
                 go(s, Page::Search(q));
             }
@@ -406,63 +414,169 @@ pub fn header(s: &App) -> El {
 }
 
 /// The suggestions dropdown under the search field while typing (React SearchBar).
+/// One entry of the search dropdown, in display order.
+#[derive(Clone, Debug)]
+enum Entry {
+    /// A text suggestion: fills the search bar and searches.
+    Text(String),
+    /// A direct hit: an album, artist or playlist page.
+    Hit(String, Page),
+    /// A direct hit on a track: plays it.
+    Track(String, u64),
+    ViewAll,
+}
+
+fn dropdown_entries(q: &str) -> Vec<Entry> {
+    let Some(v) = data::peek(&Key::Suggest(q.to_string())) else { return vec![] };
+    let mut out: Vec<Entry> = v["textSuggestions"].as_array().cloned().unwrap_or_default().iter()
+        .filter_map(|x| x["query"].as_str().map(|q| Entry::Text(q.to_string()))).collect();
+    for hit in v["directHits"].as_array().cloned().unwrap_or_default() {
+        let title = hit["title"].as_str().or(hit["name"].as_str()).unwrap_or("").to_string();
+        let page = match hit["hitType"].as_str().unwrap_or("") {
+            "TRACKS" => {
+                out.push(Entry::Track(title, hit["id"].as_u64().unwrap_or(0)));
+                continue;
+            }
+            "ALBUMS" => hit["id"].as_u64().map(Page::Album),
+            "ARTISTS" => hit["id"].as_u64().map(Page::Artist),
+            "PLAYLISTS" => hit["uuid"].as_str().map(|u| Page::Playlist(u.to_string())),
+            _ => None,
+        };
+        if let Some(p) = page {
+            out.push(Entry::Hit(title, p));
+        }
+    }
+    out.push(Entry::ViewAll);
+    out
+}
+
+/// Set the search bar to `text`, caret at the end, keeping focus if it had it.
+fn set_search_text(s: &mut App, text: &str, focused: bool) {
+    let mut e = TextEdit::new(text);
+    e.focused = focused;
+    s.nav.search = e;
+}
+
+fn pick(s: &mut App, e: Entry) {
+    s.nav.search_open = false;
+    s.nav.search_sel = None;
+    match e {
+        Entry::Text(q) => {
+            set_search_text(s, &q, false);
+            s.nav.tab = SearchTab::All;
+            go(s, Page::Search(q));
+        }
+        Entry::Hit(_, p) => go(s, p),
+        Entry::Track(_, id) => controller::send_play_ids(vec![id]),
+        Entry::ViewAll => {
+            let q = s.nav.search.text.trim().to_string();
+            s.nav.tab = SearchTab::All;
+            go(s, Page::Search(q));
+        }
+    }
+}
+
+/// Keys in the search field: ↑/↓ move through the dropdown, Tab completes the text to the
+/// highlighted (or first) suggestion, Enter opens the highlighted entry (or searches, through
+/// `on_submit`), Escape closes the dropdown (SearchBar.tsx has Enter and Escape; arrows and Tab
+/// go further).
+fn search_key(s: &mut App, ev: &rune::KeyEvent, _tx: &mut Tx) -> bool {
+    let q = s.nav.search.text.trim().to_string();
+    let entries = if s.nav.search_open && !q.is_empty() { dropdown_entries(&q) } else { vec![] };
+    match &ev.key {
+        rune::Key::Down | rune::Key::Up if !entries.is_empty() => {
+            let n = entries.len();
+            s.nav.search_sel = Some(match (s.nav.search_sel, ev.key == rune::Key::Down) {
+                (None, true) => 0,
+                (None, false) => n - 1,
+                (Some(i), true) => (i + 1) % n,
+                (Some(i), false) => (i + n - 1) % n,
+            });
+            true
+        }
+        rune::Key::Tab if !ev.mods.shift => {
+            let target = s.nav.search_sel.and_then(|i| entries.get(i)).and_then(|e| match e {
+                Entry::Text(t) | Entry::Hit(t, _) | Entry::Track(t, _) => Some(t.clone()),
+                Entry::ViewAll => None,
+            }).or_else(|| entries.iter().find_map(|e| if let Entry::Text(t) = e { Some(t.clone()) } else { None }));
+            match target {
+                Some(t) if t != s.nav.search.text => {
+                    set_search_text(s, &t, true);
+                    s.nav.search_sel = None;
+                    s.nav.search_open = true;
+                    s.nav.suggest_due = Some(std::time::Instant::now() + std::time::Duration::from_millis(300));
+                    true
+                }
+                _ => false,
+            }
+        }
+        rune::Key::Enter => match s.nav.search_sel.and_then(|i| entries.get(i)).cloned() {
+            Some(e) => {
+                pick(s, e);
+                true
+            }
+            None => false,
+        },
+        rune::Key::Escape if s.nav.search_open => {
+            s.nav.search_open = false;
+            s.nav.search_sel = None;
+            true
+        }
+        _ => false,
+    }
+}
+
 pub fn dropdown(s: &App) -> Option<El> {
     let q = s.nav.search.text.trim().to_string();
-    if q.is_empty() || !s.nav.search.focused || matches!(s.nav.page, Page::Search(_)) {
+    // Open while typing, and while a press on it is landing (its rows keep the field's focus);
+    // closed by a pick, Enter, Escape, or focus leaving the field.
+    if q.is_empty() || !s.nav.search_open || !s.nav.search.focused {
         return None;
     }
     // Peek only: the debounce in App::poll decides when to fetch (rendering mid-typing must not).
-    let v = data::peek(&Key::Suggest(q.clone()))?;
+    data::peek(&Key::Suggest(q.clone()))?;
+    let entries = dropdown_entries(&q);
+    let sel = s.nav.search_sel;
     let mut list = col().w_full().padding(8.0).gap(2.0);
-    let texts = v["textSuggestions"].as_array().cloned().unwrap_or_default();
-    for (i, sug) in texts.iter().enumerate() {
-        let sq = sug["query"].as_str().unwrap_or("").to_string();
-        let target = sq.clone();
-        list = list.child(
-            row().key(format!("sug-{i}")).role("button").label(sq.clone()).h(34.0).px(10.0).gap(10.0).radius(8.0).items_center().hover(white(0.08)).cursor(rune::Cursor::Pointer)
-                .on_press(move |s: &mut App| {
-                    s.nav.search = TextEdit::new(&target);
-                    s.nav.tab = SearchTab::All;
-                    go(s, Page::Search(target.clone()));
-                })
-                .child(glyph(G::Search, 14.0, white(0.5)))
-                .child(text(sq).font(t(13.0, 500.0)).color(white(0.9)).a11y_hidden()),
-        );
-    }
-    for (i, hit) in v["directHits"].as_array().cloned().unwrap_or_default().iter().enumerate() {
-        let title = hit["title"].as_str().or(hit["name"].as_str()).unwrap_or("").to_string();
-        let ty = hit["hitType"].as_str().unwrap_or("");
-        if ty == "TRACKS" {
-            let id = hit["id"].as_u64().unwrap_or(0);
-            list = list.child(
-                row().key(format!("hit-{i}")).h(40.0).px(10.0).gap(10.0).items_center()
-                    .child(row().role("button").label(title.clone()).grow(1.0).items_center().cursor(rune::Cursor::Pointer)
-                        .on_press(move |_: &mut App| controller::send_play_ids(vec![id]))
-                        .child(text(title.clone()).font(t(13.0, 600.0)).color(white(0.95)).a11y_hidden()))
-                    .child(icon::<App>(&format!("hit-{i}-more"), "More options", G::More)),
-            );
-        } else {
-            let page = match ty {
-                "ALBUMS" => hit["id"].as_u64().map(Page::Album),
-                "ARTISTS" => hit["id"].as_u64().map(Page::Artist),
-                "PLAYLISTS" => hit["uuid"].as_str().map(|u| Page::Playlist(u.to_string())),
-                _ => None,
-            };
-            if let Some(p) = page {
-                list = list.child(row().key(format!("hit-{i}")).role("group").h(40.0).px(10.0).items_center().cursor(rune::Cursor::Pointer)
-                    .on_press(move |s: &mut App| go(s, p.clone())).child(heading(&title, 13.0)));
+    let mut hit_n = 0;
+    let mut sug_n = 0;
+    for (i, e) in entries.iter().enumerate() {
+        let on = Some(i) == sel;
+        let ec = e.clone();
+        let base = |key: String, label: &str, h: f32| row().key(key).role("button").label(label).h(h).px(10.0).gap(10.0).radius(8.0).items_center()
+            .fill(if on { white(0.1) } else { rune::Color::TRANSPARENT }).hover(white(0.08)).cursor(rune::Cursor::Pointer)
+            .preserve_focus_on_press(true);
+        let el_ = match e {
+            Entry::Text(t) => {
+                sug_n += 1;
+                base(format!("sug-{}", sug_n - 1), t, 34.0)
+                    .on_press(move |s: &mut App| pick(s, ec.clone()))
+                    .child(glyph(G::Search, 14.0, white(0.5)))
+                    .child(text(t.clone()).font(t_(13.0, 500.0)).color(white(0.9)).a11y_hidden())
             }
-        }
+            Entry::Track(t, id) => {
+                hit_n += 1;
+                let (tk, mk) = (format!("hit-{}", hit_n - 1), format!("hit-{}-more", hit_n - 1));
+                let track = crate::interact::json_of_track(*id, t, "");
+                row().key(tk).h(40.0).px(10.0).gap(10.0).radius(8.0).items_center().fill(if on { white(0.1) } else { rune::Color::TRANSPARENT })
+                    .child(row().role("button").label(t.as_str()).grow(1.0).items_center().cursor(rune::Cursor::Pointer).preserve_focus_on_press(true)
+                        .on_press(move |s: &mut App| pick(s, ec.clone()))
+                        .child(text(t.clone()).font(t_(13.0, 600.0)).color(white(0.95)).a11y_hidden()))
+                    .child(icon::<App>(&mk, "More options", G::More).preserve_focus_on_press(true)
+                        .on_press(move |s: &mut App| crate::interact::open_track(s, track.clone(), None, crate::interact::Anchor::Below(mk.clone()))))
+            }
+            Entry::Hit(t, _) => {
+                hit_n += 1;
+                row().key(format!("hit-{}", hit_n - 1)).role("group").h(40.0).px(10.0).radius(8.0).items_center().cursor(rune::Cursor::Pointer)
+                    .fill(if on { white(0.1) } else { rune::Color::TRANSPARENT }).hover(white(0.08)).preserve_focus_on_press(true)
+                    .on_press(move |s: &mut App| pick(s, ec.clone())).child(heading(t, 13.0))
+            }
+            Entry::ViewAll => base("view-all".into(), "View all results", 36.0)
+                .on_press(move |s: &mut App| pick(s, ec.clone()))
+                .child(text("View all results").font(t_(13.0, 600.0)).color(white(0.85)).a11y_hidden()),
+        };
+        list = list.child(el_);
     }
-    let q2 = q.clone();
-    list = list.child(
-        row().key("view-all").role("button").label("View all results").h(36.0).px(10.0).radius(8.0).items_center().hover(white(0.08)).cursor(rune::Cursor::Pointer)
-            .on_press(move |s: &mut App| {
-                s.nav.tab = SearchTab::All;
-                go(s, Page::Search(q2.clone()));
-            })
-            .child(text("View all results").font(t(13.0, 600.0)).color(white(0.85)).a11y_hidden()),
-    );
     // SearchBar.tsx: 420 px wide, right-aligned 8 px under the search field, at most 70vh tall
     // and scrolling. `anchored_fit` sizes it to the room below (or above) the field.
     Some(
@@ -470,6 +584,10 @@ pub fn dropdown(s: &App) -> Option<El> {
             .radius(14.0).fill(oklch(0.2, 0.02, 270.0)).shadow(8.0, 24.0, rune::oklcha(0.0, 0.0, 0.0, 0.4)).clip_rounded(14.0)
             .child(col().w_full().shrink().min_h(0.0).scroll(ScrollSpec { stick_bottom: false }).child(list)),
     )
+}
+
+fn t_(size: f32, weight: f32) -> rune::TextStyle {
+    t(size, weight)
 }
 
 pub fn sidebar(s: &App) -> El {
@@ -992,7 +1110,12 @@ pub fn account_menu(s: &App, v: &View) -> Option<El> {
         .child(menu_item("am-shortcuts", "Shortcuts", None, |s: &mut App| s.nav.dialog = Some(Dialog::Shortcuts)))
         .child(menu_item("am-about", "About", None, |s: &mut App| s.nav.dialog = Some(Dialog::About)))
         .child(menu_item("am-logout", "Log out", None, |_: &mut App| {}));
-    Some(row().pin(None, Some(56.0), Some(120.0), None).child(m))
+    // A modal layer over the window: the page is inert while the menu is open, and a press
+    // anywhere outside the menu closes it.
+    Some(el().key("am-layer").pin(Some(0.0), Some(0.0), Some(0.0), Some(0.0))
+        .modal(false, |s: &mut App| s.nav.menu_open = false)
+        .on_press(|s: &mut App| s.nav.menu_open = false).on_secondary_press(|s: &mut App, _, _| s.nav.menu_open = false)
+        .child(row().pin(None, Some(56.0), Some(120.0), None).child(m.role("menu").label("Account").on_press(|_: &mut App| {}))))
 }
 
 fn choice(key: &str, label: &str, selected: bool, on: impl Fn(&mut App) + 'static) -> El {
@@ -1097,8 +1220,10 @@ pub fn dialog(s: &App) -> Option<El> {
     let panel = col().key("dialog").w(520.0).padding(24.0).radius(18.0).fill(oklch(0.17, 0.02, 270.0)).shadow(10.0, 40.0, rune::oklcha(0.0, 0.0, 0.0, 0.5))
         .child(row().w_full().child(spacer()).child(ui::icon_button::<App>("dialog-close", "Close dialog", G::Close, 14.0, white(0.6)).on_press(|s: &mut App| s.nav.dialog = None)))
         .child(body);
-    Some(row().pin(Some(0.0), Some(0.0), Some(0.0), Some(0.0)).items_center().justify_center().fill(rune::oklcha(0.0, 0.0, 0.0, 0.45))
-        .on_press(|s: &mut App| s.nav.dialog = None).child(panel))
+    Some(row().key("dialog-layer").pin(Some(0.0), Some(0.0), Some(0.0), Some(0.0)).items_center().justify_center().fill(rune::oklcha(0.0, 0.0, 0.0, 0.45))
+        .modal(false, |s: &mut App| s.nav.dialog = None)
+        .on_press(|s: &mut App| s.nav.dialog = None)
+        .child(panel.role("dialog").label(match d { Dialog::Shortcuts => "Keyboard shortcuts", Dialog::About => "About SONE" }).on_press(|_: &mut App| {})))
 }
 
 /// The settings modal, when open.
@@ -1108,7 +1233,11 @@ pub fn settings_modal(s: &App) -> Option<El> {
     }
     let panel = col().key("settings-modal").w(860.0).h(620.0).padding(24.0).radius(18.0).fill(oklch(0.17, 0.02, 270.0)).shadow(10.0, 40.0, rune::oklcha(0.0, 0.0, 0.0, 0.5))
         .child(ui::smooth_wheel::<App>(col().grow(1.0).min_h(0.0).w_full().scroll(ScrollSpec { stick_bottom: false }).child(settings_page(s)), "settings-scroll".into()));
-    Some(row().pin(Some(0.0), Some(0.0), Some(0.0), Some(0.0)).items_center().justify_center().fill(rune::oklcha(0.0, 0.0, 0.0, 0.45)).child(panel))
+    // modal: the page behind is inert; a press on the scrim (outside the panel) closes it
+    Some(row().key("settings-layer").pin(Some(0.0), Some(0.0), Some(0.0), Some(0.0)).items_center().justify_center().fill(rune::oklcha(0.0, 0.0, 0.0, 0.45))
+        .modal(false, |s: &mut App| s.nav.settings_open = false)
+        .on_press(|s: &mut App| s.nav.settings_open = false)
+        .child(panel.role("dialog").label("Settings").on_press(|_: &mut App| {})))
 }
 
 pub fn settings_page(s: &App) -> El {

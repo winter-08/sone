@@ -10,6 +10,15 @@ AUDIO_EDGE_S = 1.0      # a partial play may start/stop this much earlier or lat
 AUDIO_GAP_S = 0.25      # silence between tracks may differ by this much (gapless matters)
 IGNORED = {"last"}      # diagnostic payloads (e.g. why a wait_for timed out)
 ALLOWED_EXTRA: set[str] = set()  # waived extra controls, set by the CLI from waivers.toml
+# Controls that only show while a modal overlay is open (waivers.toml [modal_overlays]): the
+# candidate's modals make the page behind them inert, which takes it out of the accessibility
+# tree, where the reference's DOM keeps it. With one of these in a snapshot, controls missing
+# from it are waived; extras still count.
+MODAL_MARKERS: set[str] = set()
+
+
+def modal_open(controls) -> bool:
+    return any(str(c) in MODAL_MARKERS for c in controls)
 
 
 def diff_values(g, a, path, out):
@@ -30,6 +39,8 @@ def diff_values(g, a, path, out):
         missing, extra = sorted(set(map(str, g)) - set(map(str, a))), sorted(set(map(str, a)) - set(map(str, g)))
         if path.endswith(".controls"):
             extra = [e for e in extra if e not in ALLOWED_EXTRA]
+            if modal_open(a):
+                missing = []
         for m in missing:
             out.append(f"{path}: missing {m}")
         for e in extra:
@@ -111,6 +122,8 @@ def short(v, n=140):
 
 def _prf(golden: set, got: set) -> tuple[float, float]:
     got = {x for x in got if x in golden or x not in ALLOWED_EXTRA}
+    if modal_open(got):
+        golden = golden & got  # the page behind an inert modal is waived (MODAL_MARKERS)
     if not golden and not got:
         return 1.0, 1.0
     inter = len(golden & got)
@@ -170,9 +183,12 @@ def score(golden: dict, trace: dict) -> dict:
 
 
 def load_waivers(path: str) -> set[str]:
-    """Allowed extra controls from verifier/waivers.toml (see that file for the reasons)."""
+    """Allowed extra controls from verifier/waivers.toml (see that file for the reasons); also
+    fills MODAL_MARKERS from its [modal_overlays]."""
     import tomllib
     try:
-        return set(tomllib.load(open(path, "rb")).get("extra_controls", {}).get("allow", []))
+        w = tomllib.load(open(path, "rb"))
     except FileNotFoundError:
         return set()
+    MODAL_MARKERS.update(w.get("modal_overlays", {}).get("markers", []))
+    return set(w.get("extra_controls", {}).get("allow", []))

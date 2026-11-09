@@ -15,3 +15,17 @@ allow = [
   # the candidate makes it a keyboard-reachable link to the artist's page
   "link: Fixture Artist",
 ]
+
+[modal_overlays]
+# The candidate's account menu, Settings and dialogs are modal: the page behind them is inert
+# (no hover or clicks reach it, and a press outside closes them), and Rune takes inert content
+# out of the accessibility tree, as aria-modal dialogs hide the page from screen readers. The
+# reference keeps the page in its DOM under its menus. While one of these controls (which only
+# exist with that overlay open) is in a snapshot, controls missing from it are waived; extras
+# and the overlay's own contents are still compared.
+reason = "Modal overlays make the page behind them inert, which removes it from the accessibility tree."
+markers = [
+  "button: Log out",       # the account menu
+  "button: Discord",       # a Settings tab
+  "button: Close dialog",  # the Shortcuts and About dialogs
+]

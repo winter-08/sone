@@ -152,6 +152,13 @@ fn on_key(s: &mut App, e: &KeyEvent, _: &mut Tx) -> bool {
     if matches!(e.key, Key::Escape) && interact::on_escape(s) {
         return true;
     }
+    // "/" (outside a text field) and Ctrl+K focus the search bar
+    let typing = s.nav.search.focused || s.nav.filter.focused;
+    if (!typing && !e.mods.cmd && !e.mods.alt && matches!(&e.key, Key::Text(t) if t == "/")) || e.is_command('k') {
+        s.nav.search.focused = true;
+        s.nav.search_open = !s.nav.search.text.trim().is_empty();
+        return true;
+    }
     if matches!(e.key, Key::Escape) && (s.nav.menu_open || s.nav.settings_open) {
         if s.nav.menu_open { s.nav.menu_open = false } else { s.nav.settings_open = false }
         return true;

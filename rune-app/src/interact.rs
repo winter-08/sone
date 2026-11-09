@@ -500,8 +500,10 @@ fn sep() -> El {
 }
 
 fn panel(key: &str, w: f32) -> El {
+    // a press on the menu's own padding isn't an outside click
     col().key(key.to_string()).role("menu").w(w).py(4.0).radius(12.0).fill(oklch(0.2, 0.02, 270.0))
         .border(1.0, white(0.08)).shadow(10.0, 30.0, rune::oklcha(0.0, 0.0, 0.0, 0.5))
+        .on_press(|_: &mut App| {})
 }
 
 fn track_id(t: &Value) -> u64 {
@@ -1036,9 +1038,11 @@ fn move_to_folder(uuid: String, label: String, folder: String, folder_name: Stri
 // ------------------------------------------------------------------ dialogs
 
 fn dialog_frame(key: &str, title: &str, close_label: &str, body: El, close: fn(&mut App)) -> El {
+    // modal scrim: the page is inert, and a press outside the dialog closes it
     row().key(format!("{key}-scrim")).pin(Some(0.0), Some(0.0), Some(0.0), Some(0.0)).fill(rune::oklcha(0.0, 0.0, 0.0, 0.55)).items_center().justify_center()
+        .modal(false, close).on_press(close)
         .child(col().key(key.to_string()).role("dialog").label(title).w(440.0).padding(24.0).gap(16.0).radius(16.0).fill(oklch(0.21, 0.02, 270.0))
-            .modal(true, close)
+            .on_press(|_: &mut App| {})
             .child(row().items_center().child(text(title.to_string()).font(t(20.0, 700.0)).color(white(0.96)).role("heading").label(title)).child(spacer())
                 .child(row().key(format!("{key}-x")).role("button").label(close_label).size(28.0, 28.0).radius(14.0).items_center().justify_center().hover(white(0.08)).cursor(rune::Cursor::Pointer)
                     .on_press(close).child(glyph(G::Close, 20.0, white(0.6)))))
