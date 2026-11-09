@@ -7,6 +7,7 @@
 //! the Rune window draws both (views.rs, ui.rs).
 
 mod art;
+mod bio;
 mod controller;
 mod data;
 mod glyph;

@@ -107,6 +107,8 @@ pub struct Nav {
 pub enum Dialog {
     Shortcuts,
     About,
+    /// An artist's whole biography (ArtistPage's bio modal).
+    Bio(u64),
 }
 
 impl Default for Nav {
@@ -886,6 +888,14 @@ fn album(id: u64, v: &View) -> El {
         }));
     }
     c = c.child(rows);
+    // TIDAL's editorial review, when the album has one (tidal.com shows it under the tracks).
+    if let Some(review) = page["review"]["text"].as_str().filter(|r| !r.trim().is_empty()) {
+        let mut r = col().w_full().max_w(820.0).gap(10.0).child(heading("Review", 20.0)).child(crate::bio::view(review, 14.0, 0.72));
+        if let Some(src) = page["review"]["source"].as_str().filter(|x| !x.is_empty()) {
+            r = r.child(text(format!("Review from {src}")).font(t(12.0, 400.0)).color(white(0.4)));
+        }
+        c = c.child(r);
+    }
     for (si, sec) in page["sections"].as_array().cloned().unwrap_or_default().iter().enumerate() {
         // Album-page modules hold bare objects whose own  is e.g. "EP"; the module's type
         // (ALBUM_LIST, ...) is what says what they are.
@@ -926,9 +936,13 @@ fn artist(id: u64, v: &View) -> El {
         });
     let fans = p["header"]["followersAmount"].as_u64().unwrap_or(0);
     let mut c = col().w_full().gap(18.0).child(hero(&name, true, &format!("{fans} fans"), id, true, crate::art::artist_picture(a, 180.0), actions));
-    if let Some(bio) = p["header"]["biography"]["text"].as_str() {
-        c = c.child(col().gap(6.0).child(text(bio.to_string()).font(t(13.0, 400.0)).color(white(0.7)).wrap())
-            .child(row().key("bio-more").role("button").label("Read more").cursor(rune::Cursor::Pointer).child(text("Read more").font(t(12.0, 650.0)).color(white(0.85)).a11y_hidden())));
+    // ArtistPage: two clamped lines of the bio without its markup, and "Read more" for the
+    // whole of it, links and all, in a dialog.
+    if let Some(bio) = p["header"]["biography"]["text"].as_str().filter(|b| !b.trim().is_empty()) {
+        c = c.child(col().gap(6.0).max_w(820.0).child(text(crate::bio::plain(bio)).font(t(13.0, 400.0)).color(white(0.6)).wrap().max_lines(2))
+            .child(row().key("bio-more").role("button").label("Read more").cursor(rune::Cursor::Pointer)
+                .on_press(move |s: &mut App| s.nav.dialog = Some(Dialog::Bio(id)))
+                .child(text("Read more").font(t(12.0, 650.0)).color(white(0.85)).a11y_hidden())));
     }
     for (si, sec) in p["items"].as_array().cloned().unwrap_or_default().iter().enumerate() {
         let title = sec["title"].as_str().unwrap_or("");
@@ -1202,6 +1216,22 @@ pub fn dialog(s: &App) -> Option<El> {
                 .child(rows)
                 .child(button::<App>("sc-restore", "Restore defaults", None, false))
         }
+        Dialog::Bio(id) => {
+            let p = data::ready(Key::Artist(id))?;
+            let a = data::data(&p["item"]);
+            let name = a["name"].as_str().unwrap_or("").to_string();
+            let bio = p["header"]["biography"]["text"].as_str().unwrap_or("");
+            let source = p["header"]["biography"]["source"].as_str().filter(|x| !x.is_empty());
+            let avatar = ui::with_image(ui::art(ui::hue(Some(id)), 44.0, id, 0.0), crate::art::artist_picture(a, 44.0), 44.0, 22.0);
+            let mut body = col().w_full().gap(0.0).child(crate::bio::view(bio, 14.0, 0.72));
+            if let Some(src) = source {
+                body = body.child(row().pt(24.0).child(text(format!("Artist bio from {src}")).font(rune::TextStyle { italic: true, ..t(12.0, 400.0) }).color(white(0.4))));
+            }
+            col().w_full().gap(16.0)
+                .child(row().gap(12.0).items_center().child(avatar)
+                    .child(col().gap(2.0).child(heading(&name, 16.0)).child(text("Biography").font(t(13.0, 400.0)).color(white(0.5)))))
+                .child(col().key("bio-scroll").w_full().max_h(520.0).scroll(ScrollSpec { stick_bottom: false }).child(body))
+        }
         Dialog::About => {
             let link = |key: &str, label: &str, url: &'static str| button::<App>(key, label, None, false).on_press(move |_: &mut App| open_url(url));
             let version = concat!("v", env!("CARGO_PKG_VERSION"));
@@ -1217,13 +1247,14 @@ pub fn dialog(s: &App) -> Option<El> {
                 .child(link("ab-patreon", "Support development on Patreon", "https://patreon.com/lullabyX"))
         }
     };
-    let panel = col().key("dialog").w(520.0).padding(24.0).radius(18.0).fill(oklch(0.17, 0.02, 270.0)).shadow(10.0, 40.0, rune::oklcha(0.0, 0.0, 0.0, 0.5))
+    let wide = matches!(d, Dialog::Bio(_));
+    let panel = col().key("dialog").w(if wide { 640.0 } else { 520.0 }).padding(24.0).radius(18.0).fill(oklch(0.17, 0.02, 270.0)).shadow(10.0, 40.0, rune::oklcha(0.0, 0.0, 0.0, 0.5))
         .child(row().w_full().child(spacer()).child(ui::icon_button::<App>("dialog-close", "Close dialog", G::Close, 14.0, white(0.6)).on_press(|s: &mut App| s.nav.dialog = None)))
         .child(body);
     Some(row().key("dialog-layer").pin(Some(0.0), Some(0.0), Some(0.0), Some(0.0)).items_center().justify_center().fill(rune::oklcha(0.0, 0.0, 0.0, 0.45))
         .modal(false, |s: &mut App| s.nav.dialog = None)
         .on_press(|s: &mut App| s.nav.dialog = None)
-        .child(panel.role("dialog").label(match d { Dialog::Shortcuts => "Keyboard shortcuts", Dialog::About => "About SONE" }).on_press(|_: &mut App| {})))
+        .child(panel.role("dialog").label(match d { Dialog::Shortcuts => "Keyboard shortcuts", Dialog::About => "About SONE", Dialog::Bio(_) => "Biography" }).on_press(|_: &mut App| {})))
 }
 
 /// The settings modal, when open.
@@ -1878,8 +1909,8 @@ fn credits(v: &View) -> El {
     if let Some(aid) = v.artist_id {
         c = c.child(heading("Bio", 16.0));
         if let Some(b) = data::ready(Key::ArtistBio(aid)) {
-            let bio = b["text"].as_str().or(b.as_str()).unwrap_or("").to_string();
-            c = c.child(text(bio).font(t(13.0, 400.0)).color(white(0.7)).wrap());
+            let bio = b["text"].as_str().or(b.as_str()).unwrap_or("");
+            c = c.child(crate::bio::view(bio, 13.0, 0.7));
         }
     }
     c
