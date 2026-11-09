@@ -234,6 +234,12 @@ fn initial_size() -> (f32, f32) {
 
 const FONTS: &[&[u8]] = &[include_bytes!("../assets/Inter-Regular.ttf"), include_bytes!("../assets/Inter-Medium.ttf"), include_bytes!("../assets/Inter-SemiBold.ttf")];
 
+/// The app's name in the window title and login screen; package.nix builds it as "RONE".
+pub const TITLE: &str = match option_env!("SONE_RUNE_TITLE") {
+    Some(t) => t,
+    None => "SONE",
+};
+
 fn main() {
     // The backend's own logger (file + stderr, honouring logging.toggle).
     let sone_dir = backend::config_dir_for_env().unwrap_or_else(|| std::path::PathBuf::from("./.sone"));
@@ -256,8 +262,10 @@ fn main() {
         on_key: Some(on_key),
         // Video frames (video.rs) wake the window as they arrive.
         setup: Some(|_: &mut App, w| video::set_waker(w)),
-        ..AppSpec::new("SONE", initial_size(), || App { seen: (0, 0, 0), nav: views::Nav::default() }, view)
+        ..AppSpec::new(TITLE, initial_size(), || App { seen: (0, 0, 0), nav: views::Nav::default() }, view)
     };
+    // Matches the desktop entry package.nix installs, so the desktop shows its name and icon.
+    rune::set_app_id(option_env!("SONE_RUNE_APP_ID").unwrap_or("sone-rune"));
     let mut app = rune::App::new(spec);
     let mini_spec = AppSpec::<Mini> {
         fonts: FONTS,

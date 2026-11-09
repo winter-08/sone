@@ -14,7 +14,8 @@ def apps(name_hint: str = "sone") -> list:
     out = []
     for i in range(desktop.childCount):
         a = desktop.getChildAtIndex(i)
-        if a and a.name and name_hint in a.name.lower():
+        # RONE: the packaged Rune build (rune-app/package.nix) names itself differently.
+        if a and a.name and (name_hint in a.name.lower() or (name_hint == "sone" and "rone" in a.name.lower())):
             out.append(a)
     return out
 

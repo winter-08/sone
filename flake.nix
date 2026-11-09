@@ -12,6 +12,8 @@
     {
       packages.${system} = {
         sone = pkgs.callPackage ./nix/package.nix { src = self; };
+        # The Rune build (rune-app/), installed as RONE.
+        rone = pkgs.callPackage ./rune-app/package.nix { src = ./.; };
         default = self.packages.${system}.sone;
       };
 

@@ -1261,7 +1261,7 @@ pub fn dialog(s: &App) -> Option<El> {
             let link = |key: &str, label: &str, url: &'static str| button::<App>(key, label, None, false).on_press(move |_: &mut App| open_url(url));
             let version = concat!("v", env!("CARGO_PKG_VERSION"));
             col().w_full().gap(12.0).items_center()
-                .child(heading("SONE", 30.0))
+                .child(heading(crate::TITLE, 30.0))
                 .child(link("ab-version", version, "https://github.com/lullabyX/sone/releases"))
                 .child(text("The native desktop client for TIDAL on Linux.").font(t(13.0, 500.0)).color(white(0.6)))
                 .child(row().gap(8.0)
