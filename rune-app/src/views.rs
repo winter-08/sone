@@ -1397,11 +1397,11 @@ pub fn settings_page(s: &App) -> El {
             .child(caps("Overlay server", 0.5))
             .child(bound_field(&s.nav.overlay_host, "ov-host", "127.0.0.1", |s: &mut App| &mut s.nav.overlay_host, |_: &mut App| {}))
             .child(button::<App>("ov-apply", "Apply", None, true).on_press(|s: &mut App| {
-                // Like the React tab, Apply only acts while the overlay server is enabled.
+                // As OverlayTab's applyHost: always overlay_set_host, which validates, saves, and
+                // restarts the server only if it's running.
                 use sone_host_shim::Manager;
-                let st = crate::host().state::<tauri_app_lib::AppState>();
-                if st.load_settings().is_some_and(|x| x.overlay_enabled) {
-                    let host = s.nav.overlay_host.text.trim().to_string();
+                let host = s.nav.overlay_host.text.trim().to_string();
+                if !host.is_empty() {
                     let h = crate::host().clone();
                     sone_host_shim::async_runtime::spawn(async move {
                         let _ = tauri_app_lib::commands::overlay::overlay_set_host(h.state::<tauri_app_lib::AppState>(), host).await;
