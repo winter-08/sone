@@ -143,7 +143,8 @@ pub fn volume<S: 'static>(v: &View, key: &str, w: f32) -> El {
     row()
         .gap(8.0)
         .items_center()
-        .child(glyph(G::Speaker, 18.0, white(0.6)))
+        // VolumeSlider.tsx: muted, below half, above
+        .child(glyph(if v.volume <= 0.0 { G::VolumeX } else if v.volume < 0.5 { G::Volume1 } else { G::Speaker }, 16.0, white(0.6)))
         .child(slider::<S>(key, "Volume", w, 4.0, v.volume, (v.volume as f64, 1.0), Cmd::SetVolume))
 }
 
@@ -219,7 +220,8 @@ pub fn transport<S: 'static>(v: &View, prefix: &str, play_size: f32) -> El {
 }
 
 /// The now-playing bar, tinted by the track.
-pub fn nowbar<S: 'static>(v: &View, extras: El) -> El {
+/// `track_actions` sit after the title, as React's PlayerBar has its heart and More there.
+pub fn nowbar<S: 'static>(v: &View, track_actions: El, extras: El) -> El {
     let h = hue(v.track_id);
     let seed = v.track_id.unwrap_or(0);
     let left = row()
@@ -228,13 +230,15 @@ pub fn nowbar<S: 'static>(v: &View, extras: El) -> El {
         .items_center()
         .child(with_image(tile(h, 48.0, seed, 8.0), crate::art::cover(v.cover.as_deref(), 48.0), 48.0, 8.0))
         .child(
+            // shrinks (and truncates) rather than grows, so the heart follows the title
             col()
-                .grow(1.0)
+                .shrink()
                 .min_w(0.0)
                 .gap(2.0)
                 .child(text(if v.title.is_empty() { "Nothing playing".to_string() } else { v.title.clone() }).font(t(13.0, 600.0)).color(white(0.95)).truncate())
                 .child(text(v.artist.clone()).font(t(12.0, 400.0)).color(white(0.6)).truncate()),
-        );
+        )
+        .child(track_actions);
     let middle = col()
         .grow(1.0)
         .min_w(0.0)

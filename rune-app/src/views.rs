@@ -533,9 +533,19 @@ pub fn sidebar(s: &App) -> El {
         .child(ui::smooth_wheel::<App>(col().grow(1.0).min_h(0.0).w_full().scroll(ScrollSpec { stick_bottom: false }).child(list), "lib-scroll".into()))
 }
 
+/// Loved Tracks' artwork: not an image from TIDAL but React's fixed gradient (#450af5 → #8e2de2
+/// → #00d2ff, to the bottom right) with a white heart.
+pub(crate) fn loved_art(size: f32, radius: f32, heart: f32) -> El {
+    let c = |h: &str| rune::color::hex(h).unwrap_or(white(0.5));
+    el().size(size, size).radius(radius).clip_rounded(radius).items_center().justify_center().a11y_hidden()
+        .linear_gradient(std::f32::consts::PI * 0.75, [(0.0, c("#450af5")), (0.5, c("#8e2de2")), (1.0, c("#00d2ff"))])
+        .child(glyph(G::HeartFilled, heart, white(1.0)))
+}
+
 fn lib_row(key: &str, label: &str, title: &str, sub: &str, seed: u64, img: Option<String>, menu: Option<Value>, page: Option<Page>) -> El {
+    let art = if key == "lib-loved" { loved_art(40.0, 6.0, 15.0) } else { ui::with_image(ui::tile(ui::hue(Some(seed)), 40.0, seed, 6.0), img, 40.0, 6.0) };
     let mut r = row().key(key.to_string()).role("button").label(label).w_full().h(52.0).px(8.0).gap(10.0).radius(8.0).items_center().hover(white(0.06)).cursor(rune::Cursor::Pointer)
-        .child(ui::with_image(ui::tile(ui::hue(Some(seed)), 40.0, seed, 6.0), img, 40.0, 6.0))
+        .child(art)
         .child(col().min_w(0.0).a11y_hidden().child(text(title.to_string()).font(t(13.0, 600.0)).color(white(0.92)).truncate()).child(text(sub.to_string()).font(t(11.0, 400.0)).color(white(0.55)).truncate()));
     if let Some(p) = page {
         r = r.on_press(move |s: &mut App| go(s, p.clone()));
@@ -558,6 +568,24 @@ fn lib_list(key: Key) -> El {
 }
 
 /// Player-bar extras the React bar has around the transport (React PlayerBar).
+/// After the bar's title (PlayerBar's LikeButton and ContextMenuButton): the heart, filled in
+/// the accent when the track is loved (no name and no toast, as React's), and More options,
+/// the track menu below it.
+pub fn bar_track_actions(v: &View) -> El {
+    let Some(c) = &v.current else { return el() };
+    use crate::interact::{self, Anchor, Fav, Say};
+    let loved = interact::is_fav(Fav::Track, &c.id.to_string());
+    let (id, title) = (c.id.to_string(), c.title.clone());
+    let cur = interact::json_of_track(c.id, &c.title, &c.artist);
+    row().gap(2.0).items_center()
+        .child(el().key("bar-love").role("button").size(28.0, 28.0).radius(14.0).items_center().justify_center()
+            .hover(white(0.06)).press_scale(0.9).cursor(rune::Cursor::Pointer)
+            .on_press(move |_: &mut App| interact::toggle_fav(Fav::Track, id.clone(), title.clone(), Say::Nothing))
+            .child(glyph(if loved { G::HeartFilled } else { G::Heart }, 16.0, if loved { accent() } else { white(0.45) })))
+        .child(ui::icon_button::<App>("more", "More options", G::More, 16.0, white(0.45))
+            .on_press(move |s: &mut App| interact::open_track(s, cur.clone(), None, Anchor::Below("more".into()))))
+}
+
 pub fn bar_extras(v: &View) -> El {
     let mut r = row().gap(4.0).items_center();
     if v.current.is_some() {
@@ -573,14 +601,7 @@ pub fn bar_extras(v: &View) -> El {
     r = r.child(icon::<App>("lyrics", "Lyrics", G::Mic).on_press(|s: &mut App| toggle_drawer(s, Drawer::Lyrics)))
         .child(icon::<App>("queue", "Play queue", G::List).on_press(|s: &mut App| toggle_drawer(s, Drawer::Queue)));
     if v.current.is_some() {
-        // PlayerBar: the current track's menu, below the button
-        let cur = v.current.as_ref().map(|c| crate::interact::json_of_track(c.id, &c.title, &c.artist));
-        r = r.child(icon::<App>("more", "More options", G::More).on_press(move |s: &mut App| {
-            if let Some(t) = &cur {
-                crate::interact::open_track(s, t.clone(), None, crate::interact::Anchor::Below("more".into()));
-            }
-        }))
-            .child(if crate::mini_open() {
+        r = r            .child(if crate::mini_open() {
                 icon::<App>("mini", "Close miniplayer", G::PopOut).on_press(|_: &mut App| crate::set_mini(false))
             } else {
                 icon::<App>("mini", "Open miniplayer", G::PopOut).on_press(|_: &mut App| crate::set_mini(true))
@@ -1563,8 +1584,7 @@ fn loved_page(s: &App, v: &View) -> El {
             controller::send(Cmd::PlayCollection { tracks: ordered, source: src.clone(), album_mode: false, shuffle: false });
         }));
     }
-    let art = el().size(180.0, 180.0).radius(14.0).fill(oklch(0.45, 0.17, 300.0)).items_center().justify_center().a11y_hidden()
-        .child(glyph(G::HeartFilled, 64.0, white(0.98)));
+    let art = loved_art(180.0, 14.0, 64.0);
     let head = row().w_full().gap(24.0).items_end().child(art)
         .child(col().gap(10.0).min_w(0.0).child(heading("Loved Tracks", 30.0))
             .child(text(format!("{total} tracks")).font(t(13.0, 500.0)).color(white(0.6)))

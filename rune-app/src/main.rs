@@ -149,7 +149,7 @@ fn view(s: &App, cx: &mut Cx<App>) -> El {
     if let Some(d) = views::drawer(s, &v) {
         body = body.child(d);
     }
-    let mut root = col().key("root").w_full().h_full().fill(ui::base(h)).child(body).child(ui::nowbar::<App>(&v, views::bar_extras(&v)));
+    let mut root = col().key("root").w_full().h_full().fill(ui::base(h)).child(body).child(ui::nowbar::<App>(&v, views::bar_track_actions(&v), views::bar_extras(&v)));
     if let Some(d) = views::dropdown(s) {
         root = root.child(d);
     }

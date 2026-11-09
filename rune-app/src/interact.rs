@@ -543,9 +543,13 @@ fn own_playlist(item: &Value) -> bool {
 pub fn overlay(s: &App) -> Vec<El> {
     let mut out = vec![];
     if let Some(c) = &s.nav.ctx {
-        // outside clicks close the menu (useContextMenu's outside mousedown)
-        out.push(el().key("ctx-backdrop").pin(Some(0.0), Some(0.0), Some(0.0), Some(0.0))
-            .on_press(|s: &mut App| close(s)).on_secondary_press(|s: &mut App, _, _| close(s)));
+        // One full-window layer holds the menu, its submenu and the confirmation. It's modal, so
+        // the page behind is inert while a menu is open (no hover there); a press on the layer
+        // itself is an outside click, which closes the menu (useContextMenu's outside mousedown).
+        let mut layer = el().key("ctx-layer").pin(Some(0.0), Some(0.0), Some(0.0), Some(0.0))
+            .modal(false, |s: &mut App| { on_escape(s); })
+            .on_press(|s: &mut App| close(s)).on_secondary_press(|s: &mut App, _, _| close(s));
+        let mut push = |e: El| layer = std::mem::replace(&mut layer, el()).child(e);
         let (menu, sub) = match &c.target {
             Target::Track { track, playlist } => (track_menu(track, playlist.as_ref(), c), track_sub(c)),
             Target::Media { item, kind } => (media_menu(item, *kind, c), track_sub(c)),
@@ -553,18 +557,19 @@ pub fn overlay(s: &App) -> Vec<El> {
         if c.menu {
             match &c.anchor {
                 Anchor::Point(x, y) => {
-                    out.push(el().key("ctx-point").pin(Some(*x), Some(*y), None, None).size(1.0, 1.0));
-                    out.push(menu.anchored("ctx-point", Side::Bottom, rune::Align::Start, 0.0));
+                    push(el().key("ctx-point").pin(Some(*x), Some(*y), None, None).size(1.0, 1.0));
+                    push(menu.anchored("ctx-point", Side::Bottom, rune::Align::Start, 0.0));
                 }
-                Anchor::Below(key) => out.push(menu.anchored(key.clone(), Side::Bottom, rune::Align::End, 4.0)),
+                Anchor::Below(key) => push(menu.anchored(key.clone(), Side::Bottom, rune::Align::End, 4.0)),
             }
         }
         if let Some(sub) = sub {
-            out.push(sub);
+            push(sub);
         }
         if c.confirm_delete {
-            out.push(confirm_delete(c));
+            push(confirm_delete(c));
         }
+        out.push(layer);
     }
     if let Some(cr) = &s.nav.create {
         out.push(create_modal(cr));
