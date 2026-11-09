@@ -94,6 +94,9 @@ pub struct Nav {
     /// The open context menu (crate::interact), and the create-playlist dialog.
     pub ctx: Option<crate::interact::Ctx>,
     pub create: Option<crate::interact::Create>,
+    /// Synced lyrics: the active line, and whether the user scrolled away from it.
+    pub lyric_line: Option<usize>,
+    pub lyrics_scrolled: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -106,7 +109,7 @@ impl Default for Nav {
     fn default() -> Self {
         Nav { page: Page::Home, back: vec![], fwd: vec![], search: TextEdit::new(""), lib: LibTab::Playlists, tab: SearchTab::All, filter: TextEdit::new(""), queue_open: false, suggest_due: None, menu_open: false, settings_tab: SettingsTab::Playback, drawer: None, login_mode: LoginMode::Pkce, settings_open: false, dialog: None,
             discord_status: TextEdit::new(""), lb_token: TextEdit::new(""), overlay_host: TextEdit::new(""), proxy_user: TextEdit::new(""),
-            discord_due: None, proxy_due: None, lb_status: None, ctx: None, create: None }
+            discord_due: None, proxy_due: None, lb_status: None, ctx: None, create: None, lyric_line: None, lyrics_scrolled: false }
     }
 }
 
@@ -1304,7 +1307,7 @@ pub fn drawer(s: &App, v: &View) -> Option<El> {
         .child(t_btn("dr-credits", "Credits", Drawer::Credits));
     let body = match tab {
         Drawer::Queue => queue_panel(v),
-        Drawer::Lyrics => lyrics(v),
+        Drawer::Lyrics => lyrics(s, v),
         Drawer::Suggested => suggested(v),
         Drawer::Credits => credits(v),
     };
@@ -1312,40 +1315,119 @@ pub fn drawer(s: &App, v: &View) -> Option<El> {
     if let Some(cur) = &v.current {
         head = head.child(heading(&cur.title, 16.0));
     }
-    Some(col().key("drawer").w(360.0).h_full().padding(16.0).gap(12.0).fill(oklch(0.14, 0.02, 270.0))
+    let mut d = col().key("drawer").w(360.0).h_full().padding(16.0).gap(12.0).fill(oklch(0.14, 0.02, 270.0))
         .child(head)
-        .child(ui::smooth_wheel::<App>(col().grow(1.0).min_h(0.0).w_full().scroll(ScrollSpec { stick_bottom: false }).child(body), "drawer-scroll".into())))
+        .child(ui::smooth_wheel::<App>(col().grow(1.0).min_h(0.0).w_full().scroll(ScrollSpec { stick_bottom: false }).child(body), "drawer-scroll".into()));
+    if tab == Drawer::Lyrics && s.nav.lyrics_scrolled && v.current.as_ref().and_then(|c| synced_lyrics(c.id)).is_some() {
+        // LyricsTab: the floating "Sync lyrics" button once the user scrolls away
+        d = d.child(row().key("ly-sync").role("button").label("Sync lyrics").pin(None, None, Some(32.0), Some(16.0)).h(36.0).px(16.0).gap(8.0).radius(18.0).items_center()
+            .fill(accent()).shadow(6.0, 18.0, rune::oklcha(0.0, 0.0, 0.0, 0.4)).cursor(rune::Cursor::Pointer).press_scale(0.95)
+            .on_press_tx(|s: &mut App, tx: &mut Tx| {
+                s.nav.lyrics_scrolled = false;
+                if let Some(i) = s.nav.lyric_line {
+                    tx.scroll_center(format!("ly-{i}"));
+                }
+            })
+            .child(glyph(G::Mic, 14.0, oklch(0.18, 0.02, 270.0)))
+            .child(text("Sync lyrics").font(t(12.0, 700.0)).color(oklch(0.18, 0.02, 270.0)).a11y_hidden()));
+    }
+    Some(d)
 }
 
 /// Synced (LRC) lines as (seconds, text); plain lyrics as untimed lines.
-fn lyric_lines(v: &Value) -> Vec<(Option<f64>, String)> {
-    if let Some(lrc) = v["subtitles"].as_str().filter(|s| !s.trim().is_empty()) {
-        return lrc.lines().filter_map(|l| {
-            let l = l.trim();
-            let rest = l.strip_prefix('[')?;
-            let (ts, text) = rest.split_once(']')?;
-            let (m, sec) = ts.split_once(':')?;
-            Some((Some(m.parse::<f64>().ok()? * 60.0 + sec.parse::<f64>().ok()?), text.trim().to_string()))
-        }).collect();
+
+/// LRC lines as React's parseLrc reads them: every `[mm:ss.xx]` tag on a line is a time for its
+/// text, lines without text are skipped, and the result is sorted by time.
+fn parse_lrc(lrc: &str) -> Vec<(f64, String)> {
+    let mut out = vec![];
+    for raw in lrc.lines() {
+        let mut rest = raw.trim();
+        let mut times = vec![];
+        while let Some(r) = rest.strip_prefix('[') {
+            let Some((tag, after)) = r.split_once(']') else { break };
+            let Some((m, sec)) = tag.split_once(':') else { break };
+            let (Ok(m), Ok(sec)) = (m.trim().parse::<f64>(), sec.trim().replace(':', ".").parse::<f64>()) else { break };
+            times.push(m * 60.0 + sec);
+            rest = after.trim_start();
+        }
+        let text = rest.trim();
+        if text.is_empty() {
+            continue;
+        }
+        for at in times {
+            out.push((at, text.to_string()));
+        }
     }
-    v["lyrics"].as_str().unwrap_or("").lines().map(|l| (None, l.to_string())).collect()
+    out.sort_by(|a, b| a.0.total_cmp(&b.0));
+    out
 }
 
-fn lyrics(v: &View) -> El {
+thread_local! {
+    static LRC: std::cell::RefCell<Option<(u64, std::rc::Rc<Vec<(f64, String)>>)>> = const { std::cell::RefCell::new(None) };
+}
+
+/// A track's synced lyrics, parsed once (None until fetched, or when it has only plain lyrics).
+pub fn synced_lyrics(track: u64) -> Option<std::rc::Rc<Vec<(f64, String)>>> {
+    if let Some(hit) = LRC.with(|c| c.borrow().as_ref().filter(|(id, _)| *id == track).map(|(_, l)| l.clone())) {
+        return (!hit.is_empty()).then_some(hit);
+    }
+    let v = data::peek(&Key::Lyrics(track))?;
+    let lines = std::rc::Rc::new(v["subtitles"].as_str().map(parse_lrc).unwrap_or_default());
+    LRC.with(|c| *c.borrow_mut() = Some((track, lines.clone())));
+    (!lines.is_empty()).then_some(lines)
+}
+
+/// The line at `pos` (React findActiveLine) and when the next one starts.
+pub fn lyric_at(lines: &[(f64, String)], pos: f64) -> (Option<usize>, Option<f64>) {
+    let i = lines.iter().rposition(|(at, _)| pos >= *at);
+    let next = lines.get(i.map_or(0, |i| i + 1)).map(|(at, _)| *at);
+    (i, next)
+}
+
+/// The Lyrics tab (React LyricsTab). Synced lyrics: the active line grows (1.22x, bold, from
+/// its left edge, over 0.5 s), past lines dim, the view keeps it centred (main::poll), clicking
+/// a line seeks there, and scrolling away shows "Sync lyrics". Otherwise the plain text.
+fn lyrics(s: &App, v: &View) -> El {
     let Some(cur) = &v.current else { return text("Nothing playing").font(t(13.0, 500.0)).color(white(0.5)) };
     let mut c = col().w_full().gap(10.0).child(heading(&cur.title, 18.0));
     match data::want(Key::Lyrics(cur.id)) {
         data::Load::Ready(l) => {
-            let lines = lyric_lines(&l);
-            if lines.is_empty() {
-                c = c.child(text("No lyrics available for this track").font(t(13.0, 500.0)).color(white(0.5)));
+            let provider = l["lyricsProvider"].as_str().map(str::to_string);
+            if let Some(lines) = synced_lyrics(cur.id) {
+                let active = s.nav.lyric_line;
+                let duration = v.duration.max(1.0);
+                let mut col_lines = col().w_full().gap(12.0).py(40.0)
+                    .on_wheel(|s: &mut App, _, _| {
+                        s.nav.lyrics_scrolled = true;
+                        false
+                    });
+                for (i, (at, line)) in lines.iter().enumerate() {
+                    let on = Some(i) == active;
+                    let past = active.is_some_and(|a| i < a);
+                    let at = *at;
+                    let color = if on { white(0.97) } else if past { white(0.28) } else { white(0.45) };
+                    col_lines = col_lines.child(
+                        text(line.clone()).key(format!("ly-{i}")).font(t(20.0, if on { 700.0 } else { 500.0 }).lh(26.0)).color(color).wrap()
+                            .origin(0.0, 0.5).scale(if on { 1.22 } else { 1.0 }).scale_motion(rune::Spring::new(0.5, 0.0))
+                            .hover(white(0.0)).cursor(rune::Cursor::Pointer)
+                            .on_press(move |s: &mut App| {
+                                s.nav.lyrics_scrolled = false;
+                                controller::send(Cmd::SeekFraction((at / duration).clamp(0.0, 1.0) as f32));
+                            }),
+                    );
+                }
+                c = c.child(col_lines.child(el().h(160.0)));
+            } else {
+                let plain = l["lyrics"].as_str().unwrap_or("").trim().to_string();
+                if plain.is_empty() {
+                    c = c.child(text("No lyrics available for this track").font(t(13.0, 500.0)).color(white(0.5)));
+                } else {
+                    for line in plain.lines() {
+                        c = c.child(text(line.to_string()).font(t(18.0, 500.0).lh(32.0)).color(white(0.5)).wrap());
+                    }
+                }
             }
-            let now = lines.iter().rposition(|(at, _)| at.is_some_and(|a| a <= v.position));
-            for (i, (_, line)) in lines.iter().enumerate() {
-                let on = Some(i) == now;
-                c = c.child(text(line.clone()).font(t(if on { 17.0 } else { 15.0 }, 600.0)).color(white(if on { 0.97 } else { 0.45 })).wrap());
-            }
-            if let Some(p) = l["lyricsProvider"].as_str() {
+            if let Some(p) = provider {
                 c = c.child(text(format!("Lyrics provided by {p}")).font(t(11.0, 500.0)).color(white(0.4)));
             }
         }

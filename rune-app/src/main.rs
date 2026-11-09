@@ -108,13 +108,43 @@ fn poll(s: &mut App, _: f64, tx: &mut Tx) -> bool {
     // (Covers don't appear here: art.rs fills their pixels in place, without a rebuild.)
     let v = (state, ticks, data::version().wrapping_add(interact::version() << 40));
     tx.wake_after(Duration::from_millis(200));
-    let changed = v != s.seen;
-    // A clock tick (or a seek bar drag) lands at once; a seek, a new track or new data animate.
-    if changed && ((state, v.2) == (s.seen.0, s.seen.2) || ui::dragging()) {
+    let mut changed = v != s.seen;
+    // Synced lyrics: the active line changes at its timestamp, not on the next clock tick, and
+    // (unless the user scrolled away) the drawer glides to keep it centred (LyricsTab).
+    let lyric_moved = lyric_tick(s, tx);
+    // A clock tick (or a seek bar drag) lands at once; a seek, a new track, new data or the next
+    // lyric line animate.
+    if changed && !lyric_moved && ((state, v.2) == (s.seen.0, s.seen.2) || ui::dragging()) {
         tx.instant();
     }
+    changed |= lyric_moved;
     s.seen = v;
     changed
+}
+
+fn lyric_tick(s: &mut App, tx: &mut Tx) -> bool {
+    let lines = (s.nav.drawer == Some(views::Drawer::Lyrics))
+        .then(|| controller::now_playing().0).flatten()
+        .and_then(views::synced_lyrics);
+    let Some(lines) = lines else {
+        let was = s.nav.lyric_line.take().is_some();
+        return was;
+    };
+    let (pos, playing) = controller::clock();
+    let (line, next) = views::lyric_at(&lines, pos);
+    if playing && let Some(at) = next {
+        tx.wake_after(Duration::from_secs_f64((at - pos).max(0.0) + 0.005));
+    }
+    if line == s.nav.lyric_line {
+        return false;
+    }
+    s.nav.lyric_line = line;
+    if let Some(i) = line
+        && !s.nav.lyrics_scrolled
+    {
+        tx.scroll_center(format!("ly-{i}"));
+    }
+    true
 }
 
 fn on_key(s: &mut App, e: &KeyEvent, _: &mut Tx) -> bool {

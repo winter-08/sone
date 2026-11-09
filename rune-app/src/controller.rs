@@ -179,6 +179,13 @@ fn view_playing() -> bool {
 }
 
 /// The current track's id and whether it's playing, without cloning the whole view.
+/// The playback clock now (interpolated between backend updates), and whether it's running.
+pub fn clock() -> (f64, bool) {
+    let playing = view_playing();
+    let pos = POSITION.get().map(|p| p.lock().unwrap().interpolated()).unwrap_or(0.0);
+    (pos, playing)
+}
+
 pub fn now_playing() -> (Option<u64>, bool) {
     VIEW.get().map(|v| { let v = v.lock().unwrap(); (v.track_id, v.playing) }).unwrap_or((None, false))
 }
