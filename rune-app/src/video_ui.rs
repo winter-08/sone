@@ -24,9 +24,14 @@ const CONTROLS_IDLE: Duration = Duration::from_secs(3);
 pub fn video_track(d: &Value) -> Value {
     let artist = if d["artist"].is_object() { d["artist"].clone() } else { d["artists"][0].clone() };
     json!({
-        "id": d["id"], "title": d["title"], "itemType": "video", "imageId": d["imageId"],
+        "id": d["id"], "title": d["title"], "itemType": "video", "imageId": image_id(d),
         "duration": d["duration"], "explicit": d["explicit"], "artist": artist, "artists": d["artists"],
     })
+}
+
+/// A video's picture id: `imageId` in most responses, `image` on artist pages (v2 pages API).
+pub fn image_id(d: &Value) -> Option<&str> {
+    [&d["imageId"], &d["image"]].into_iter().filter_map(|v| v.as_str()).find(|s| !s.is_empty())
 }
 
 fn image_url(id: &str, pt: f32) -> Option<String> {
@@ -43,7 +48,7 @@ pub fn video_card(key: String, d: &Value, list: &[Value], idx: usize, source: Va
     let artist = d["artist"]["name"].as_str().or(d["artists"][0]["name"].as_str()).unwrap_or("").to_string();
     let h = ui::hue(Some(id));
     let mut art = el().size(W, H).radius(10.0).clip_rounded(10.0).fill(rune::oklch(0.22, 0.07, h)).a11y_hidden();
-    if let Some(px) = d["imageId"].as_str().and_then(|i| image_url(i, W)).and_then(|u| crate::art::pixels(&u, W)) {
+    if let Some(px) = image_id(d).and_then(|i| image_url(i, W)).and_then(|u| crate::art::pixels(&u, W)) {
         art = art.child(el().absolute(0.0, 0.0).size(W, H).pixels_fit(&px, rune::SurfaceFit::Fill));
     }
     let tracks: Vec<Value> = list.iter().map(video_track).collect();
@@ -285,4 +290,18 @@ pub fn overlay(s: &App, v: &View) -> Option<El> {
         layer = layer.child(menu);
     }
     Some(layer)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn artist_page_videos_have_pictures() {
+        // Search and favourites say `imageId`; the artist page (v2 pages API) says `image`.
+        assert_eq!(image_id(&json!({"imageId": "a-b", "image": "x"})), Some("a-b"));
+        assert_eq!(image_id(&json!({"imageId": null, "image": "c-d"})), Some("c-d"));
+        assert_eq!(video_track(&json!({"id": 1, "image": "c-d"}))["imageId"], "c-d");
+        assert_eq!(image_id(&json!({"imageId": ""})), None);
+    }
 }

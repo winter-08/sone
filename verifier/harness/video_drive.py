@@ -5,7 +5,7 @@
 
 Two plays of the fixture video (fixtures/video, 6 s at 25 fps): the first runs to its end
 (CPU is sampled while it plays, and the player must close by itself afterwards); the second
-switches quality, pauses and resumes from the player, minimises to the bar and back, and closes
+minimises to the bar and back, switches quality, pauses and resumes from the player, and closes
 with Escape. Writes OUT_DIR/drive.json with what each step saw, and screenshots.
 """
 import json
@@ -64,6 +64,24 @@ def cpu_seconds(pid):
     return (int(parts[11]) + int(parts[12])) / os.sysconf("SC_CLK_TCK")
 
 
+def threads(pid):
+    out = {}
+    for t in os.listdir(f"/proc/{pid}/task"):
+        try:
+            with open(f"/proc/{pid}/task/{t}/stat") as f:
+                head, rest = f.read().rsplit(")", 1)
+            parts = rest.split()
+            out[t] = (head.split("(", 1)[1], (int(parts[11]) + int(parts[12])) / os.sysconf("SC_CLK_TCK"))
+        except OSError:
+            pass
+    return out
+
+
+def rss_mb(pid):
+    with open(f"/proc/{pid}/status") as f:
+        return next(int(l.split()[1]) // 1024 for l in f if l.startswith("VmRSS:"))
+
+
 def open_videos_tab():
     atspi.focus("Search", role="entry")
     time.sleep(0.5)
@@ -82,8 +100,43 @@ def play():
     return ok, round(time.time() - t0, 2)
 
 
-try:
+def close_test():
+    """Close the video while a segment download is in flight (the fake server answers .ts late),
+    three ways: Escape, starting another video, and an error-free quality switch."""
     atspi.wait_ready(60)
+    pid = int(os.environ["SONE_PID"])
+    alive = lambda: os.path.exists(f"/proc/{pid}") and open(f"/proc/{pid}/stat").read().split(")")[1].split()[0] != "Z"  # noqa: E731
+    open_videos_tab()
+    for label in ("escape", "replay", "quality"):
+        atspi.press("Fixture Video", role="heading")
+        time.sleep(1.2)  # the playlists are in; the first segment is still on its way
+        if label == "escape":
+            atspi.key("Escape")
+        elif label == "replay":
+            atspi.press("Minimize video")
+            time.sleep(0.3)
+            atspi.press("Fixture Video", role="heading")
+        else:
+            atspi.press("Quality", role="button")
+            time.sleep(0.3)
+            atspi.press("Low")
+        time.sleep(2.0)
+        step(f"close mid-download: {label}", alive=alive())
+        if not alive():
+            return
+        atspi.key("Escape")
+        time.sleep(1.0)
+    time.sleep(3.0)
+    step("close mid-download: settled", alive=alive())
+
+
+try:
+    if os.environ.get("SPIKE_VIDEO_DRIVE") == "close":
+        close_test()
+        raise SystemExit
+    atspi.wait_ready(60)
+    pid = int(os.environ["SONE_PID"])
+    rss_idle = rss_mb(pid)
     open_videos_tab()
     step("videos tab", card=has("Fixture Video"))
     shot("1-videos-tab")
@@ -92,19 +145,32 @@ try:
     ok, secs = play()
     step("play 1", playing=ok, seconds_to_playing=secs, player=has("Minimize video"))
     time.sleep(1.0)
-    pid = int(os.environ["SONE_PID"])
-    c0, w0 = cpu_seconds(pid), time.time()
+    c0, w0, t0 = cpu_seconds(pid), time.time(), threads(pid)
     time.sleep(3.0)
-    cpu = (cpu_seconds(pid) - c0) / (time.time() - w0) * 100
+    wall = time.time() - w0
+    cpu = (cpu_seconds(pid) - c0) / wall * 100
+    t1 = threads(pid)
+    by = {}
+    for k, (name, c) in t1.items():
+        by[name] = by.get(name, 0) + (c - t0.get(k, (name, c))[1]) / wall * 100
+    result["threads"] = sorted(((round(v, 1), n) for n, v in by.items() if v > 0.2), reverse=True)
     shot("2-playing")
-    step("cpu while playing", cpu_percent=round(cpu, 1))
+    step("cpu while playing", cpu_percent=round(cpu, 1), rss_mb=rss_mb(pid), rss_idle_mb=rss_idle)
     time.sleep(4.0)
     step("after the end", player=has("Minimize video"))
     shot("3-after-end")
 
-    # Play 2: quality, pause/resume, minimise/expand, Escape.
+    # Play 2: minimise/expand, quality, pause/resume, Escape.
     ok, secs = play()
     step("play 2", playing=ok, seconds_to_playing=secs)
+    # Minimise first: the fixture is 6 s long, and an ended video closes its player.
+    atspi.press("Minimize video")
+    time.sleep(0.6)
+    step("minimised", player=has("Minimize video"), expand=has("Expand video"))
+    shot("4-minimised")
+    atspi.press("Expand video")
+    time.sleep(0.6)
+    step("expanded", player=has("Minimize video"))
     time.sleep(0.8)
     atspi.press("Quality", role="button")
     time.sleep(0.3)
@@ -115,16 +181,13 @@ try:
     step("paused from the player", paused=wait_status("Paused", 3))
     atspi.press("Play", role="button")
     step("resumed from the player", playing=wait_status("Playing", 5))
-    atspi.press("Minimize video")
-    time.sleep(0.6)
-    step("minimised", player=has("Minimize video"), expand=has("Expand video"))
-    shot("4-minimised")
-    atspi.press("Expand video")
-    time.sleep(0.6)
-    step("expanded", player=has("Minimize video"))
     atspi.key("Escape")
     time.sleep(1.0)
     step("escape", player=has("Minimize video"))
+    time.sleep(2.0)
+    step("after closing", rss_mb=rss_mb(pid))
+except SystemExit:
+    pass
 except Exception as e:  # noqa: BLE001
     result["errors"].append(f"{type(e).__name__}: {e}")
 json.dump(result, open(os.path.join(OUT, "drive.json"), "w"), indent=1)

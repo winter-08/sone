@@ -49,7 +49,8 @@ def pacing(s, hz):
     pairs = [(a, b) for a, b in zip(ids, ids[1:]) if b == a + 1 and push[b][0] - push[a][0] < 100]
     wall = sum(push[b][0] - push[a][0] for a, b in pairs)
     media = sum(push[b][1] - push[a][1] for a, b in pairs)
-    lat = sorted(s["draw"][i] - push[i][0] for i in ids)
+    # The first frame swaps the poster for the picture (a layout change), so it's left out.
+    lat = sorted(s["draw"][i] - push[i][0] for i in ids if i > 1)
     jitter = sorted(abs((push[b][0] - push[a][0]) - (push[b][1] - push[a][1])) for a, b in pairs)
     frame_ms = (media / len(pairs)) if pairs else 0
     return {
@@ -61,7 +62,7 @@ def pacing(s, hz):
         "to_draw_ms_median": round(lat[len(lat) // 2], 2) if lat else None,
         "to_draw_ms_max": round(lat[-1], 2) if lat else None,
         # A frame released on time and drawn within a refresh presents at the next vblank.
-        "late_draws": sum(1 for x in lat if x > 1000 / hz),
+        "late_draws": sum(1 for x in lat if x > 1000 / hz + 0.5),  # 0.5 ms of timer slack
         "refreshes_per_frame": round(hz * frame_ms / 1000, 2) if frame_ms else None,
     }
 
@@ -71,11 +72,15 @@ def main():
     ap.add_argument("--bin", required=True)
     ap.add_argument("--out", default=os.path.join(ROOT, "runs", time.strftime("%Y%m%d-%H%M%S") + "-video"))
     ap.add_argument("--refresh", type=int, default=120)
+    ap.add_argument("--close-test", action="store_true",
+                    help="only close videos while a segment download is in flight (it must not crash)")
     a = ap.parse_args()
     os.makedirs(a.out, exist_ok=True)
     trace = os.path.join(a.out, "frames.txt")
     env = {**os.environ, "SPIKE_SEED": json.dumps(verify.BASE_PROFILE), "SPIKE_OUTPUT": "1400x900", "SPIKE_GPU": "1",
            "SPIKE_REFRESH": str(a.refresh), "SPIKE_VIDEO_TRACE": trace, "SPIKE_VIDEO_NO_AUDIO": "1"}
+    if a.close_test:
+        env.update(SPIKE_SLOW_TS="4", SPIKE_VIDEO_DRIVE="close")
     cmd = [os.path.join(ROOT, "harness", "sandbox.sh"), os.path.join(a.out, "run"), os.path.abspath(a.bin), "--",
            "python3", "-I", os.path.join(ROOT, "harness", "video_drive.py"), a.out]
     p = subprocess.run(cmd, env=env, capture_output=True, text=True, timeout=300)
@@ -85,6 +90,16 @@ def main():
         return 1
     drive = json.load(open(drive_path))
     steps = {s["label"]: s for s in drive["steps"]}
+    if a.close_test:
+        ok = True
+        for label in ("escape", "replay", "quality", "settled"):
+            alive = steps.get(f"close mid-download: {label}", {}).get("alive")
+            ok &= bool(alive)
+            print(f"{'PASS' if alive else 'FAIL'}  survives closing mid-download: {label}")
+        for e in drive["errors"]:
+            print("error:", e)
+        print(f"\n({a.out})")
+        return 0 if ok and not drive["errors"] else 1
     log = open(os.path.join(a.out, "run", "logs", "sone.log"), errors="ignore").read()
     decoders = sorted({l.split("decoder: ")[1].strip() for l in log.splitlines() if "[video] decoder: " in l})
 
@@ -120,13 +135,16 @@ def main():
               f"median {pace['to_draw_ms_median']} ms, max {pace['to_draw_ms_max']} ms")
 
     report = {"checks": [{"check": n, "ok": ok, "detail": d} for n, ok, d in checks], "pacing": pace,
-              "cpu_percent_while_playing": g("cpu while playing", "cpu_percent"), "decoders": decoders,
+              "cpu_percent_while_playing": g("cpu while playing", "cpu_percent"),
+              "rss_mb": {"before": g("cpu while playing", "rss_idle_mb"), "playing": g("cpu while playing", "rss_mb"), "after_close": g("after closing", "rss_mb")}, "decoders": decoders,
               "errors": drive["errors"]}
     json.dump(report, open(os.path.join(a.out, "report.json"), "w"), indent=1)
     for n, ok, d in checks:
         print(f"{'PASS' if ok else 'FAIL'}  {n}" + (f"  ({d})" if d else ""))
     print(f"\npacing: {json.dumps(pace)}")
     print(f"cpu while playing: {report['cpu_percent_while_playing']}%   decoder: {', '.join(decoders) or 'unknown'}")
+    print(f"memory (MB): {report['rss_mb']}")
+    print("cpu by thread (%):", drive.get("threads"))
     for e in drive["errors"]:
         print("error:", e)
     print(f"\n({a.out})")

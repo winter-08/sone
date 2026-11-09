@@ -1,6 +1,6 @@
 //! Music videos: TIDAL serves HLS (H.264 + AAC, 180p to 1080p). GStreamer plays it: `playbin3`
-//! downloads and demuxes, decodes on the GPU where it can (NVDEC `nvh264dec`, VA-API) and in
-//! software otherwise, and plays the sound through the default output. Pictures go to an
+//! downloads and demuxes, decodes in software (`avdec_h264`; see `init` for why not the GPU),
+//! and plays the sound through the default output. Pictures go to an
 //! `appsink`, which hands each frame over on the pipeline clock; we copy its NV12 planes into a
 //! Rune [`NativeSurface`], which converts them to colour on the GPU and wakes the window.
 //!
@@ -100,11 +100,16 @@ fn init() -> Result<(), String> {
     static INIT: OnceLock<Result<(), String>> = OnceLock::new();
     INIT.get_or_init(|| {
         gst::init().map_err(|e| e.to_string())?;
-        // Prefer GPU decoders when present; software (avdec_h264) stays the fallback.
+        // Software decoding. TIDAL's videos stop at 1080p H.264, which libav decodes for about
+        // 1% of a core here, while NVDEC (`nvh264dec`, ranked above it by default) costs more:
+        // every frame is copied back from the GPU on the CPU (6-7% at 720p) because the surface
+        // takes bytes, and the CUDA context adds ~130 MB (measured 2026-11-09 with
+        // video_check.py). `SONE_VIDEO_HW=1` picks the GPU decoders again.
         let reg = gst::Registry::get();
+        let hw = std::env::var_os("SONE_VIDEO_HW").is_some();
         for name in ["nvh264dec", "vah264dec"] {
             if let Some(f) = reg.find_feature(name, gst::ElementFactory::static_type()) {
-                f.set_rank(gst::Rank::PRIMARY + 10);
+                f.set_rank(if hw { gst::Rank::PRIMARY + 10 } else { gst::Rank::NONE });
             }
         }
         if std::env::var_os("SONE_VIDEO_TRACE").or_else(|| std::env::var_os("SPIKE_VIDEO_TRACE")).is_some() {
@@ -233,7 +238,9 @@ fn watch(bus: gst::Bus, sh: Arc<Shared>, pipeline: gst::glib::WeakRef<gst::Eleme
                     changed();
                 } else if p >= 100 && st.buffering {
                     st.buffering = false;
-                    let play = st.want_play;
+                    // Not while a start position is still to be sought: playing first would
+                    // show the opening frames (the seek's own AsyncDone starts playback).
+                    let play = st.want_play && st.start.is_none() && !st.seeking;
                     drop(st);
                     if play {
                         let _ = pl.set_state(gst::State::Playing);

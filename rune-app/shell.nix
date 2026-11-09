@@ -3,7 +3,13 @@
 # Usage: nix-shell rune-app/shell.nix --run 'cd rune-app && cargo build && ./wrap.sh'
 { pkgs ? import (builtins.getFlake "nixpkgs") { } }:
 let
-  gst = with pkgs.gst_all_1; [ gstreamer gst-plugins-base gst-plugins-good gst-plugins-bad gst-libav ];
+  # hlsdemux2 (music videos) aborts the process when stopped mid-download in GStreamer 1.28.7:
+  # its cleanup completes libsoup messages without the transfer thread's context. Two lines
+  # fix it (patches/; upstream-able).
+  good = pkgs.gst_all_1.gst-plugins-good.overrideAttrs (o: {
+    patches = (o.patches or [ ]) ++ [ ./patches/gst-adaptivedemux2-stop-context.patch ];
+  });
+  gst = with pkgs.gst_all_1; [ gstreamer gst-plugins-base good gst-plugins-bad gst-libav ];
   runtime = with pkgs; [ wayland libxkbcommon vulkan-loader libGL libx11 libxcursor libxi libxrandr alsa-lib fontconfig freetype dbus ];
 in
 pkgs.mkShell {

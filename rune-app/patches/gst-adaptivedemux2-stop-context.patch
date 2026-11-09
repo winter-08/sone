@@ -1,0 +1,23 @@
+--- a/ext/adaptivedemux2/downloadhelper.c
++++ b/ext/adaptivedemux2/downloadhelper.c
+@@ -1077,6 +1077,11 @@
+   }
+   g_mutex_unlock (&dh->transfer_lock);
+ 
++  /* The transfer thread is gone: finish its work here with its context as this thread's
++   * default, or libsoup aborts on messages completing "on the wrong thread" (the cancelled
++   * transfers' callbacks run in this loop). */
++  g_main_context_push_thread_default (dh->transfer_context);
++
+   /* Drain any pending cookie additions while the session and jar are still alive */
+   while (g_main_context_pending (dh->transfer_context))
+     g_main_context_iteration (dh->transfer_context, FALSE);
+@@ -1125,6 +1130,8 @@
+ 
+   g_array_set_size (dh->active_transfers, 0);
+   g_mutex_unlock (&dh->transfer_lock);
++
++  g_main_context_pop_thread_default (dh->transfer_context);
+ }
+ 
+ gboolean
