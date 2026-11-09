@@ -109,9 +109,15 @@ pub fn load_favorites_once() {
         }
         if let Ok(v) = mx { f.mixes = v.into_iter().collect() }
         drop(f);
+        FAVS_LOADED.store(true, Ordering::Relaxed);
         bump();
     });
 }
+
+pub fn favorites_loaded() -> bool {
+    FAVS_LOADED.load(Ordering::Relaxed)
+}
+static FAVS_LOADED: AtomicBool = AtomicBool::new(false);
 
 pub fn is_fav(k: Fav, id: &str) -> bool {
     FAVS.lock().unwrap().set(k).contains(id)

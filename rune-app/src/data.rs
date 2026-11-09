@@ -35,6 +35,8 @@ pub enum Key {
     Mix(String),
     /// Every playlist of the user, for the Add to playlist submenu (React getAllPlaylists).
     AllPlaylists,
+    /// Loved tracks, first page (FavoritesView: 100, newest first).
+    LovedTracks,
 }
 
 #[derive(Clone)]
@@ -149,6 +151,7 @@ async fn fetch(key: &Key) -> Result<Value, String> {
         Key::Credits(id) => v!(metadata::get_track_credits(st(), *id)),
         Key::ArtistBio(id) => v!(pages::get_artist_bio(st(), h.clone(), *id)),
         Key::Mix(id) => v!(pages::get_mix_items(st(), id.clone())),
+        Key::LovedTracks => v!(library::get_favorite_tracks(st(), h.clone(), user_id(), 0, 100, "DATE".into(), "DESC".into())),
         Key::AllPlaylists => v!(library::get_all_playlists(st(), h.clone(), user_id(), 0, 500, "DATE_UPDATED".into(), "DESC".into())),
     })
 }
@@ -163,10 +166,15 @@ pub fn kind(item: &Value) -> String {
 }
 pub fn name(item: &Value) -> String {
     let d = data(item);
-    d["title"].as_str().or(d["name"].as_str()).unwrap_or("").to_string()
+    // getItemTitle: title, name, then v2 mixes' titleTextInfo
+    d["title"].as_str().or(d["name"].as_str()).or(d["titleTextInfo"]["text"].as_str()).unwrap_or("").to_string()
 }
 pub fn artist_of(item: &Value) -> String {
     let d = data(item);
     d["artists"].as_array().map(|a| a.iter().filter_map(|x| x["name"].as_str()).collect::<Vec<_>>().join(", ")).filter(|s| !s.is_empty())
-        .or(d["artist"]["name"].as_str().map(str::to_string)).unwrap_or_default()
+        .or(d["artist"]["name"].as_str().map(str::to_string))
+        // getItemSubtitle's fallbacks, for mixes
+        .or_else(|| ["subTitle", "shortSubtitle"].iter().find_map(|k| d[*k].as_str().map(str::to_string)))
+        .or_else(|| ["subtitleTextInfo", "subTitleTextInfo", "shortSubtitleTextInfo"].iter().find_map(|k| d[*k]["text"].as_str().map(str::to_string)))
+        .unwrap_or_default()
 }

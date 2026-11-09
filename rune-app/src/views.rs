@@ -27,6 +27,8 @@ pub enum Page {
     ExploreSub(String, String),
     /// A mix or radio (React MixPage): id, title, subtitle.
     Mix(String, String, String),
+    /// Loved tracks (React FavoritesView).
+    Loved,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -314,6 +316,8 @@ fn item_page(item: &Value) -> Option<Page> {
         "ALBUM" => d["id"].as_u64().map(Page::Album),
         "ARTIST" => d["id"].as_u64().map(Page::Artist),
         "PLAYLIST" => d["uuid"].as_str().map(|u| Page::Playlist(u.to_string())),
+        // MixPage, titled and subtitled as the card is
+        "MIX" => d["id"].as_str().or(d["mixId"].as_str()).map(|id| Page::Mix(id.to_string(), data::name(item), data::artist_of(item))),
         _ => None,
     }
 }
@@ -487,7 +491,7 @@ pub fn sidebar(s: &App) -> El {
     let mut list = col().w_full().gap(2.0);
     match s.nav.lib {
         LibTab::Playlists => {
-            list = list.child(lib_row("lib-loved", "Loved Tracks Collection", "Loved Tracks", "Collection", 9, None, None, None));
+            list = list.child(lib_row("lib-loved", "Loved Tracks Collection", "Loved Tracks", "Collection", 9, None, None, Some(Page::Loved)));
             if let Some(f) = data::ready(Key::Folders) {
                 for (i, it) in f["items"].as_array().cloned().unwrap_or_default().iter().enumerate() {
                     let d = &it["data"];
@@ -594,6 +598,7 @@ pub fn page(s: &App, v: &View) -> El {
         Page::Explore => explore(),
         Page::ExploreSub(path, title) => explore_sub(path, title),
         Page::Mix(id, title, sub) => mix_page(id, title, sub, v),
+        Page::Loved => loved_page(s, v),
         Page::Feed => feed(),
         Page::Search(q) => search_page(s, q),
         Page::Album(id) => album(*id, v),
@@ -1531,6 +1536,45 @@ pub fn login(s: &App, v: &View) -> El {
 
 
 /// Suggested tracks: the current track's radio (React SuggestedTab: getMixItems(TRACK_MIX)).
+/// Loved tracks (React FavoritesView): Play and Shuffle, the filter, and the tracks, newest
+/// first (its first page of 100). Unloving one there takes it out of the list.
+fn loved_page(s: &App, v: &View) -> El {
+    let Some(p) = data::ready(Key::LovedTracks) else { return loading() };
+    let tracks: Vec<Value> = p["items"].as_array().cloned().unwrap_or_default().into_iter()
+        .filter(|t| crate::interact::is_fav(crate::interact::Fav::Track, &data::data(t)["id"].as_u64().unwrap_or(0).to_string()) || !crate::interact::favorites_loaded())
+        .collect();
+    let total = p["totalNumberOfItems"].as_u64().unwrap_or(tracks.len() as u64);
+    let source = json!({"type": "favorites", "id": "favorites", "name": "Loved Tracks"});
+    let play = Cmd::PlayCollection { tracks: tracks.clone(), source: source.clone(), album_mode: false, shuffle: false };
+    let shuf = Cmd::PlayCollection { tracks: tracks.clone(), source: source.clone(), album_mode: false, shuffle: true };
+    let filter = text_input(&s.nav.filter, t(13.0, 500.0).lh(18.0))
+        .key("loved-filter").label("Filter on title, artist or album").single_line().w(320.0)
+        .color(white(0.95)).caret(white(0.95), white(0.25)).placeholder("Filter on title, artist or album", white(0.4))
+        .on_edit(|s: &mut App| &mut s.nav.filter);
+    let needle = s.nav.filter.text.to_lowercase();
+    let mut rows = col().w_full().gap(2.0);
+    for (i, tr) in tracks.iter().enumerate() {
+        if !needle.is_empty() && !format!("{} {} {}", data::name(tr), data::artist_of(tr), data::data(tr)["album"]["title"].as_str().unwrap_or("")).to_lowercase().contains(&needle) {
+            continue;
+        }
+        let (all, src, idx) = (tracks.clone(), source.clone(), i);
+        rows = rows.child(track_row(format!("lv-t{i}"), i + 1, tr, move |_: &mut App| {
+            let ordered = all[idx..].iter().chain(all[..idx].iter()).cloned().collect();
+            controller::send(Cmd::PlayCollection { tracks: ordered, source: src.clone(), album_mode: false, shuffle: false });
+        }));
+    }
+    let art = el().size(180.0, 180.0).radius(14.0).fill(oklch(0.45, 0.17, 300.0)).items_center().justify_center().a11y_hidden()
+        .child(glyph(G::HeartFilled, 64.0, white(0.98)));
+    let head = row().w_full().gap(24.0).items_end().child(art)
+        .child(col().gap(10.0).min_w(0.0).child(heading("Loved Tracks", 30.0))
+            .child(text(format!("{total} tracks")).font(t(13.0, 500.0)).color(white(0.6)))
+            .child(play_buttons(v, "Loved Tracks", play, shuf)));
+    col().w_full().gap(16.0)
+        .child(head)
+        .child(row().h(40.0).px(12.0).radius(10.0).items_center().fill(white(0.06)).child(filter))
+        .child(rows)
+}
+
 /// A mix or radio (React MixPage): its tracks, with Play, Shuffle, Add, Share and More.
 fn mix_page(id: &str, title: &str, sub: &str, v: &View) -> El {
     let Some(m) = data::ready(Key::Mix(id.to_string())) else { return loading() };
