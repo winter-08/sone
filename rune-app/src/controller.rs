@@ -82,6 +82,11 @@ pub enum Cmd {
     /// "Get Login Code": start the device-code sign-in with the embedded credentials.
     StartDeviceLogin,
     CancelLogin,
+    /// "Sign in with TIDAL": PKCE with the embedded credentials, in the user's browser (no web
+    /// view here for the embedded login window).
+    StartPkceLogin,
+    /// The redirect URL (or bare code) pasted back after the browser login.
+    CompletePkceLogin(String),
     /// The video player's quality menu: re-resolve the stream at HIGH / MEDIUM / LOW and carry on
     /// from the same moment (VideoPlayer handleQualityChange).
     SetVideoQuality(String),
@@ -106,6 +111,9 @@ pub enum Login {
     Idle,
     /// Waiting for the user to approve the shown code at the verification address.
     Waiting { code: String, uri: String },
+    /// PKCE in the browser: TIDAL's login page is open there; the user pastes back the
+    /// address it lands on (React Login handleSimplePkceBrowser / handleSubmitEmbeddedUrl).
+    PkceWaiting { url: String, error: Option<String> },
     Failed(String),
 }
 
@@ -534,6 +542,7 @@ struct Player {
     login: Login,
     login_seq: u64,
     login_creds: Option<(String, String, String)>, // device code, client id, secret
+    pkce: Option<(String, String)>, // code verifier, client unique key
     pubd: Published,
     video_session: u64,
     video_quality: String,
@@ -578,6 +587,7 @@ impl Player {
             login: Login::Idle,
             login_seq: 0,
             login_creds: None,
+            pkce: None,
             pubd: Published::default(),
             video_session: 0,
             video_quality: "HIGH".into(),
@@ -739,6 +749,41 @@ impl Player {
         }
     }
 
+    fn start_pkce_login(&mut self) {
+        self.login_seq += 1;
+        let params = match auth::start_pkce_browser_login() {
+            Ok(p) => serde_json::to_value(p).unwrap_or_default(),
+            Err(e) => {
+                self.login = Login::Failed(e.to_string());
+                return;
+            }
+        };
+        let field = |k: &str| params[k].as_str().unwrap_or_default().to_string();
+        let url = field("authorizeUrl");
+        self.pkce = Some((field("codeVerifier"), field("clientUniqueKey")));
+        let _ = std::process::Command::new("xdg-open").arg(&url).spawn();
+        self.login = Login::PkceWaiting { url, error: None };
+    }
+
+    async fn complete_pkce_login(&mut self, pasted: String) {
+        let Login::PkceWaiting { url, .. } = self.login.clone() else { return };
+        let Some((verifier, key)) = self.pkce.clone() else { return };
+        let Some(code) = pkce_code(&pasted) else {
+            self.login = Login::PkceWaiting { url, error: Some("Could not find authorization code in the URL.".into()) };
+            return;
+        };
+        match auth::complete_pkce_browser_login(self.h.clone(), code, verifier, key).await {
+            Ok(_tokens) => {
+                self.login = Login::Idle;
+                self.pkce = None;
+                self.signed_in = true;
+                self.bootstrap_library();
+            }
+            // Like React: stay on the paste step with the error, so the user can try again.
+            Err(e) => self.login = Login::PkceWaiting { url, error: Some(e.to_string()) },
+        }
+    }
+
     // -------------------------------------------------------------- inputs
 
     async fn on_ui(&mut self, c: Cmd) {
@@ -793,7 +838,10 @@ impl Player {
                 self.login_seq += 1;
                 self.login = Login::Idle;
                 self.login_creds = None;
+                self.pkce = None;
             }
+            Cmd::StartPkceLogin => self.start_pkce_login(),
+            Cmd::CompletePkceLogin(pasted) => self.complete_pkce_login(pasted).await,
             Cmd::SetVideoQuality(q) => {
                 if self.video_quality != q && self.current_is_video() {
                     self.video_quality = q;
@@ -2152,5 +2200,54 @@ fn tier(q: Option<&str>) -> Option<&str> {
         "HIGH" => Some("HIGH"),
         "" => None,
         other => Some(other),
+    }
+}
+
+/// The authorization code in what the user pasted after the browser login: the `code` query
+/// parameter of the redirect address, or the bare code itself (React handleSubmitEmbeddedUrl).
+fn pkce_code(pasted: &str) -> Option<String> {
+    let p = pasted.trim();
+    if let Some((_, query)) = p.split_once('?') {
+        let query = query.split('#').next().unwrap_or("");
+        return query.split('&').find_map(|kv| kv.strip_prefix("code=")).filter(|c| !c.is_empty()).map(percent_decode);
+    }
+    (p.len() > 10 && !p.contains(' ') && !p.contains("://")).then(|| p.to_string())
+}
+
+fn percent_decode(s: &str) -> String {
+    let b = s.as_bytes();
+    let mut out = Vec::with_capacity(b.len());
+    let mut i = 0;
+    while i < b.len() {
+        match b[i] {
+            b'%' if i + 2 < b.len() => match std::str::from_utf8(&b[i + 1..i + 3]).ok().and_then(|h| u8::from_str_radix(h, 16).ok()).ok_or(()) {
+                Ok(v) => {
+                    out.push(v);
+                    i += 3;
+                    continue;
+                }
+                Err(_) => out.push(b'%'),
+            },
+            b'+' => out.push(b' '),
+            c => out.push(c),
+        }
+        i += 1;
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
+#[cfg(test)]
+mod pkce_tests {
+    use super::pkce_code;
+
+    #[test]
+    fn finds_the_code_in_a_pasted_redirect() {
+        let u = "https://tidal.com/android/login/auth?code=abc_DEF-123%3D&state=na";
+        assert_eq!(pkce_code(u).as_deref(), Some("abc_DEF-123="));
+        assert_eq!(pkce_code("  https://tidal.com/android/login/auth?state=x&code=xyz123#frag \n").as_deref(), Some("xyz123"));
+        assert_eq!(pkce_code("eyJhbGciOiJIUzI1NiJ9").as_deref(), Some("eyJhbGciOiJIUzI1NiJ9"));
+        assert_eq!(pkce_code("https://tidal.com/android/login/auth?state=x"), None);
+        assert_eq!(pkce_code("https://tidal.com/oops"), None);
+        assert_eq!(pkce_code("short"), None);
     }
 }

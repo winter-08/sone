@@ -108,6 +108,8 @@ pub struct Nav {
     pub home_pages: usize,
     /// The page content's width inside its padding (measured; Home sizes grids and cards by it).
     pub content_w: f32,
+    /// The sign-in screen's PKCE field: the redirect URL pasted back from the browser.
+    pub pkce_paste: TextEdit,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -123,7 +125,7 @@ impl Default for Nav {
         Nav { page: Page::Home, back: vec![], fwd: vec![], search: TextEdit::new(""), lib: LibTab::Playlists, tab: SearchTab::All, filter: TextEdit::new(""), queue_open: false, suggest_due: None, menu_open: false, settings_tab: SettingsTab::Playback, drawer: None, login_mode: LoginMode::Pkce, settings_open: false, dialog: None,
             discord_status: TextEdit::new(""), lb_token: TextEdit::new(""), overlay_host: TextEdit::new(""), proxy_user: TextEdit::new(""),
             discord_due: None, proxy_due: None, lb_status: None, ctx: None, create: None, lyric_line: None, lyrics_scrolled: false, search_open: false, search_sel: None,
-            video: Default::default(), home_tab: "static".into(), home_pages: 0, content_w: 1000.0 }
+            video: Default::default(), home_tab: "static".into(), home_pages: 0, content_w: 1000.0, pkce_paste: TextEdit::new("") }
     }
 }
 
@@ -1782,8 +1784,42 @@ pub(crate) fn play_feed_item(kind: &str, id: Value, title: &str) {
 pub fn login(s: &App, v: &View) -> El {
     use controller::Login;
     let mut c = col().key("login").w(420.0).gap(14.0).items_center()
-        .child(row().items_end().child(text("S").font(t(56.0, 700.0)).color(white(0.95)).a11y_hidden()).child(heading("ONE", 56.0)));
+        .child(row().items_end().child(text(&crate::TITLE[..1]).font(t(56.0, 700.0)).color(white(0.95)).a11y_hidden()).child(heading(&crate::TITLE[1..], 56.0)));
     match &v.login {
+        Login::PkceWaiting { url, error } => {
+            let u = url.clone();
+            let submit = |s: &mut App| controller::send(Cmd::CompletePkceLogin(s.nav.pkce_paste.text.clone()));
+            let step = |n: &str, title: &str, sub: &str| {
+                row().gap(12.0).w_full()
+                    .child(col().w(28.0).h(28.0).radius(14.0).fill(white(0.12)).items_center().justify_center()
+                        .child(text(n.to_string()).font(t(13.0, 700.0)).color(white(0.9)).a11y_hidden()))
+                    .child(col().gap(4.0).grow(1.0)
+                        .child(text(title.to_string()).font(t(14.0, 500.0)).color(white(0.95)))
+                        .child(text(sub.to_string()).font(t(12.0, 400.0)).color(white(0.5)).wrap()))
+            };
+            let field = text_input(&s.nav.pkce_paste, t(13.0, 500.0).lh(18.0))
+                .key("pkce-paste").label("Redirect URL").single_line().w_full()
+                .color(white(0.95)).caret(white(0.95), white(0.25))
+                .placeholder("https://tidal.com/android/login/auth?code=…", white(0.4))
+                .on_edit(|s: &mut App| &mut s.nav.pkce_paste)
+                .on_submit(move |s: &mut App, _| submit(s));
+            c = c.child(col().w_full().gap(16.0).px(20.0).py(20.0).radius(12.0).fill(white(0.05))
+                    .child(step("1", "Log in to TIDAL in your browser", "A browser window should have opened."))
+                    .child(step("2", "Copy the redirect URL", "After login you'll see an \"Oops\" page. Copy the full URL."))
+                    .child(step("3", "Paste it here", ""))
+                    .child(field))
+                .child(button::<App>("pkce-continue", "Continue", None, true).on_press(move |s: &mut App| submit(s)))
+                .child(button::<App>("pkce-reopen", "Open the login page again", None, false).on_press(move |_: &mut App| {
+                    let _ = std::process::Command::new("xdg-open").arg(&u).spawn();
+                }))
+                .child(button::<App>("login-cancel", "Cancel", None, false).on_press(|s: &mut App| {
+                    s.nav.pkce_paste = TextEdit::new("");
+                    controller::send(Cmd::CancelLogin)
+                }));
+            if let Some(e) = error {
+                c = c.child(text(e.clone()).font(t(12.0, 500.0)).color(oklch(0.75, 0.15, 25.0)).wrap());
+            }
+        }
         Login::Waiting { code, uri } => {
             let u = uri.clone();
             let host_label = format!("Open {}", uri.split('/').take(3).collect::<Vec<_>>().join("/"));
@@ -1806,8 +1842,16 @@ pub fn login(s: &App, v: &View) -> El {
             c = c.child(row().gap(8.0).child(mtab("lm-pkce", "PKCE", LoginMode::Pkce)).child(mtab("lm-code", "Login Code", LoginMode::Code)));
             c = match mode {
                 LoginMode::Pkce => c
-                    .child(button::<App>("login-pkce", "Sign in with TIDAL", None, true))
-                    .child(button::<App>("login-browser", "Open in browser instead", None, false)),
+                    // React opens TIDAL's login in an embedded window first; with no web view
+                    // here, both go through the browser (its "Open in browser instead").
+                    .child(button::<App>("login-pkce", "Sign in with TIDAL", None, true).on_press(|s: &mut App| {
+                        s.nav.pkce_paste = TextEdit::new("");
+                        controller::send(Cmd::StartPkceLogin)
+                    }))
+                    .child(button::<App>("login-browser", "Open in browser instead", None, false).on_press(|s: &mut App| {
+                        s.nav.pkce_paste = TextEdit::new("");
+                        controller::send(Cmd::StartPkceLogin)
+                    })),
                 LoginMode::Code => c.child(button::<App>("login-code", "Get Login Code", None, true).on_press(|_: &mut App| controller::send(Cmd::StartDeviceLogin))),
             };
             if let Login::Failed(e) = state {
