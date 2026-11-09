@@ -10,6 +10,8 @@ mod art;
 mod controller;
 mod data;
 mod glyph;
+mod icons;
+mod interact;
 mod ui;
 mod views;
 
@@ -90,9 +92,18 @@ fn poll(s: &mut App, _: f64, tx: &mut Tx) -> bool {
     if s.nav.suggest_due.is_some() || s.nav.discord_due.is_some() || s.nav.proxy_due.is_some() {
         tx.wake_after(Duration::from_millis(50));
     }
+    // menus and favourites (interact.rs): favourite ids once signed in, async results, toasts
+    if controller::view().signed_in {
+        interact::load_favorites_once();
+    }
+    interact::apply_pending(s);
+    interact::settle_create(s);
+    if let Some(next) = interact::toast_tick() {
+        tx.wake_after(next.min(Duration::from_millis(200)));
+    }
     let (state, ticks) = controller::versions();
     // (Covers don't appear here: art.rs fills their pixels in place, without a rebuild.)
-    let v = (state, ticks, data::version());
+    let v = (state, ticks, data::version().wrapping_add(interact::version() << 40));
     tx.wake_after(Duration::from_millis(200));
     let changed = v != s.seen;
     // A clock tick (or a seek bar drag) lands at once; a seek, a new track or new data animate.
@@ -104,6 +115,10 @@ fn poll(s: &mut App, _: f64, tx: &mut Tx) -> bool {
 }
 
 fn on_key(s: &mut App, e: &KeyEvent, _: &mut Tx) -> bool {
+    // a context menu is the top Escape layer (React dismissStack)
+    if matches!(e.key, Key::Escape) && interact::on_escape(s) {
+        return true;
+    }
     if matches!(e.key, Key::Escape) && (s.nav.menu_open || s.nav.settings_open) {
         if s.nav.menu_open { s.nav.menu_open = false } else { s.nav.settings_open = false }
         return true;
@@ -143,6 +158,12 @@ fn view(s: &App, cx: &mut Cx<App>) -> El {
     }
     if let Some(m) = views::account_menu(s, &v) {
         root = root.child(m);
+    }
+    for o in interact::overlay(s) {
+        root = root.child(o);
+    }
+    if let Some(t) = interact::toast_layer() {
+        root = root.child(t);
     }
     let _ = row;
     root

@@ -25,6 +25,8 @@ pub enum Page {
     Settings,
     /// An Explore sub-page by api path, with the title it was opened under.
     ExploreSub(String, String),
+    /// A mix or radio (React MixPage): id, title, subtitle.
+    Mix(String, String, String),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -87,6 +89,9 @@ pub struct Nav {
     pub discord_due: Option<std::time::Instant>,
     pub proxy_due: Option<std::time::Instant>,
     pub lb_status: Option<String>,
+    /// The open context menu (crate::interact), and the create-playlist dialog.
+    pub ctx: Option<crate::interact::Ctx>,
+    pub create: Option<crate::interact::Create>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -99,7 +104,7 @@ impl Default for Nav {
     fn default() -> Self {
         Nav { page: Page::Home, back: vec![], fwd: vec![], search: TextEdit::new(""), lib: LibTab::Playlists, tab: SearchTab::All, filter: TextEdit::new(""), queue_open: false, suggest_due: None, menu_open: false, settings_tab: SettingsTab::Playback, drawer: None, login_mode: LoginMode::Pkce, settings_open: false, dialog: None,
             discord_status: TextEdit::new(""), lb_token: TextEdit::new(""), overlay_host: TextEdit::new(""), proxy_user: TextEdit::new(""),
-            discord_due: None, proxy_due: None, lb_status: None }
+            discord_due: None, proxy_due: None, lb_status: None, ctx: None, create: None }
     }
 }
 
@@ -146,6 +151,15 @@ fn button<S: 'static>(key: &str, label: &str, g: Option<G>, primary: bool) -> El
     b.child(text(label.to_string()).font(t(13.0, 600.0)).color(fg).a11y_hidden())
 }
 
+/// A page-header action (AlbumView, PlaylistView, ArtistPage): a 22 pt icon over an 11 pt
+/// caption. `label` is the accessible name (React's title), `caption` what shows under it.
+fn header_btn(key: &str, label: &str, caption: &str, g: G, on: bool) -> El {
+    col().key(key.to_string()).role("button").label(label).focusable(true).focus_ring(2.0, 2.0, white(0.6))
+        .w(52.0).py(4.0).gap(3.0).radius(8.0).items_center().hover(white(0.06)).cursor(rune::Cursor::Pointer)
+        .child(glyph(g, 22.0, if on { accent() } else { white(0.8) }))
+        .child(text(caption.to_string()).font(t(11.0, 500.0)).color(white(0.6)).a11y_hidden())
+}
+
 fn icon<S: 'static>(key: &str, label: &str, g: G) -> El {
     ui::icon_button::<S>(key, label, g, 18.0, white(0.75))
 }
@@ -156,13 +170,50 @@ fn heading(label: &str, size: f32) -> El {
 
 /// A clickable catalogue card: art, a heading with its name, a subtitle. The card itself is the
 /// press target (AT-SPI clicks reach it through the heading, as with the React cards).
-fn card(key: String, title: &str, sub: &str, seed: u64, round: bool, img: Option<String>, go_to: Page) -> El {
+/// The React accent (`text-th-accent`) for loved hearts and "in library" states.
+pub(crate) fn accent() -> rune::Color {
+    oklch(0.75, 0.13, 250.0)
+}
+
+/// A clickable catalogue card: art, a heading with its name, a subtitle. The card itself is the
+/// press target (AT-SPI clicks reach it through the heading, as with the React cards).
+///
+/// With its `item` (MediaCard.tsx): right-click opens the media menu at the pointer; hovering
+/// shows a play button (bottom-left, accent, 40 pt) and a heart (bottom-right, 32 pt), or for an
+/// artist a centred 48 pt play button. Like React's, those buttons carry no accessible name.
+fn card(key: String, title: &str, sub: &str, seed: u64, round: bool, img: Option<String>, item: Option<Value>, go_to: Page) -> El {
+    use crate::interact::{self, Anchor, Fav, Media, Say};
     let h = ui::hue(Some(seed));
-    let art = if round { ui::with_image(ui::art(h, 132.0, seed, 0.0), img, 132.0, 66.0) } else { ui::with_image(ui::tile(h, 132.0, seed, 10.0), img, 132.0, 10.0) };
+    let mut art = if round { ui::with_image(ui::art(h, 132.0, seed, 0.0), img, 132.0, 66.0) } else { ui::with_image(ui::tile(h, 132.0, seed, 10.0), img, 132.0, 10.0) };
+    let kind = item.as_ref().and_then(Media::of);
+    if let (Some(it), Some(kind)) = (item.clone(), kind) {
+        let play_it = it.clone();
+        if kind == Media::Artist {
+            art = art.child(el().absolute(42.0, 42.0).key(format!("{key}-play")).role("button").size(48.0, 48.0).radius(24.0).fill(rune::oklcha(0.0, 0.0, 0.0, 0.45))
+                .items_center().justify_center().group_opacity(0.0, 1.0).cursor(rune::Cursor::Pointer)
+                .on_press(move |_: &mut App| interact::play_media(&play_it, kind))
+                .child(glyph(G::Play, 28.0, white(1.0))));
+        } else {
+            let fav_kind = match kind { Media::Album => Fav::Album, Media::Playlist => Fav::Playlist, Media::Mix => Fav::Mix, Media::Artist => Fav::Artist };
+            let d = data::data(&it);
+            let id = if kind == Media::Playlist { d["uuid"].as_str().unwrap_or("").to_string() } else { d["id"].as_str().map(str::to_string).unwrap_or_else(|| d["id"].to_string()) };
+            let on = interact::is_fav(fav_kind, &id);
+            let label = data::name(&it);
+            art = art
+                .child(el().absolute(10.0, 82.0).key(format!("{key}-play")).role("button").size(40.0, 40.0).radius(20.0).fill(accent())
+                    .items_center().justify_center().group_opacity(0.0, 1.0).press_scale(0.94).cursor(rune::Cursor::Pointer)
+                    .on_press(move |_: &mut App| interact::play_media(&play_it, kind))
+                    .child(glyph(G::Play, 20.0, oklch(0.18, 0.02, 270.0))))
+                .child(el().absolute(90.0, 90.0).key(format!("{key}-fav")).role("button").size(32.0, 32.0).radius(16.0).fill(rune::oklcha(0.0, 0.0, 0.0, 0.5))
+                    .items_center().justify_center().group_opacity(0.0, 1.0).cursor(rune::Cursor::Pointer)
+                    .on_press(move |_: &mut App| interact::toggle_fav(fav_kind, id.clone(), label.clone(), Say::Nothing))
+                    .child(glyph(if on { G::HeartFilled } else { G::Heart }, 16.0, if on { accent() } else { white(0.95) })));
+        }
+    }
     // The card adds no accessible node of its own (as in the React build, where only its
     // heading is exposed); the heading carries the press so assistive tech can open it.
     let to = go_to.clone();
-    col()
+    let mut c = col()
         .key(key)
         .role("presentation")
         .w(148.0)
@@ -170,32 +221,47 @@ fn card(key: String, title: &str, sub: &str, seed: u64, round: bool, img: Option
         .padding(8.0)
         .radius(12.0)
         .hover(white(0.06))
+        .hover_group()
         .cursor(rune::Cursor::Pointer)
-        .on_press(move |s: &mut App| go(s, go_to.clone()))
-        .child(art)
+        .on_press(move |s: &mut App| go(s, go_to.clone()));
+    if let Some(it) = item.filter(|_| kind.is_some()) {
+        c = c.on_secondary_press(move |s: &mut App, p, _| interact::open_media(s, it.clone(), Anchor::Point(p.x, p.y)));
+    }
+    c.child(art)
         .child(heading(title, 13.0).truncate().on_press(move |s: &mut App| go(s, to.clone())))
         .child(text(sub.to_string()).font(t(11.0, 400.0)).color(white(0.55)).truncate())
 }
 
 /// A track row with the row actions the React rows expose.
 fn track_row(key: String, n: usize, tr: &Value, on_play: impl Fn(&mut App) + 'static) -> El {
-    track_row_with(key, n, tr, true, on_play)
+    track_row_with(key, n, tr, true, None, on_play)
 }
 
-fn track_row_with(key: String, n: usize, tr: &Value, actions: bool, on_play: impl Fn(&mut App) + 'static) -> El {
+/// A track row (TrackList.tsx). A single click plays it (there's no double-click play in React
+/// either); hovering swaps the number for a play icon; right-click opens the track menu at the
+/// pointer. Its actions, after the time: More options (shown on hover; the same menu, below it),
+/// Add to playlist (the playlist picker, below it) and the heart (toggled optimistically, filled
+/// in the accent when loved). `pl` places it in the user's own playlist, for "Remove from
+/// playlist".
+fn track_row_with(key: String, n: usize, tr: &Value, actions: bool, pl: Option<crate::interact::InPlaylist>, on_play: impl Fn(&mut App) + 'static) -> El {
+    use crate::interact::{self, Anchor, Fav, Say};
     let d = data::data(tr);
     let title = d["title"].as_str().unwrap_or("").to_string();
     let dur = d["duration"].as_u64().unwrap_or(0);
+    let id = d["id"].as_u64().unwrap_or(0);
     // The React TrackList: the playing row shows the bouncing bars in place of its number, and
     // the current track's number and title take the accent colour.
     let (current_id, playing) = controller::now_playing();
     let active = current_id.is_some() && d["id"].as_u64() == current_id;
-    let accent = oklch(0.82, 0.11, ui::hue(current_id));
+    let accent_c = oklch(0.82, 0.11, ui::hue(current_id));
     let number: El = if active && playing {
         el().w(22.0).child(ui::eq(true, &key))
     } else {
-        text(format!("{n}")).font(ui::tnum(t(12.0, 500.0))).color(if active { accent } else { white(0.45) }).w(22.0)
+        el().w(22.0).h(20.0).justify_center()
+            .child(text(format!("{n}")).font(ui::tnum(t(12.0, 500.0))).color(if active { accent_c } else { white(0.45) }).group_opacity(1.0, 0.0))
+            .child(el().absolute(2.0, 3.0).group_opacity(0.0, 1.0).child(glyph(G::Play, 14.0, white(0.92))))
     };
+    let (menu_tr, menu_pl) = (tr.clone(), pl.clone());
     // Rows aren't accessible nodes in the React build either; their action buttons are.
     let mut r = row()
         .key(key.clone())
@@ -207,22 +273,31 @@ fn track_row_with(key: String, n: usize, tr: &Value, actions: bool, on_play: imp
         .radius(8.0)
         .items_center()
         .hover(white(0.05))
+        .hover_group()
         .cursor(rune::Cursor::Pointer)
         .on_press(on_play)
+        .on_secondary_press(move |s: &mut App, p, _| interact::open_track(s, menu_tr.clone(), menu_pl.clone(), Anchor::Point(p.x, p.y)))
         .child(number)
         .child(
             col()
                 .grow(1.0)
                 .min_w(0.0)
-                .child(text(title).font(t(14.0, 500.0)).color(if active { accent } else { white(0.95) }).truncate())
+                .child(text(title.clone()).font(t(14.0, 500.0)).color(if active { accent_c } else { white(0.95) }).truncate())
                 .child(text(data::artist_of(tr)).font(t(12.0, 400.0)).color(white(0.55)).truncate()),
-        );
+        )
+        .child(text(ui::fmt_time(dur as f64)).font(ui::tnum(t(12.0, 400.0))).color(white(0.55)).w(48.0));
     if actions {
-        r = r.child(icon::<App>(&format!("{key}-fav"), "Add to favorites", G::Heart))
-            .child(icon::<App>(&format!("{key}-add"), "Add to playlist", G::List))
-            .child(icon::<App>(&format!("{key}-more"), "More options", G::List));
+        let loved = interact::is_fav(Fav::Track, &id.to_string());
+        let (more_key, add_key) = (format!("{key}-more"), format!("{key}-add"));
+        let (t1, t2, mk, ak) = (tr.clone(), tr.clone(), more_key.clone(), add_key.clone());
+        r = r
+            .child(icon::<App>(&more_key, "More options", G::More).group_opacity(0.0, 1.0)
+                .on_press(move |s: &mut App| interact::open_track(s, t1.clone(), pl.clone(), Anchor::Below(mk.clone()))))
+            .child(icon::<App>(&add_key, "Add to playlist", G::Plus).on_press(move |s: &mut App| interact::open_add_below(s, t2.clone(), ak.clone())))
+            .child(ui::icon_button::<App>(&format!("{key}-fav"), if loved { "Remove from favorites" } else { "Add to favorites" }, if loved { G::HeartFilled } else { G::Heart }, 18.0, if loved { accent() } else { white(0.75) })
+                .on_press(move |_: &mut App| interact::toggle_fav(Fav::Track, id.to_string(), title.clone(), Say::Nothing)));
     }
-    r.child(text(ui::fmt_time(dur as f64)).font(ui::tnum(t(12.0, 400.0))).color(white(0.55)).w(48.0))
+    r
 }
 
 fn grid(cards: Vec<El>) -> El {
@@ -251,7 +326,7 @@ fn cards_for(prefix: &str, items: &[Value]) -> Vec<El> {
             let page = item_page(it)?;
             let round = data::kind(it) == "ARTIST";
             let seed = data::data(it)["id"].as_u64().unwrap_or(i as u64 + 1);
-            Some(card(format!("{prefix}-{i}"), &data::name(it), &data::artist_of(it), seed, round, crate::art::item_url(it, 132.0), page))
+            Some(card(format!("{prefix}-{i}"), &data::name(it), &data::artist_of(it), seed, round, crate::art::item_url(it, 132.0), Some(it.clone()), page))
         })
         .collect()
 }
@@ -265,8 +340,8 @@ fn loading() -> El {
 pub fn window_buttons() -> El {
     row()
         .gap(2.0)
-        .child(ui::icon_button::<App>("win-min", "Minimize", G::Back, 14.0, white(0.6)).on_press_tx(|_: &mut App, tx: &mut Tx| tx.minimize()))
-        .child(ui::icon_button::<App>("win-max", "Maximize", G::PopOut, 14.0, white(0.6)).on_press_tx(|_: &mut App, tx: &mut Tx| tx.toggle_maximized()))
+        .child(ui::icon_button::<App>("win-min", "Minimize", G::Minus, 14.0, white(0.6)).on_press_tx(|_: &mut App, tx: &mut Tx| tx.minimize()))
+        .child(ui::icon_button::<App>("win-max", "Maximize", G::Square, 12.0, white(0.6)).on_press_tx(|_: &mut App, tx: &mut Tx| tx.toggle_maximized()))
         .child(ui::icon_button::<App>("win-close", "Close", G::Close, 14.0, white(0.6)).on_press_tx(|_: &mut App, tx: &mut Tx| tx.close_window()))
 }
 
@@ -306,7 +381,7 @@ pub fn header(s: &App) -> El {
                 s.nav.fwd.push(cur);
             }
         }))
-        .child(icon::<App>("forward", "Go forward", G::Next).on_press(|s: &mut App| {
+        .child(icon::<App>("forward", "Go forward", G::Forward).on_press(|s: &mut App| {
             if let Some(p) = s.nav.fwd.pop() {
                 let cur = std::mem::replace(&mut s.nav.page, p);
                 s.nav.back.push(cur);
@@ -314,7 +389,7 @@ pub fn header(s: &App) -> El {
         }))
         .child(spacer())
         .child(bar)
-        .child(icon::<App>("account", "Account", G::Library).on_press(|s: &mut App| {
+        .child(icon::<App>("account", "Account", G::User).on_press(|s: &mut App| {
             s.nav.menu_open = !s.nav.menu_open;
             if s.nav.menu_open {
                 data::want(Key::Profile);
@@ -357,7 +432,7 @@ pub fn dropdown(s: &App) -> Option<El> {
                     .child(row().role("button").label(title.clone()).grow(1.0).items_center().cursor(rune::Cursor::Pointer)
                         .on_press(move |_: &mut App| controller::send_play_ids(vec![id]))
                         .child(text(title.clone()).font(t(13.0, 600.0)).color(white(0.95)).a11y_hidden()))
-                    .child(icon::<App>(&format!("hit-{i}-more"), "More options", G::List)),
+                    .child(icon::<App>(&format!("hit-{i}-more"), "More options", G::More)),
             );
         } else {
             let page = match ty {
@@ -412,7 +487,7 @@ pub fn sidebar(s: &App) -> El {
     let mut list = col().w_full().gap(2.0);
     match s.nav.lib {
         LibTab::Playlists => {
-            list = list.child(lib_row("lib-loved", "Loved Tracks Collection", "Loved Tracks", "Collection", 9, None, None));
+            list = list.child(lib_row("lib-loved", "Loved Tracks Collection", "Loved Tracks", "Collection", 9, None, None, None));
             if let Some(f) = data::ready(Key::Folders) {
                 for (i, it) in f["items"].as_array().cloned().unwrap_or_default().iter().enumerate() {
                     let d = &it["data"];
@@ -422,7 +497,7 @@ pub fn sidebar(s: &App) -> El {
                     let uuid = d["uuid"].as_str().unwrap_or("").to_string();
                     // The React row's accessible name is its cover's alt text, title and subtitle.
                     let label = format!("{title} {title} {sub}");
-                    list = list.child(lib_row(&format!("lib-pl-{i}"), &label, &title, &sub, i as u64 + 20, crate::art::item_url(it, 40.0), Some(Page::Playlist(uuid))));
+                    list = list.child(lib_row(&format!("lib-pl-{i}"), &label, &title, &sub, i as u64 + 20, crate::art::item_url(it, 40.0), Some(json!({"type": "PLAYLIST", "data": d.clone()})), Some(Page::Playlist(uuid))));
                 }
             }
         }
@@ -437,16 +512,16 @@ pub fn sidebar(s: &App) -> El {
         .padding(12.0)
         .gap(6.0)
         .fill(oklch(0.13, 0.02, 270.0))
-        .child(nav_btn("nav-home", "Home", G::Library, Page::Home))
-        .child(nav_btn("nav-explore", "Explore", G::Search, Page::Explore))
-        .child(nav_btn("nav-feed", "Feed", G::List, Page::Feed))
+        .child(nav_btn("nav-home", "Home", G::Home, Page::Home))
+        .child(nav_btn("nav-explore", "Explore", G::Compass, Page::Explore))
+        .child(nav_btn("nav-feed", "Feed", G::Bell, Page::Feed))
         .child(el().h(10.0))
         .child(
             row().w_full().items_center().gap(6.0)
                 .child(row().key("lib").role("button").label("Your Library").h(34.0).px(8.0).gap(10.0).items_center().cursor(rune::Cursor::Pointer)
                     .child(glyph(G::Library, 18.0, white(0.75))).child(text("Your Library").font(t(14.0, 650.0)).color(white(0.9)).a11y_hidden()))
                 .child(spacer())
-                .child(icon::<App>("lib-sort", sort_label, G::List))
+                .child(icon::<App>("lib-sort", sort_label, G::Sort))
                 .child(row().key("lib-all").role("button").label("Show all").h(28.0).px(8.0).items_center().cursor(rune::Cursor::Pointer)
                     .child(text("Show all").font(t(12.0, 600.0)).color(white(0.6)).a11y_hidden())),
         )
@@ -454,12 +529,15 @@ pub fn sidebar(s: &App) -> El {
         .child(ui::smooth_wheel::<App>(col().grow(1.0).min_h(0.0).w_full().scroll(ScrollSpec { stick_bottom: false }).child(list), "lib-scroll".into()))
 }
 
-fn lib_row(key: &str, label: &str, title: &str, sub: &str, seed: u64, img: Option<String>, page: Option<Page>) -> El {
+fn lib_row(key: &str, label: &str, title: &str, sub: &str, seed: u64, img: Option<String>, menu: Option<Value>, page: Option<Page>) -> El {
     let mut r = row().key(key.to_string()).role("button").label(label).w_full().h(52.0).px(8.0).gap(10.0).radius(8.0).items_center().hover(white(0.06)).cursor(rune::Cursor::Pointer)
         .child(ui::with_image(ui::tile(ui::hue(Some(seed)), 40.0, seed, 6.0), img, 40.0, 6.0))
         .child(col().min_w(0.0).a11y_hidden().child(text(title.to_string()).font(t(13.0, 600.0)).color(white(0.92)).truncate()).child(text(sub.to_string()).font(t(11.0, 400.0)).color(white(0.55)).truncate()));
     if let Some(p) = page {
         r = r.on_press(move |s: &mut App| go(s, p.clone()));
+    }
+    if let Some(it) = menu {
+        r = r.on_secondary_press(move |s: &mut App, p, _| crate::interact::open_media(s, it.clone(), crate::interact::Anchor::Point(p.x, p.y)));
     }
     r
 }
@@ -470,7 +548,7 @@ fn lib_list(key: Key) -> El {
     for (i, it) in v["items"].as_array().cloned().unwrap_or_default().iter().enumerate() {
         let name = data::name(it);
         let page = item_page(it).or_else(|| data::data(it)["id"].as_u64().map(Page::Album));
-        c = c.child(lib_row(&format!("lib-{key:?}-{i}"), &name, &name, &data::artist_of(it), i as u64 + 40, crate::art::item_url(it, 40.0), page));
+        c = c.child(lib_row(&format!("lib-{key:?}-{i}"), &name, &name, &data::artist_of(it), i as u64 + 40, crate::art::item_url(it, 40.0), (key != Key::FavAlbums).then(|| it.clone()), page));
     }
     c
 }
@@ -488,16 +566,22 @@ pub fn bar_extras(v: &View) -> El {
                 .child(text(b.clone()).font(t(10.0, 650.0).tracking(0.6)).color(white(0.8)).a11y_hidden()));
         }
     }
-    r = r.child(icon::<App>("lyrics", "Lyrics", G::List).on_press(|s: &mut App| toggle_drawer(s, Drawer::Lyrics)))
+    r = r.child(icon::<App>("lyrics", "Lyrics", G::Mic).on_press(|s: &mut App| toggle_drawer(s, Drawer::Lyrics)))
         .child(icon::<App>("queue", "Play queue", G::List).on_press(|s: &mut App| toggle_drawer(s, Drawer::Queue)));
     if v.current.is_some() {
-        r = r.child(icon::<App>("more", "More options", G::List))
+        // PlayerBar: the current track's menu, below the button
+        let cur = v.current.as_ref().map(|c| crate::interact::json_of_track(c.id, &c.title, &c.artist));
+        r = r.child(icon::<App>("more", "More options", G::More).on_press(move |s: &mut App| {
+            if let Some(t) = &cur {
+                crate::interact::open_track(s, t.clone(), None, crate::interact::Anchor::Below("more".into()));
+            }
+        }))
             .child(if crate::mini_open() {
                 icon::<App>("mini", "Close miniplayer", G::PopOut).on_press(|_: &mut App| crate::set_mini(false))
             } else {
                 icon::<App>("mini", "Open miniplayer", G::PopOut).on_press(|_: &mut App| crate::set_mini(true))
             })
-            .child(icon::<App>("full", "Fullscreen player", G::PopOut));
+            .child(icon::<App>("full", "Fullscreen player", G::Maximize));
     }
     r
 }
@@ -509,6 +593,7 @@ pub fn page(s: &App, v: &View) -> El {
         Page::Home => home(),
         Page::Explore => explore(),
         Page::ExploreSub(path, title) => explore_sub(path, title),
+        Page::Mix(id, title, sub) => mix_page(id, title, sub, v),
         Page::Feed => feed(),
         Page::Search(q) => search_page(s, q),
         Page::Album(id) => album(*id, v),
@@ -629,9 +714,20 @@ fn album(id: u64, v: &View) -> El {
     let shuf = Cmd::PlayCollection { tracks: tracks.clone(), source, album_mode: true, shuffle: true };
     let actions = row().gap(8.0).items_center()
         .child(play_buttons(v, &title, play, shuf))
-        .child(icon::<App>("album-fav", "Favorite album", G::Heart))
-        .child(icon::<App>("album-share", "Share album", G::PopOut))
-        .child(icon::<App>("album-more", "More options", G::List));
+        .child({
+            let (on, aid, l) = (crate::interact::is_fav(crate::interact::Fav::Album, &id.to_string()), id.to_string(), title.clone());
+            header_btn("album-fav", "Favorite album", if on { "Added" } else { "Add" }, if on { G::HeartFilled } else { G::Heart }, on)
+                .on_press(move |_: &mut App| crate::interact::toggle_fav(crate::interact::Fav::Album, aid.clone(), l.clone(), crate::interact::Say::Nothing))
+        })
+        .child(header_btn("album-share", "Share album", "Share", G::Share, false).on_press_tx(move |_: &mut App, tx: &mut Tx| {
+            tx.copy_rich(rune::ClipboardContent::new(format!("https://tidal.com/album/{id}")));
+            crate::interact::toast("Copied share link to clipboard".into(), crate::interact::Kind::Success);
+        }))
+        .child({
+            let item = json!({"type": "ALBUM", "data": a.clone()});
+            header_btn("album-more", "More options", "More", G::More, false)
+                .on_press(move |s: &mut App| crate::interact::open_media(s, item.clone(), crate::interact::Anchor::Below("album-more".into())))
+        });
     let mut c = col().w_full().gap(18.0).child(hero_with(&title, true, album_byline(a), id, false, crate::art::item_url(a, 180.0), actions));
     let mut rows = col().w_full().gap(2.0);
     for (i, tr) in tracks.iter().enumerate() {
@@ -666,9 +762,21 @@ fn artist(id: u64, v: &View) -> El {
     let shuf = Cmd::PlayArtist { id, name: name.clone(), shuffle: true };
     let actions = row().gap(8.0).items_center()
         .child(play_buttons(v, &name, play, shuf))
-        .child(button::<App>("artist-follow", "Follow", None, false))
-        .child(icon::<App>("artist-share", "Share", G::PopOut))
-        .child(icon::<App>("artist-more", "More", G::List));
+        .child({
+            // ArtistPage: Plus/"Follow", or Check/"Following" in the accent
+            let (on, aid, l) = (crate::interact::is_fav(crate::interact::Fav::Artist, &id.to_string()), id.to_string(), name.clone());
+            header_btn("artist-follow", if on { "Following" } else { "Follow" }, if on { "Following" } else { "Follow" }, if on { G::Check } else { G::Plus }, on)
+                .on_press(move |_: &mut App| crate::interact::toggle_fav(crate::interact::Fav::Artist, aid.clone(), l.clone(), crate::interact::Say::Nothing))
+        })
+        .child(header_btn("artist-share", "Share", "Share", G::Share, false).on_press_tx(move |_: &mut App, tx: &mut Tx| {
+            tx.copy_rich(rune::ClipboardContent::new(format!("https://tidal.com/artist/{id}")));
+            crate::interact::toast("Copied share link to clipboard".into(), crate::interact::Kind::Success);
+        }))
+        .child({
+            let item = json!({"type": "ARTIST", "data": a.clone()});
+            header_btn("artist-more", "More", "More", G::More, false)
+                .on_press(move |s: &mut App| crate::interact::open_media(s, item.clone(), crate::interact::Anchor::Below("artist-more".into())))
+        });
     let fans = p["header"]["followersAmount"].as_u64().unwrap_or(0);
     let mut c = col().w_full().gap(18.0).child(hero(&name, true, &format!("{fans} fans"), id, true, crate::art::artist_picture(a, 180.0), actions));
     if let Some(bio) = p["header"]["biography"]["text"].as_str() {
@@ -702,12 +810,29 @@ fn playlist(s: &App, uuid: &str, v: &View) -> El {
     let source = json!({"type": "playlist", "id": uuid, "name": title});
     let play = Cmd::PlayCollection { tracks: tracks.clone(), source: source.clone(), album_mode: false, shuffle: false };
     let shuf = Cmd::PlayCollection { tracks: tracks.clone(), source: source.clone(), album_mode: false, shuffle: true };
-    let actions = row().gap(8.0).items_center()
-        .child(play_buttons(v, &title, play, shuf))
-        .child(icon::<App>("pl-edit", "Edit playlist", G::List))
-        .child(icon::<App>("pl-public", "Make playlist public", G::PopOut))
-        .child(icon::<App>("pl-share", "Share playlist", G::PopOut))
-        .child(icon::<App>("pl-more", "More options", G::List));
+    // PlaylistView: your own playlist has Edit and Private/Public; anyone else's, the heart.
+    let me = data::user_id();
+    let own = d["creator"]["id"].as_u64().is_some_and(|c| c == me) || d["creator"]["id"].is_null();
+    let mut actions = row().gap(8.0).items_center().child(play_buttons(v, &title, play, shuf));
+    if own {
+        let public = d["accessType"].as_str() == Some("PUBLIC"); // PlaylistView: resolvedAccessType === "PUBLIC"
+        actions = actions
+            .child(header_btn("pl-edit", "Edit playlist", "Edit", G::Pencil, false))
+            .child(header_btn("pl-public", if public { "Make playlist private" } else { "Make playlist public" }, if public { "Public" } else { "Private" }, if public { G::Unlock } else { G::Lock }, public));
+    } else {
+        let (on, u, l) = (crate::interact::is_fav(crate::interact::Fav::Playlist, uuid), uuid.to_string(), title.clone());
+        actions = actions.child(header_btn("pl-fav", if on { "Remove from favorites" } else { "Add to favorites" }, if on { "Added" } else { "Add" }, if on { G::HeartFilled } else { G::Heart }, on)
+            .on_press(move |_: &mut App| crate::interact::toggle_fav(crate::interact::Fav::Playlist, u.clone(), l.clone(), crate::interact::Say::Nothing)));
+    }
+    let share_uuid = uuid.to_string();
+    let item = json!({"type": "PLAYLIST", "data": d.clone()});
+    actions = actions
+        .child(header_btn("pl-share", "Share playlist", "Share", G::Share, false).on_press_tx(move |_: &mut App, tx: &mut Tx| {
+            tx.copy_rich(rune::ClipboardContent::new(format!("https://tidal.com/playlist/{share_uuid}")));
+            crate::interact::toast("Copied share link to clipboard".into(), crate::interact::Kind::Success);
+        }))
+        .child(header_btn("pl-more", "More options", "More", G::More, false)
+            .on_press(move |s: &mut App| crate::interact::open_media(s, item.clone(), crate::interact::Anchor::Below("pl-more".into()))));
     let n = d["numberOfTracks"].as_u64().unwrap_or(tracks.len() as u64);
     let creator = d["creator"]["name"].as_str().unwrap_or("You");
     let filter = text_input(&s.nav.filter, t(13.0, 500.0).lh(18.0))
@@ -726,7 +851,8 @@ fn playlist(s: &App, uuid: &str, v: &View) -> El {
             continue;
         }
         let (all, src, idx) = (tracks.clone(), source.clone(), i);
-        rows = rows.child(track_row(format!("pl-t{i}"), i + 1, tr, move |_: &mut App| {
+        let in_pl = own.then(|| crate::interact::InPlaylist { uuid: uuid.to_string(), index: i });
+        rows = rows.child(track_row_with(format!("pl-t{i}"), i + 1, data::data(tr), true, in_pl, move |_: &mut App| {
             let ordered = all[idx..].iter().chain(all[..idx].iter()).cloned().collect();
             controller::send(Cmd::PlayCollection { tracks: ordered, source: src.clone(), album_mode: false, shuffle: false });
         }));
@@ -1102,7 +1228,12 @@ pub fn queue_panel(v: &View) -> El {
             .child(row().w_full().gap(10.0).items_center().padding(6.0)
                 .child(ui::with_image(ui::tile(ui::hue(Some(cur.id)), 44.0, cur.id, 6.0), crate::art::cover(v.cover.as_deref(), 44.0), 44.0, 6.0))
                 .child(col().grow(1.0).min_w(0.0).child(heading(&cur.title, 14.0)).child(text(cur.artist.clone()).font(t(12.0, 400.0)).color(white(0.55))))
-                .child(icon::<App>("qp-love", "Add to Loved tracks", G::Heart)));
+                .child({
+                    // the drawer's heart toasts briefly (NowPlayingDrawer)
+                    let (on, tid, l) = (crate::interact::is_fav(crate::interact::Fav::Track, &cur.id.to_string()), cur.id.to_string(), cur.title.clone());
+                    ui::icon_button::<App>("qp-love", if on { "Remove from Loved tracks" } else { "Add to Loved tracks" }, if on { G::HeartFilled } else { G::Heart }, 15.0, if on { accent() } else { white(0.75) })
+                        .on_press(move |_: &mut App| crate::interact::toggle_fav(crate::interact::Fav::Track, tid.clone(), l.clone(), crate::interact::Say::LovedShort))
+                }));
     }
     if !v.queue.is_empty() {
         c = c.child(row().w_full().items_center().pt(10.0).child(heading("NEXT UP", 11.0)).child(spacer())
@@ -1258,7 +1389,7 @@ fn explore_sub(path: &str, title: &str) -> El {
             let mut rows = col().w_full().gap(2.0);
             for (i, tr) in items.iter().enumerate() {
                 let id = data::data(tr)["id"].as_u64().unwrap_or(0);
-                rows = rows.child(track_row_with(format!("es-{si}-t{i}"), i + 1, data::data(tr), false, move |_: &mut App| controller::send_play_ids(vec![id])));
+                rows = rows.child(track_row_with(format!("es-{si}-t{i}"), i + 1, data::data(tr), false, None, move |_: &mut App| controller::send_play_ids(vec![id])));
             }
             block = block.child(rows);
         } else {
@@ -1313,12 +1444,16 @@ fn feed() -> El {
             .child(ui::with_image(ui::tile(ui::hue(Some(i as u64 + 60)), 48.0, i as u64 + 60, 8.0), crate::art::item_url(item, 48.0), 48.0, 8.0))
             .child(col().grow(1.0).min_w(0.0).child(text(title.clone()).font(t(14.0, 600.0)).color(white(0.95)).truncate()).child(text(sub).font(t(12.0, 400.0)).color(white(0.55)).truncate()))
             .child(icon::<App>(&format!("feed-{i}-play"), &format!("Play {title}"), G::Play).on_press(move |_: &mut App| play_feed_item(&k2, id.clone(), &t2)))
-            .child(icon::<App>(&format!("feed-{i}-more"), &format!("More options for {title}"), G::List)));
+            .child({
+                let (mk, menu_item) = (format!("feed-{i}-more"), json!({"type": kind.to_uppercase(), "data": item.clone()}));
+                icon::<App>(&mk, &format!("More options for {title}"), G::More)
+                    .on_press(move |s: &mut App| crate::interact::open_media(s, menu_item.clone(), crate::interact::Anchor::Below(mk.clone())))
+            }));
     }
     c
 }
 
-fn play_feed_item(kind: &str, id: Value, title: &str) {
+pub(crate) fn play_feed_item(kind: &str, id: Value, title: &str) {
     let (kind, title) = (kind.to_string(), title.to_string());
     sone_host_shim::async_runtime::spawn(async move {
         match kind.as_str() {
@@ -1396,16 +1531,57 @@ pub fn login(s: &App, v: &View) -> El {
 
 
 /// Suggested tracks: the current track's radio (React SuggestedTab: getMixItems(TRACK_MIX)).
+/// A mix or radio (React MixPage): its tracks, with Play, Shuffle, Add, Share and More.
+fn mix_page(id: &str, title: &str, sub: &str, v: &View) -> El {
+    let Some(m) = data::ready(Key::Mix(id.to_string())) else { return loading() };
+    let tracks: Vec<Value> = m["tracks"].as_array().or(m["items"].as_array()).cloned().unwrap_or_default();
+    let source = json!({"type": "mix", "id": id, "name": title});
+    let play = Cmd::PlayCollection { tracks: tracks.clone(), source: source.clone(), album_mode: false, shuffle: false };
+    let shuf = Cmd::PlayCollection { tracks: tracks.clone(), source: source.clone(), album_mode: false, shuffle: true };
+    let (on, mid, l) = (crate::interact::is_fav(crate::interact::Fav::Mix, id), id.to_string(), title.to_string());
+    let share_id = id.to_string();
+    let item = json!({"type": "MIX", "data": {"id": id, "title": title}});
+    let actions = row().gap(8.0).items_center()
+        .child(play_buttons(v, title, play, shuf))
+        .child(header_btn("mix-fav", if on { "Remove from favorites" } else { "Add to favorites" }, if on { "Added" } else { "Add" }, if on { G::HeartFilled } else { G::Heart }, on)
+            .on_press(move |_: &mut App| crate::interact::toggle_fav(crate::interact::Fav::Mix, mid.clone(), l.clone(), crate::interact::Say::Nothing)))
+        .child(header_btn("mix-share", "Copy share link", "Share", G::Share, false).on_press_tx(move |_: &mut App, tx: &mut Tx| {
+            tx.copy_rich(rune::ClipboardContent::new(format!("https://tidal.com/mix/{share_id}")));
+            crate::interact::toast("Copied share link to clipboard".into(), crate::interact::Kind::Success);
+        }))
+        .child(header_btn("mix-more", "More options", "More", G::More, false)
+            .on_press(move |s: &mut App| crate::interact::open_media(s, item.clone(), crate::interact::Anchor::Below("mix-more".into()))));
+    let mut rows = col().w_full().gap(2.0);
+    for (i, tr) in tracks.iter().enumerate() {
+        let (all, src, idx) = (tracks.clone(), source.clone(), i);
+        rows = rows.child(track_row(format!("mx-t{i}"), i + 1, tr, move |_: &mut App| {
+            let ordered = all[idx..].iter().chain(all[..idx].iter()).cloned().collect();
+            controller::send(Cmd::PlayCollection { tracks: ordered, source: src.clone(), album_mode: false, shuffle: false });
+        }));
+    }
+    let seed = id.bytes().fold(7u64, |h, b| h.wrapping_mul(31).wrapping_add(b as u64));
+    col().w_full().gap(16.0)
+        .child(hero(title, true, sub, seed, false, tracks.first().and_then(|t| crate::art::item_url(t, 180.0)), actions))
+        .child(rows)
+}
+
 fn suggested(v: &View) -> El {
     let Some(mix) = &v.track_mix else { return text("No suggestions for this track.").font(t(13.0, 500.0)).color(white(0.5)) };
     let Some(m) = data::ready(Key::Mix(mix.clone())) else { return loading() };
     let mut c = col().w_full().gap(2.0);
     for (i, tr) in m["tracks"].as_array().cloned().unwrap_or_default().iter().enumerate() {
         let id = tr["id"].as_u64().unwrap_or(0);
+        // NowPlayingDrawer: a suggested row's click adds it to the queue
+        let qt = data::name(tr);
+        let (on, l) = (crate::interact::is_fav(crate::interact::Fav::Track, &id.to_string()), qt.clone());
         c = c.child(row().w_full().items_center()
-            .child(col().grow(1.0).min_w(0.0).child(track_row_with(format!("sg-{i}"), i + 1, tr, false, move |_: &mut App| controller::send_play_ids(vec![id]))))
-            .child(icon::<App>(&format!("sg-{i}-love"), "Add to Loved tracks", G::Heart))
-            .child(icon::<App>(&format!("sg-{i}-queue"), "Add to queue", G::List).on_press(move |_: &mut App| controller::send(Cmd::QueueIds(vec![id])))));
+            .child(col().grow(1.0).min_w(0.0).child(track_row_with(format!("sg-{i}"), i + 1, tr, false, None, move |_: &mut App| {
+                controller::send(Cmd::QueueIds(vec![id]));
+                crate::interact::toast(format!("Added \"{qt}\" to queue"), crate::interact::Kind::Success);
+            })))
+            .child(ui::icon_button::<App>(&format!("sg-{i}-love"), if on { "Remove from Loved tracks" } else { "Add to Loved tracks" }, if on { G::HeartFilled } else { G::Heart }, 15.0, if on { accent() } else { white(0.75) })
+                .on_press(move |_: &mut App| crate::interact::toggle_fav(crate::interact::Fav::Track, id.to_string(), l.clone(), crate::interact::Say::LovedShort)))
+            .child(icon::<App>(&format!("sg-{i}-queue"), "Add to queue", G::ListPlus).on_press(move |_: &mut App| controller::send(Cmd::QueueIds(vec![id])))));
     }
     c
 }

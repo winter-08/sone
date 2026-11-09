@@ -62,6 +62,8 @@ pub enum Cmd {
     PlayArtist { id: u64, name: String, shuffle: bool },
     /// Play these track ids now (a track clicked in search or on Home).
     PlayIds(Vec<u64>),
+    /// Put these track ids at the front of the manual queue, in order ("Play next").
+    PlayNextIds(Vec<u64>),
     /// Append these track ids to the manual queue ("Add to queue").
     QueueIds(Vec<u64>),
     /// Remove the item at this index of the upcoming list (queue panel).
@@ -746,6 +748,9 @@ impl Player {
             }
             Cmd::PlayIds(ids) => {
                 self.mcp_play_tracks(&json!({"trackIds": ids, "action": "play_now"})).await;
+            }
+            Cmd::PlayNextIds(ids) => {
+                self.mcp_play_tracks(&json!({"trackIds": ids, "action": "play_next"})).await;
             }
             Cmd::JumpTo(id) => {
                 if let Some(i) = self.upcoming().iter().position(|t| tid(t) == id) {

@@ -33,6 +33,8 @@ pub enum Key {
     Credits(u64),
     ArtistBio(u64),
     Mix(String),
+    /// Every playlist of the user, for the Add to playlist submenu (React getAllPlaylists).
+    AllPlaylists,
 }
 
 #[derive(Clone)]
@@ -147,6 +149,7 @@ async fn fetch(key: &Key) -> Result<Value, String> {
         Key::Credits(id) => v!(metadata::get_track_credits(st(), *id)),
         Key::ArtistBio(id) => v!(pages::get_artist_bio(st(), h.clone(), *id)),
         Key::Mix(id) => v!(pages::get_mix_items(st(), id.clone())),
+        Key::AllPlaylists => v!(library::get_all_playlists(st(), h.clone(), user_id(), 0, 500, "DATE_UPDATED".into(), "DESC".into())),
     })
 }
 
