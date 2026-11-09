@@ -97,6 +97,9 @@ fn poll(s: &mut App, _: f64, tx: &mut Tx) -> bool {
         interact::load_favorites_once();
     }
     interact::apply_pending(s);
+    if let Some(next) = interact::tick_hover(s) {
+        tx.wake_after(next);
+    }
     interact::settle_create(s);
     if let Some(next) = interact::toast_tick() {
         tx.wake_after(next.min(Duration::from_millis(200)));

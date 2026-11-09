@@ -357,7 +357,29 @@ pub struct Ctx {
     pub confirm_delete: bool,
     /// False when only the submenu shows (a row's "+" opens the playlist picker by itself).
     pub menu: bool,
+    /// A submenu about to open or close on hover (see `tick_hover`).
+    pub intent: Option<Intent>,
 }
+
+/// Which submenu an item opens.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Which {
+    Add,
+    Move,
+}
+
+/// Hover intent, as desktop menus have it (React SONE opens submenus on click only; this port
+/// also opens them on hover). Resting on a submenu item opens it after `OPEN_DELAY`; hovering
+/// another item closes an open submenu after `CLOSE_DELAY`, unless the pointer reaches the
+/// submenu first, so a diagonal move towards it doesn't close it on the way.
+#[derive(Clone, Copy, Debug)]
+pub enum Intent {
+    Open(Which, Instant),
+    Close(Instant),
+}
+
+const OPEN_DELAY: Duration = Duration::from_millis(150);
+const CLOSE_DELAY: Duration = Duration::from_millis(300);
 
 /// The create-playlist dialog (CreatePlaylistModal), with the tracks to add once it exists.
 #[derive(Clone, Debug)]
@@ -370,12 +392,12 @@ pub struct Create {
 }
 
 pub fn open_track(s: &mut App, track: Value, playlist: Option<InPlaylist>, anchor: Anchor) {
-    s.nav.ctx = Some(Ctx { target: Target::Track { track, playlist }, anchor, sub: None, confirm_delete: false, menu: true });
+    s.nav.ctx = Some(Ctx { target: Target::Track { track, playlist }, anchor, sub: None, confirm_delete: false, menu: true, intent: None });
 }
 
 pub fn open_media(s: &mut App, item: Value, anchor: Anchor) {
     if let Some(kind) = Media::of(&item) {
-        s.nav.ctx = Some(Ctx { target: Target::Media { item, kind }, anchor, sub: None, confirm_delete: false, menu: true });
+        s.nav.ctx = Some(Ctx { target: Target::Media { item, kind }, anchor, sub: None, confirm_delete: false, menu: true, intent: None });
     }
 }
 
@@ -388,6 +410,7 @@ pub fn open_add_below(s: &mut App, track: Value, button_key: String) {
         sub: Some(Sub::AddToPlaylist { ids: vec![id], all: false, query: TextEdit::new(""), anchor: button_key, below: true }),
         confirm_delete: false,
         menu: false,
+        intent: None,
     });
     data::want(Key::AllPlaylists);
 }
@@ -421,21 +444,51 @@ fn mi(key: &str, label: &str, g: G, accent: bool, enabled: bool, on: impl Fn(&mu
     } else {
         r = r.opacity(0.4);
     }
-    r
+    r.on_hover_change(|s: &mut App, inside, tx| if inside { hover_plain(s, tx) })
+}
+
+/// The pointer is on an item that opens no submenu: close an open one, after the grace delay.
+fn hover_plain(s: &mut App, tx: &mut Tx) {
+    if let Some(c) = &mut s.nav.ctx
+        && c.menu
+        && c.sub.is_some()
+    {
+        c.intent = Some(Intent::Close(Instant::now() + CLOSE_DELAY));
+        tx.wake_after(CLOSE_DELAY);
+    }
 }
 
 fn mi_danger(key: &str, label: &str, on: impl Fn(&mut App, &mut Tx) + 'static) -> El {
     let red = oklch(0.66, 0.19, 25.0);
     row().key(key.to_string()).role("button").label(label).w_full().px(16.0).h(40.0).gap(12.0).items_center()
         .hover(white(0.06)).cursor(rune::Cursor::Pointer).on_press_tx(on)
+        .on_hover_change(|s: &mut App, inside, tx| if inside { hover_plain(s, tx) })
         .child(glyph(G::Trash, 18.0, red))
         .child(text(label.to_string()).font(t(14.0, 500.0)).color(red).a11y_hidden())
 }
 
-fn mi_sub(key: &str, label: &str, g: G, open: bool, on: impl Fn(&mut App) + 'static) -> El {
+fn mi_sub(key: &str, label: &str, g: G, open: bool, which: Which) -> El {
     row().key(key.to_string()).role("button").label(label).w_full().px(16.0).h(40.0).gap(12.0).items_center()
         .fill(if open { white(0.06) } else { rune::Color::TRANSPARENT }).hover(white(0.06)).cursor(rune::Cursor::Pointer)
-        .on_press(on)
+        .on_press(move |s: &mut App| {
+            if let Some(c) = &mut s.nav.ctx {
+                c.intent = None;
+            }
+            open_sub(s, which);
+        })
+        .on_hover_change(move |s: &mut App, inside, tx| {
+            let Some(c) = &mut s.nav.ctx else { return };
+            if inside {
+                tx.wake_after(OPEN_DELAY);
+            }
+            let showing = matches!((&c.sub, which), (Some(Sub::AddToPlaylist { .. }), Which::Add) | (Some(Sub::MoveToFolder { .. }), Which::Move));
+            c.intent = match (inside, showing, c.intent) {
+                (true, true, _) => None,
+                (true, false, _) => Some(Intent::Open(which, Instant::now() + OPEN_DELAY)),
+                (false, _, Some(Intent::Open(w, _))) if w == which => None,
+                (false, _, i) => i,
+            };
+        })
         .child(glyph(g, 18.0, white(0.5)))
         .child(text(label.to_string()).font(t(14.0, 500.0)).color(white(0.78)).a11y_hidden())
         .child(spacer())
@@ -540,7 +593,7 @@ fn track_menu(track: &Value, playlist: Option<&InPlaylist>, c: &Ctx) -> El {
             close(s);
         }))
         .child(sep())
-        .child(mi_sub("ctx-add", "Add to playlist", G::List, matches!(c.sub, Some(Sub::AddToPlaylist { .. })), move |s| open_add(s, vec![id])))
+        .child(mi_sub("ctx-add", "Add to playlist", G::List, matches!(c.sub, Some(Sub::AddToPlaylist { .. })), Which::Add))
         .child(mi("ctx-love", if loved { "Remove from Loved tracks" } else { "Add to Loved tracks" }, if loved { G::HeartFilled } else { G::Heart }, loved, true, move |s, _| {
             toggle_fav(Fav::Track, id.to_string(), t3.clone(), Say::Loved);
             close(s);
@@ -646,24 +699,10 @@ fn media_menu(item: &Value, kind: Media, c: &Ctx) -> El {
         }))
         .child(sep());
     let i4 = it.clone();
-    m = m.child(mi_sub("ctx-add", "Add to playlist", G::List, matches!(c.sub, Some(Sub::AddToPlaylist { .. })), move |s| {
-        // React fetches every track id first, then opens the submenu
-        let item = i4.clone();
-        sone_host_shim::async_runtime::spawn(async move {
-            if let Some(ids) = media_track_ids(&item, kind).await {
-                *PENDING_SUB.lock().unwrap() = Some(ids);
-                bump();
-            }
-        });
-        let _ = s;
-    }));
+    let _ = i4;
+    m = m.child(mi_sub("ctx-add", "Add to playlist", G::List, matches!(c.sub, Some(Sub::AddToPlaylist { .. })), Which::Add));
     if kind == Media::Playlist {
-        let (uuid, l) = (id.clone(), label.clone());
-        m = m.child(mi_sub("ctx-move", "Move to folder", G::FolderInput, matches!(c.sub, Some(Sub::MoveToFolder { .. })), move |s| {
-            if let Some(c) = &mut s.nav.ctx {
-                c.sub = Some(Sub::MoveToFolder { uuid: uuid.clone(), label: l.clone() });
-            }
-        }));
+        m = m.child(mi_sub("ctx-move", "Move to folder", G::FolderInput, matches!(c.sub, Some(Sub::MoveToFolder { .. })), Which::Move));
     }
     let fav_kind = match kind {
         Media::Album => Fav::Album,
@@ -772,9 +811,57 @@ async fn media_track_ids(item: &Value, kind: Media) -> Option<Vec<u64>> {
 static RECENT: LazyLock<Mutex<Vec<String>>> = LazyLock::new(Default::default);
 
 fn track_sub(c: &Ctx) -> Option<El> {
-    match c.sub.as_ref()? {
-        Sub::AddToPlaylist { ids, all, query, anchor, below } => Some(add_menu(ids, *all, query, anchor, *below)),
-        Sub::MoveToFolder { uuid, label } => Some(folder_menu(uuid, label)),
+    let sub = match c.sub.as_ref()? {
+        Sub::AddToPlaylist { ids, all, query, anchor, below } => add_menu(ids, *all, query, anchor, *below),
+        Sub::MoveToFolder { uuid, label } => folder_menu(uuid, label),
+    };
+    // reaching the submenu keeps it open
+    Some(sub.on_hover_change(|s: &mut App, inside, _| {
+        if inside && let Some(c) = &mut s.nav.ctx && matches!(c.intent, Some(Intent::Close(_))) {
+            c.intent = None;
+        }
+    }))
+}
+
+/// Open the menu's submenu `which` for its target (a click, or hover intent).
+fn open_sub(s: &mut App, which: Which) {
+    let Some(c) = &mut s.nav.ctx else { return };
+    match (which, c.target.clone()) {
+        (Which::Add, Target::Track { track, .. }) => open_add(s, vec![track_id(&track)]),
+        (Which::Add, Target::Media { item, kind }) => {
+            // React fetches every track id first, then opens the submenu
+            sone_host_shim::async_runtime::spawn(async move {
+                if let Some(ids) = media_track_ids(&item, kind).await {
+                    *PENDING_SUB.lock().unwrap() = Some(ids);
+                    bump();
+                }
+            });
+        }
+        (Which::Move, Target::Media { item, kind: Media::Playlist }) => {
+            c.sub = Some(Sub::MoveToFolder { uuid: data::data(&item)["uuid"].as_str().unwrap_or("").to_string(), label: data::name(&item) });
+        }
+        _ => {}
+    }
+}
+
+/// Act on hover intent that's due; how soon the next is (for the poll's wake).
+pub fn tick_hover(s: &mut App) -> Option<Duration> {
+    let c = s.nav.ctx.as_mut()?;
+    let now = Instant::now();
+    match c.intent? {
+        Intent::Open(which, at) if at <= now => {
+            c.intent = None;
+            open_sub(s, which);
+            bump();
+            None
+        }
+        Intent::Close(at) if at <= now => {
+            c.intent = None;
+            c.sub = None;
+            bump();
+            None
+        }
+        Intent::Open(_, at) | Intent::Close(at) => Some(at - now),
     }
 }
 
