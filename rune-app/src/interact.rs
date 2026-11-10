@@ -14,7 +14,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{LazyLock, Mutex};
 use std::time::{Duration, Instant};
 
-use rune::{El, Side, TextEdit, Tx, col, el, oklch, row, spacer, text, text_input};
+use rune::{El, Side, TextEdit, Tx, col, el, row, spacer, text, text_input};
 use serde_json::{Value, json};
 use sone_host_shim::Manager;
 use tauri_app_lib::AppState;
@@ -24,7 +24,8 @@ use crate::App;
 use crate::controller::{self, Cmd};
 use crate::data::{self, Key};
 use crate::glyph::{G, glyph};
-use crate::ui::{t, white};
+use crate::theme;
+use crate::ui::{self, t, white};
 use crate::views::{self, Page};
 
 static VERSION: AtomicU64 = AtomicU64::new(0);
@@ -264,30 +265,32 @@ pub fn toast_layer() -> Option<El> {
         return None;
     }
     let mut stack = col().gap(8.0).items_center();
+    // Toasts are built last, so an open menu or dialog has its glass first; the stack is glass
+    // only if what's left of the frame's blurs covers every toast, else it's all opaque.
+    let surface = theme::overlay_surfaces(theme::Overlay::Toast, v.len());
     for toast in v.iter() {
         let (dot_bg, dot) = match toast.kind {
-            Kind::Success => (oklch(0.72, 0.13, 155.0), G::Check),
-            Kind::Error => (oklch(0.62, 0.19, 25.0), G::Close),
+            Kind::Success => (theme::success(), G::Check),
+            Kind::Error => (theme::danger(), G::Close),
             Kind::Info => (white(0.25), G::Check),
         };
         let id = toast.id;
-        let mut r = row().key(format!("toast-{id}")).role("status").label(&toast.msg).gap(10.0).px(14.0).h(40.0).radius(10.0).items_center()
-            .fill(oklch(0.24, 0.02, 270.0)).shadow(6.0, 18.0, rune::oklcha(0.0, 0.0, 0.0, 0.45))
+        let mut r = surface(row().key(format!("toast-{id}")).role("status").label(&toast.msg).gap(10.0).px(14.0).h(40.0).items_center())
             .child(el().size(18.0, 18.0).radius(9.0).fill(dot_bg).items_center().justify_center().child(glyph(dot, 12.0, white(0.98))))
             .child(text(toast.msg.clone()).font(t(13.0, 500.0)).color(white(0.92)).a11y_hidden());
         if let Some((label, action)) = &toast.action {
             let a = action.clone();
             r = r.child(
-                row().key(format!("toast-{id}-act")).role("button").label(label.as_str()).px(6.0).h(26.0).radius(6.0).items_center().hover(white(0.08)).cursor(rune::Cursor::Pointer)
+                theme::focusable(row().key(format!("toast-{id}-act")).role("button").label(label.as_str())).px(6.0).h(26.0).radius(theme::inset_radius(7.0)).items_center().hover(white(0.08)).cursor(rune::Cursor::Pointer)
                     .on_press(move |_: &mut App| {
                         dismiss_toast(id);
                         run_toast_action(a.clone());
                     })
-                    .child(text(label.clone()).font(t(13.0, 650.0)).color(oklch(0.8, 0.12, 250.0)).a11y_hidden()),
+                    .child(text(label.clone()).font(t(13.0, 650.0)).color(theme::accent()).a11y_hidden()),
             );
         }
         r = r.child(
-            row().key(format!("toast-{id}-x")).role("button").label("Dismiss").size(22.0, 22.0).radius(11.0).items_center().justify_center().hover(white(0.08)).cursor(rune::Cursor::Pointer)
+            theme::focusable(row().key(format!("toast-{id}-x")).role("button").label("Dismiss")).size(22.0, 22.0).radius(11.0).items_center().justify_center().hover(white(0.08)).cursor(rune::Cursor::Pointer)
                 .on_press(move |_: &mut App| dismiss_toast(id))
                 .child(glyph(G::Close, 14.0, white(0.55))),
         );
@@ -441,12 +444,12 @@ fn close(s: &mut App) {
 }
 
 fn mi(key: &str, label: &str, g: G, accent: bool, enabled: bool, on: impl Fn(&mut App, &mut Tx) + 'static) -> El {
-    let (fg, ic) = if accent { (white(0.95), oklch(0.75, 0.13, 250.0)) } else { (white(0.78), white(0.5)) };
-    let mut r = row().key(key.to_string()).role("button").label(label).w_full().px(16.0).h(40.0).gap(12.0).items_center()
+    let (fg, ic) = if accent { (white(0.95), theme::accent()) } else { (white(0.78), white(0.5)) };
+    let mut r = row().key(key.to_string()).role("button").label(label).w_full().radius(MENU_ROW_R).px(16.0).h(40.0).gap(12.0).items_center()
         .child(glyph(g, 18.0, ic))
         .child(text(label.to_string()).font(t(14.0, 500.0)).color(fg).truncate().a11y_hidden());
     if enabled {
-        r = r.hover(white(0.06)).cursor(rune::Cursor::Pointer).on_press_tx(on);
+        r = theme::focusable_row(r).hover(white(0.06)).cursor(rune::Cursor::Pointer).on_press_tx(on);
     } else {
         r = r.opacity(0.4);
     }
@@ -465,8 +468,8 @@ fn hover_plain(s: &mut App, tx: &mut Tx) {
 }
 
 fn mi_danger(key: &str, label: &str, on: impl Fn(&mut App, &mut Tx) + 'static) -> El {
-    let red = oklch(0.66, 0.19, 25.0);
-    row().key(key.to_string()).role("button").label(label).w_full().px(16.0).h(40.0).gap(12.0).items_center()
+    let red = theme::danger();
+    theme::focusable_row(row().key(key.to_string()).role("button").label(label)).w_full().radius(MENU_ROW_R).px(16.0).h(40.0).gap(12.0).items_center()
         .hover(white(0.06)).cursor(rune::Cursor::Pointer).on_press_tx(on)
         .on_hover_change(|s: &mut App, inside, tx| if inside { hover_plain(s, tx) })
         .child(glyph(G::Trash, 18.0, red))
@@ -474,7 +477,7 @@ fn mi_danger(key: &str, label: &str, on: impl Fn(&mut App, &mut Tx) + 'static) -
 }
 
 fn mi_sub(key: &str, label: &str, g: G, open: bool, which: Which) -> El {
-    row().key(key.to_string()).role("button").label(label).w_full().px(16.0).h(40.0).gap(12.0).items_center()
+    theme::focusable_row(row().key(key.to_string()).role("button").label(label)).w_full().radius(MENU_ROW_R).px(16.0).h(40.0).gap(12.0).items_center()
         .fill(if open { white(0.06) } else { rune::Color::TRANSPARENT }).hover(white(0.06)).cursor(rune::Cursor::Pointer)
         .on_press(move |s: &mut App| {
             if let Some(c) = &mut s.nav.ctx {
@@ -505,10 +508,14 @@ fn sep() -> El {
     el().w_full().h(1.0).my(4.0).fill(white(0.08))
 }
 
+/// A menu's padding, and its rows' corner radius, concentric with the menu's corners.
+const MENU_PAD: f32 = 4.0;
+const MENU_ROW_R: f32 = theme::inset_radius(MENU_PAD);
+
 fn panel(key: &str, w: f32) -> El {
-    // a press on the menu's own padding isn't an outside click
-    col().key(key.to_string()).role("menu").w(w).py(4.0).radius(12.0).fill(oklch(0.2, 0.02, 270.0))
-        .border(1.0, white(0.08)).shadow(10.0, 30.0, rune::oklcha(0.0, 0.0, 0.0, 0.5))
+    // a press on the menu's own padding isn't an outside click; Up and Down move between items
+    theme::overlay_surface(col().key(key.to_string()).role("menu").w(w).padding(MENU_PAD), theme::Overlay::Menu)
+        .focus_group()
         .on_press(|_: &mut App| {})
 }
 
@@ -893,7 +900,7 @@ fn add_menu(ids: &[u64], all: bool, query: &TextEdit, anchor: &str, below: bool)
         let title = d["title"].as_str().unwrap_or("").to_string();
         let n = d["numberOfTracks"].as_u64().unwrap_or(0);
         let (u, l, ids) = (uuid.clone(), title.clone(), ids.clone());
-        let mut r = row().key(format!("atp-{i}")).role("button").label(title.as_str()).w_full().px(14.0).h(if detailed { 56.0 } else { 38.0 }).gap(10.0).items_center()
+        let mut r = theme::focusable_row(row().key(format!("atp-{i}")).role("button").label(title.as_str())).w_full().radius(MENU_ROW_R).px(14.0).h(if detailed { 56.0 } else { 38.0 }).gap(10.0).items_center()
             .hover(white(0.06)).cursor(rune::Cursor::Pointer)
             .on_press(move |s: &mut App| {
                 close(s);
@@ -911,14 +918,14 @@ fn add_menu(ids: &[u64], all: bool, query: &TextEdit, anchor: &str, below: bool)
     };
     if !all {
         let ids_c = ids.clone();
-        m = m.child(row().key("atp-create").role("button").label("Create new playlist").w_full().px(14.0).h(48.0).gap(12.0).items_center().hover(white(0.06)).cursor(rune::Cursor::Pointer)
+        m = m.child(theme::focusable_row(row().key("atp-create").role("button").label("Create new playlist")).w_full().radius(MENU_ROW_R).px(14.0).h(48.0).gap(12.0).items_center().hover(white(0.06)).cursor(rune::Cursor::Pointer)
                 .on_press(move |s: &mut App| {
                     close(s);
                     s.nav.create = Some(Create { title: TextEdit::new(""), desc: TextEdit::new(""), public: false, ids: ids_c.clone(), saving: false });
                 })
                 .child(el().size(32.0, 32.0).radius(16.0).fill(white(0.08)).items_center().justify_center().child(glyph(G::Plus, 18.0, white(0.85))))
                 .child(text("Create new playlist").font(t(15.0, 500.0)).color(white(0.92)).a11y_hidden()))
-            .child(row().key("atp-all").role("button").label("Show all playlists").w_full().px(14.0).h(36.0).items_center().hover(white(0.06)).cursor(rune::Cursor::Pointer)
+            .child(theme::focusable_row(row().key("atp-all").role("button").label("Show all playlists")).w_full().radius(MENU_ROW_R).px(14.0).h(36.0).items_center().hover(white(0.06)).cursor(rune::Cursor::Pointer)
                 .on_press(|s: &mut App| if let Some(Ctx { sub: Some(Sub::AddToPlaylist { all, .. }), .. }) = &mut s.nav.ctx { *all = true })
                 .child(text("Show all playlists").font(t(13.0, 500.0)).color(white(0.55)).a11y_hidden()))
             .child(text("RECENT").font(t(11.0, 700.0)).color(white(0.45)).px(14.0).py(6.0));
@@ -935,7 +942,7 @@ fn add_menu(ids: &[u64], all: bool, query: &TextEdit, anchor: &str, below: bool)
         }
     } else {
         let q = query.text.to_lowercase();
-        m = m.child(row().key("atp-back").role("button").label("← Back").px(14.0).h(32.0).items_center().hover(white(0.06)).cursor(rune::Cursor::Pointer)
+        m = m.child(theme::focusable_row(row().key("atp-back").role("button").label("← Back")).radius(MENU_ROW_R).px(14.0).h(32.0).items_center().hover(white(0.06)).cursor(rune::Cursor::Pointer)
                 .on_press(|s: &mut App| if let Some(Ctx { sub: Some(Sub::AddToPlaylist { all, .. }), .. }) = &mut s.nav.ctx { *all = false })
                 .child(text("← Back").font(t(13.0, 500.0)).color(white(0.6)).a11y_hidden()))
             .child(row().mx(12.0).my(4.0).h(34.0).px(10.0).gap(8.0).radius(8.0).items_center().fill(white(0.06))
@@ -947,7 +954,7 @@ fn add_menu(ids: &[u64], all: bool, query: &TextEdit, anchor: &str, below: bool)
                     })));
         let hits: Vec<&Value> = pls.iter().filter(|p| q.is_empty() || data::name(p).to_lowercase().contains(&q)).collect();
         if hits.is_empty() {
-            m = m.child(text(if pls.is_empty() { "No playlists yet" } else { "No playlists found" }).font(t(13.0, 500.0)).color(white(0.5)).px(14.0).py(10.0));
+            m = m.child(ui::empty(if pls.is_empty() { "No playlists yet" } else { "No playlists found" }).px(14.0).py(10.0));
         }
         let mut list = col().w_full().max_h(320.0).scroll(rune::ScrollSpec { stick_bottom: false });
         for (i, p) in hits.into_iter().enumerate() {
@@ -1003,7 +1010,7 @@ fn folder_menu(uuid: &str, label: &str) -> El {
         let d = data::data(f);
         let (fid, fname) = (d["id"].as_str().unwrap_or("").to_string(), d["name"].as_str().unwrap_or("").to_string());
         let (u, l, n2) = (uuid.to_string(), label.to_string(), fname.clone());
-        m = m.child(row().key(format!("mtf-{i}")).role("button").label(fname.as_str()).w_full().px(14.0).h(38.0).gap(10.0).items_center().hover(white(0.06)).cursor(rune::Cursor::Pointer)
+        m = m.child(theme::focusable_row(row().key(format!("mtf-{i}")).role("button").label(fname.as_str())).w_full().radius(MENU_ROW_R).px(14.0).h(38.0).gap(10.0).items_center().hover(white(0.06)).cursor(rune::Cursor::Pointer)
             .on_press(move |s: &mut App| {
                 close(s);
                 move_to_folder(u.clone(), l.clone(), fid.clone(), n2.clone());
@@ -1012,10 +1019,10 @@ fn folder_menu(uuid: &str, label: &str) -> El {
             .child(text(fname).font(t(14.0, 500.0)).color(white(0.85)).truncate().a11y_hidden()));
     }
     if folders.is_empty() {
-        m = m.child(text("No folders yet").font(t(13.0, 500.0)).color(white(0.5)).px(14.0).py(10.0));
+        m = m.child(ui::empty("No folders yet").px(14.0).py(10.0));
     }
     let (u, l) = (uuid.to_string(), label.to_string());
-    m.child(sep()).child(row().key("mtf-root").role("button").label("Playlists").w_full().px(14.0).h(38.0).gap(10.0).items_center().hover(white(0.06)).cursor(rune::Cursor::Pointer)
+    m.child(sep()).child(theme::focusable_row(row().key("mtf-root").role("button").label("Playlists")).w_full().radius(MENU_ROW_R).px(14.0).h(38.0).gap(10.0).items_center().hover(white(0.06)).cursor(rune::Cursor::Pointer)
         .on_press(move |s: &mut App| {
             close(s);
             move_to_folder(u.clone(), l.clone(), "root".into(), String::new());
@@ -1043,16 +1050,9 @@ fn move_to_folder(uuid: String, label: String, folder: String, folder_name: Stri
 
 // ------------------------------------------------------------------ dialogs
 
+/// A dialog titled `title` (also its accessible name), in the app's one dialog frame.
 fn dialog_frame(key: &str, title: &str, close_label: &str, body: El, close: fn(&mut App)) -> El {
-    // modal scrim: the page is inert, and a press outside the dialog closes it
-    row().key(format!("{key}-scrim")).pin(Some(0.0), Some(0.0), Some(0.0), Some(0.0)).fill(rune::oklcha(0.0, 0.0, 0.0, 0.55)).items_center().justify_center()
-        .modal(false, close).on_press(close)
-        .child(col().key(key.to_string()).role("dialog").label(title).w(440.0).padding(24.0).gap(16.0).radius(16.0).fill(oklch(0.21, 0.02, 270.0))
-            .on_press(|_: &mut App| {})
-            .child(row().items_center().child(text(title.to_string()).font(t(20.0, 700.0)).color(white(0.96)).role("heading").label(title)).child(spacer())
-                .child(row().key(format!("{key}-x")).role("button").label(close_label).size(28.0, 28.0).radius(14.0).items_center().justify_center().hover(white(0.08)).cursor(rune::Cursor::Pointer)
-                    .on_press(close).child(glyph(G::Close, 20.0, white(0.6)))))
-            .child(body))
+    ui::dialog_frame(&format!("{key}-scrim"), key, title, (&format!("{key}-x"), close_label), 440.0, None, Some(ui::dialog_title(title)), body, close)
 }
 
 fn confirm_delete(c: &Ctx) -> El {
@@ -1062,8 +1062,8 @@ fn confirm_delete(c: &Ctx) -> El {
     let body = col().gap(18.0)
         .child(text(format!("Are you sure you want to delete \"{title}\"? This can't be undone.")).font(t(14.0, 400.0)).color(white(0.75)).wrap())
         .child(row().gap(10.0).child(spacer())
-            .child(pill("del-cancel", "Cancel", false, |s: &mut App| close(s)))
-            .child(pill("del-ok", "Delete", true, move |s: &mut App| {
+            .child(ui::pill("del-cancel", "Cancel", None, ui::Pill::Secondary).on_press(|s: &mut App| close(s)))
+            .child(ui::pill("del-ok", "Delete", None, ui::Pill::Danger).on_press(move |s: &mut App| {
                 close(s);
                 if s.nav.page == Page::Playlist(uuid.clone()) {
                     // React replaces the current history entry with Home
@@ -1088,12 +1088,6 @@ fn confirm_delete(c: &Ctx) -> El {
     })
 }
 
-fn pill(key: &str, label: &str, danger: bool, on: impl Fn(&mut App) + 'static) -> El {
-    let (bg, fg) = if danger { (oklch(0.6, 0.19, 25.0), white(0.98)) } else { (white(0.1), white(0.9)) };
-    row().key(key.to_string()).role("button").label(label).h(38.0).px(18.0).radius(19.0).items_center().fill(bg).hover(white(0.16)).cursor(rune::Cursor::Pointer)
-        .on_press(on).child(text(label.to_string()).font(t(14.0, 650.0)).color(fg).a11y_hidden())
-}
-
 fn create_modal(cr: &Create) -> El {
     let saving = cr.saving;
     let body = col().gap(14.0)
@@ -1105,18 +1099,14 @@ fn create_modal(cr: &Create) -> El {
                 .child(text_input(&cr.desc, t(13.0, 400.0).lh(18.0)).key("cp-desc").label("Write a description").grow(1.0).color(white(0.9)).placeholder("Write a description", white(0.4))
                     .on_edit(|s: &mut App| &mut s.nav.create.as_mut().expect("the field shows with its dialog").desc)))
             .child(text(format!("{}/500 characters", cr.desc.text.chars().count())).font(t(11.0, 400.0)).color(white(0.45))))
-        .child(row().key("cp-public").role("switch").label("Make it public").checked(cr.public).gap(10.0).items_center().cursor(rune::Cursor::Pointer)
+        .child(theme::focusable(row().key("cp-public").role("switch").label("Make it public")).checked(cr.public).gap(10.0).items_center().cursor(rune::Cursor::Pointer)
             .on_press(|s: &mut App| if let Some(c) = &mut s.nav.create { c.public = !c.public })
             .child(col().grow(1.0).a11y_hidden()
                 .child(text("Make it public").font(t(14.0, 600.0)).color(white(0.92)))
                 .child(text("Your playlist will be visible on your Profile and accessible by anyone.").font(t(12.0, 400.0)).color(white(0.5)).wrap()))
-            .child(el().size(36.0, 20.0).radius(10.0).fill(if cr.public { oklch(0.7, 0.13, 250.0) } else { white(0.2) })
-                .child(el().absolute(if cr.public { 18.0 } else { 2.0 }, 2.0).size(16.0, 16.0).radius(8.0).fill(white(0.98)))))
+            .child(ui::switch_mark(cr.public)))
         .child(row().child(spacer()).child(
-            row().key("cp-save").role("button").label("Save").h(40.0).px(22.0).gap(8.0).radius(20.0).items_center().fill(white(0.96)).cursor(rune::Cursor::Pointer)
-                .on_press(|s: &mut App| save_playlist(s))
-                .child(if saving { glyph(G::Loader, 16.0, oklch(0.2, 0.02, 270.0)) } else { el() })
-                .child(text("Save").font(t(14.0, 700.0)).color(oklch(0.2, 0.02, 270.0)).a11y_hidden())));
+            ui::pill("cp-save", "Save", saving.then_some(G::Loader), ui::Pill::Primary).on_press(|s: &mut App| save_playlist(s))));
     dialog_frame("cp-dialog", "Create playlist", "Close", body, |s| s.nav.create = None)
 }
 

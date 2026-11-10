@@ -15,6 +15,7 @@ use crate::controller::{self, Cmd};
 use crate::data::{self, Key};
 use crate::glyph::{G, glyph};
 use crate::interact::{self, Anchor};
+use crate::theme;
 use crate::ui::{self, t, white};
 use crate::views::{self, Page, go};
 use crate::App;
@@ -29,23 +30,41 @@ const MIN_CARD: f32 = 170.0;
 thread_local! {
     /// Each card row's scroll position, for its arrows (set as it scrolls, without a rebuild).
     static ROWS: RefCell<HashMap<String, rune::ScrollPos>> = RefCell::new(HashMap::new());
+    /// Bumped when a row's arrows change (it can now scroll a way it couldn't, or no longer
+    /// can), so `main::poll` rebuilds the view; scrolling between the ends rebuilds nothing.
+    static ARROWS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+
+/// Which ways a row scrolled to `p` can still go: (back, forward).
+fn ways(p: &rune::ScrollPos) -> (bool, bool) {
+    (p.offset[0] > 0.5, p.offset[0] < p.max[0] - 0.5)
+}
+
+/// What [`ways`] says for the card row keyed `key`: neither, until it has been laid out.
+fn can_scroll(key: &str) -> (bool, bool) {
+    ROWS.with(|m| m.borrow().get(key).map(ways).unwrap_or((false, false)))
+}
+
+/// Changes whenever some card row's arrows should change.
+pub fn version() -> u64 {
+    ARROWS.with(|a| a.get())
 }
 
 pub fn home(s: &App) -> El {
     let slug = s.nav.home_tab.clone();
-    let Some(first) = data::ready(Key::Home(slug.clone())) else { return views::loading() };
+    let first = match views::ready_or(Key::Home(slug.clone())) { Ok(v) => v, Err(e) => return e };
     let home = &first["home"];
     let w = s.nav.content_w;
     let mut c = col().w_full().gap(32.0);
 
     let tabs = home["tabs"].as_array().cloned().unwrap_or_default();
     if !tabs.is_empty() {
-        let mut bar = row().gap(8.0).flex_wrap().role("tablist");
+        let mut bar = row().gap(8.0).flex_wrap().role("tablist").focus_group();
         for tab in &tabs {
             let name = tab["name"].as_str().unwrap_or("").to_string();
             let tslug = tab["tabType"].as_str().unwrap_or("").to_lowercase();
             let on = tslug == slug;
-            bar = bar.child(row().key(format!("home-tab-{tslug}")).role("tab").label(name.clone()).h(36.0).px(16.0).radius(18.0).items_center()
+            bar = bar.child(theme::focusable(row().key(format!("home-tab-{tslug}")).role("tab").label(name.clone())).focus_selected(on).h(36.0).px(16.0).radius(18.0).items_center()
                 .fill(if on { white(0.95) } else { white(0.08) }).hover(if on { white(0.95) } else { white(0.14) }).cursor(rune::Cursor::Pointer)
                 .on_press(move |s: &mut App| {
                     if s.nav.home_tab != tslug {
@@ -53,7 +72,7 @@ pub fn home(s: &App) -> El {
                         s.nav.home_pages = 0;
                     }
                 })
-                .child(text(name).font(t(14.0, 700.0)).color(if on { rune::oklch(0.15, 0.02, 270.0) } else { white(0.92) }).a11y_hidden()));
+                .child(text(name).font(t(14.0, 700.0)).color(if on { theme::ink() } else { white(0.92) }).a11y_hidden()));
         }
         c = c.child(bar);
     }
@@ -81,7 +100,7 @@ pub fn home(s: &App) -> El {
         }
     }
     if sections.is_empty() {
-        return c.child(text("Nothing to show here yet").font(t(13.0, 500.0)).color(white(0.5)));
+        return c.child(ui::empty("Nothing to show here yet"));
     }
     for (si, sec) in sections.iter().enumerate() {
         if let Some(e) = section(si, sec, w) {
@@ -120,29 +139,38 @@ fn section(si: usize, sec: &Value, w: f32) -> Option<El> {
 fn header(si: usize, title: &str, view_all: Option<String>, arrows: bool) -> El {
     let mut r = row().w_full().items_center().gap(8.0);
     if !title.is_empty() {
-        r = r.child(views::heading(title, 22.0));
+        r = r.child(views::heading(title, theme::SECTION));
     }
     r = r.child(spacer());
     if arrows {
         let key = format!("home-row-{si}");
+        // Shown only while the row overflows, and inert (dimmed) at the end it can't move
+        // toward, as React's are. A row that fits keeps them in the accessibility tree,
+        // undrawn and disabled, so the inventory doesn't change with the window's width.
+        let (back, fwd) = can_scroll(&key);
         // React's arrows carry no accessible name (lucide chevrons in bare buttons).
-        for (g, dir) in [(G::Back, -1.0f32), (G::Forward, 1.0)] {
+        for (g, dir, can) in [(G::Back, -1.0f32, back), (G::Forward, 1.0, fwd)] {
             let k = key.clone();
-            r = r.child(el().key(format!("{key}-{}", if dir < 0.0 { "prev" } else { "next" })).role("button").size(32.0, 32.0).radius(16.0)
-                .fill(white(0.08)).hover(white(0.14)).press_scale(0.92).items_center().justify_center().cursor(rune::Cursor::Pointer)
-                .on_press_tx(move |_: &mut App, tx: &mut Tx| {
-                    // A page at a time: the row's width plus a gap, so cards land aligned.
-                    if let Some(p) = ROWS.with(|m| m.borrow().get(&k).copied()) {
-                        let x = (p.offset[0] + dir * (p.viewport[0] + CARD_GAP)).clamp(0.0, p.max[0].max(0.0));
-                        tx.scroll_to(k.clone(), x, 0.0);
-                    }
-                })
-                .child(glyph(g, 18.0, white(0.9))));
+            let b = el().key(format!("{key}-{}", if dir < 0.0 { "prev" } else { "next" })).role("button").size(32.0, 32.0).radius(16.0).items_center().justify_center();
+            let ink = if can { white(0.9) } else if back || fwd { white(0.3) } else { white(0.0) };
+            let b = if !can {
+                b.disabled(true)
+            } else {
+                b.fill(white(0.08)).hover(white(0.14)).press_scale(0.92).cursor(rune::Cursor::Pointer)
+                    .on_press_tx(move |_: &mut App, tx: &mut Tx| {
+                        // A page at a time: the row's width plus a gap, so cards land aligned.
+                        if let Some(p) = ROWS.with(|m| m.borrow().get(&k).copied()) {
+                            let x = (p.offset[0] + dir * (p.viewport[0] + CARD_GAP)).clamp(0.0, p.max[0].max(0.0));
+                            tx.scroll_to(k.clone(), x, 0.0);
+                        }
+                    })
+            };
+            r = r.child(b.child(glyph(g, 18.0, ink)));
         }
     }
     if let Some(path) = view_all {
         let t2 = title.to_string();
-        r = r.child(row().key(format!("home-viewall-{si}")).role("button").label("View all").h(30.0).px(12.0).radius(15.0).items_center()
+        r = r.child(theme::focusable(row().key(format!("home-viewall-{si}")).role("button").label("View all")).h(30.0).px(12.0).radius(15.0).items_center()
             .hover(white(0.06)).cursor(rune::Cursor::Pointer)
             .on_press(move |s: &mut App| go(s, Page::ExploreSub(path.clone(), t2.clone())))
             .child(text("View all").font(t(13.0, 700.0)).color(white(0.6)).a11y_hidden()));
@@ -184,7 +212,7 @@ fn shortcuts(items: &[Value], w: f32) -> El {
     let gap = 12.0;
     let tw = ((w - (cols - 1.0) * gap) / cols).floor();
     let tile = |key: String, label: String, art: El| {
-        row().key(key).role("presentation").w(tw).h(56.0).radius(4.0).clip_rounded(4.0).items_center().gap(12.0)
+        theme::focusable_row(row().key(key).role("presentation")).w(tw).h(56.0).radius(4.0).clip_rounded(4.0).items_center().gap(12.0)
             .fill(white(0.05)).hover(white(0.1)).cursor(rune::Cursor::Pointer)
             .child(art)
             .child(text(label).font(t(13.0, 700.0)).color(white(0.95)).truncate().shrink().min_w(0.0))
@@ -210,9 +238,7 @@ fn section_tracks(items: &[Value]) -> Vec<Value> {
 
 fn play_from(title: &str, tracks: &[Value], id: u64) {
     let idx = tracks.iter().position(|t| t["id"].as_u64() == Some(id)).unwrap_or(0);
-    let mut ordered = tracks[idx..].to_vec();
-    ordered.extend_from_slice(&tracks[..idx]);
-    controller::send(Cmd::PlayCollection { tracks: ordered, source: json!({"type": "home-section", "id": title, "name": title}), album_mode: false, shuffle: false });
+    controller::send(Cmd::PlayFrom { tracks: tracks.to_vec(), index: idx, source: json!({"type": "home-section", "id": title, "name": title}), album_mode: false });
 }
 
 /// Compact rows, three to a column, filled down then across (useGridColumns + fitRows).
@@ -235,7 +261,7 @@ fn compact_grid(si: usize, title: &str, items: &[Value], w: f32) -> El {
                 _ => data::artist_of(it),
             };
             let name = data::name(it);
-            let mut line = row().key(format!("home-{si}-c{r}")).role("button").label(name.clone()).w_full().h(56.0).px(8.0).gap(12.0).radius(6.0).items_center()
+            let mut line = theme::focusable_row(row().key(format!("home-{si}-c{r}")).role("button").label(name.clone())).w_full().h(56.0).px(8.0).gap(12.0).radius(6.0).items_center()
                 .hover(white(0.06)).cursor(rune::Cursor::Pointer)
                 .child(thumb(it, 40.0, 4.0))
                 .child(col().shrink().min_w(0.0).gap(2.0)
@@ -268,7 +294,12 @@ fn card_row(si: usize, title: &str, items: &[Value], w: f32) -> Option<El> {
     let key = format!("home-row-{si}");
     let k = key.clone();
     let mut r = row().key(key.clone()).w_full().gap(CARD_GAP).items_start().scroll_x()
-        .on_scroll_offset(move |p| ROWS.with(|m| { m.borrow_mut().insert(k.clone(), p); }));
+        .on_scroll_offset(move |p| ROWS.with(|m| {
+            let was = m.borrow_mut().insert(k.clone(), p);
+            if was.as_ref().map(ways) != Some(ways(&p)) {
+                ARROWS.with(|a| a.set(a.get().wrapping_add(1)));
+            }
+        }));
     let tracks = section_tracks(items);
     let videos: Vec<Value> = items.iter().filter(|it| data::kind(it) == "VIDEO").cloned().collect();
     let mut n = 0;
@@ -304,7 +335,7 @@ fn track_card(key: String, it: &Value, cw: f32, title: &str, tracks: &[Value]) -
     let id = d["id"].as_u64().unwrap_or(0);
     let a = cw - 16.0;
     let (tr, ttl) = (tracks.to_vec(), title.to_string());
-    col().key(key).role("presentation").w(cw).padding(8.0).gap(6.0).radius(12.0).hover(white(0.06)).cursor(rune::Cursor::Pointer)
+    theme::focusable_row(col().key(key).role("presentation")).w(cw).padding(8.0).gap(6.0).radius(12.0).hover(white(0.06)).cursor(rune::Cursor::Pointer)
         .on_press(move |_: &mut App| play_from(&ttl, &tr, id))
         .on_secondary_press(move |s: &mut App, p, _| interact::open_track(s, d.clone(), None, Anchor::Point(p.x, p.y)))
         .child(ui::with_image(ui::tile(ui::hue(Some(id)), a, id, 10.0), crate::art::item_url(it, a), a, 10.0))
@@ -341,7 +372,7 @@ fn promo_card(key: String, it: &Value, cw: f32) -> Option<El> {
         art = art.child(el().absolute(0.0, 0.0).size(a, h).pixels_fit(&px, rune::SurfaceFit::Fill));
     }
     let header = d["header"].as_str().unwrap_or("").to_string();
-    Some(col().key(key).role("presentation").w(cw).padding(8.0).gap(6.0).radius(12.0).hover(white(0.06)).cursor(rune::Cursor::Pointer)
+    Some(theme::focusable_row(col().key(key).role("presentation")).w(cw).padding(8.0).gap(6.0).radius(12.0).hover(white(0.06)).cursor(rune::Cursor::Pointer)
         .on_press(move |s: &mut App| open(s))
         .child(art)
         .child(text(header).font(t(10.0, 700.0).tracking(0.6)).color(white(0.5)).truncate())

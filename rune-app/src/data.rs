@@ -9,6 +9,7 @@ use sone_host_shim::Manager;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{LazyLock, Mutex};
+use std::time::{Duration, Instant};
 use tauri_app_lib::AppState;
 use tauri_app_lib::commands::{library, metadata, pages, search};
 
@@ -49,31 +50,58 @@ pub enum Load {
     Failed(String),
 }
 
-static CACHE: LazyLock<Mutex<HashMap<Key, Load>>> = LazyLock::new(Default::default);
+/// A cache entry: its state, the fetch that owns it, when it got there, and how many automatic
+/// retries of a failure it has had.
+struct Entry {
+    load: Load,
+    fetch: u64,
+    at: Instant,
+    retries: usize,
+}
+
+static CACHE: LazyLock<Mutex<HashMap<Key, Entry>>> = LazyLock::new(Default::default);
 static VERSION: AtomicU64 = AtomicU64::new(0);
+static FETCHES: AtomicU64 = AtomicU64::new(0);
+/// A failed entry is fetched again when asked this long after each failure (offline, a
+/// timeout), then left failed until `forget` (views redraw every second while music plays, and
+/// some treat a failure as an answer, e.g. a track without lyrics).
+const RETRY_FAILED_AFTER: [Duration; 3] = [Duration::from_secs(5), Duration::from_secs(20), Duration::from_secs(60)];
 
 pub fn version() -> u64 {
     VERSION.load(Ordering::Relaxed)
 }
 
-/// The cached value, starting the fetch if this is the first ask.
+/// The cached value, starting the fetch if this is the first ask (or a failure has cooled down).
 pub fn want(key: Key) -> Load {
     let mut c = CACHE.lock().unwrap();
-    if let Some(v) = c.get(&key) {
-        return v.clone();
+    let mut retries = 0;
+    if let Some(e) = c.get(&key) {
+        let due = matches!(e.load, Load::Failed(_)) && RETRY_FAILED_AFTER.get(e.retries).is_some_and(|d| e.at.elapsed() >= *d);
+        if !due {
+            return e.load.clone();
+        }
+        retries = e.retries + 1;
     }
-    c.insert(key.clone(), Load::Loading);
+    let fetch_id = FETCHES.fetch_add(1, Ordering::Relaxed) + 1;
+    c.insert(key.clone(), Entry { load: Load::Loading, fetch: fetch_id, at: Instant::now(), retries });
     drop(c);
     sone_host_shim::async_runtime::spawn(async move {
         let res = fetch(&key).await;
-        CACHE.lock().unwrap().insert(key, match res {
+        let load = match res {
             Ok(v) => Load::Ready(v),
             Err(e) => {
                 log::warn!("[rune] data fetch failed: {e}");
                 Load::Failed(e)
             }
-        });
-        VERSION.fetch_add(1, Ordering::Relaxed);
+        };
+        // Only if the entry is still ours: a `forget` (or a newer fetch) since means this
+        // result is older than what was asked for.
+        let mut c = CACHE.lock().unwrap();
+        if c.get(&key).is_some_and(|e| e.fetch == fetch_id) {
+            c.insert(key, Entry { load, fetch: fetch_id, at: Instant::now(), retries });
+            drop(c);
+            VERSION.fetch_add(1, Ordering::Relaxed);
+        }
     });
     Load::Loading
 }
@@ -82,7 +110,7 @@ pub fn want(key: Key) -> Load {
 /// on render, e.g. debounced suggestions).
 pub fn peek(key: &Key) -> Option<Value> {
     match CACHE.lock().unwrap().get(key) {
-        Some(Load::Ready(v)) => Some(v.clone()),
+        Some(Entry { load: Load::Ready(v), .. }) => Some(v.clone()),
         _ => None,
     }
 }
@@ -96,11 +124,12 @@ pub fn ready(key: Key) -> Option<Value> {
 
 /// Awaitable fetch for the controller (e.g. an artist's top tracks before playing them).
 pub async fn get(key: Key) -> Result<Value, String> {
-    if let Some(Load::Ready(v)) = CACHE.lock().unwrap().get(&key).cloned() {
+    if let Some(v) = peek(&key) {
         return Ok(v);
     }
     let v = fetch(&key).await?;
-    CACHE.lock().unwrap().insert(key, Load::Ready(v.clone()));
+    let fetch_id = FETCHES.fetch_add(1, Ordering::Relaxed) + 1;
+    CACHE.lock().unwrap().insert(key, Entry { load: Load::Ready(v.clone()), fetch: fetch_id, at: Instant::now(), retries: 0 });
     VERSION.fetch_add(1, Ordering::Relaxed);
     Ok(v)
 }

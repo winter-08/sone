@@ -7,13 +7,14 @@
 
 use crate::controller::{Cmd, QItem, Repeat, View, send};
 use crate::glyph::{G, glyph};
+use crate::theme;
 use rune::{Align, Color, El, Spring, TextStyle, col, el, oklch, oklcha, row, spacer, text};
 
 pub fn white(a: f32) -> Color {
     oklcha(0.985, 0.0, 0.0, a)
 }
 pub fn base(h: f32) -> Color {
-    oklch(0.155, 0.025, h)
+    theme::surface(0.155, h)
 }
 pub fn tnum(s: TextStyle) -> TextStyle {
     s.features("'tnum' 1")
@@ -82,11 +83,7 @@ pub fn with_image(placeholder: El, url: Option<String>, size: f32, radius: f32) 
 }
 
 pub fn icon_button<S: 'static>(key: &str, label: &str, g: G, size: f32, c: Color) -> El {
-    el().key(key.to_string())
-        .role("button")
-        .label(label)
-        .focusable(true)
-        .focus_ring(2.0, 2.0, white(0.6))
+    theme::focusable(el().key(key.to_string()).role("button").label(label))
         .size(36.0, 36.0)
         .radius(18.0)
         .items_center()
@@ -96,6 +93,107 @@ pub fn icon_button<S: 'static>(key: &str, label: &str, g: G, size: f32, c: Color
         .press_scale(0.92)
         .cursor(rune::Cursor::Pointer)
         .child(glyph(g, size, c))
+}
+
+/// `b`, a control that can't be used now: read as unavailable, out of the Tab order, and with
+/// no hover, press or pointer. Its name and role stay; draw it dimmed and leave its press
+/// handler off.
+pub fn unavailable(b: El) -> El {
+    b.disabled(true).hover(Color::TRANSPARENT).press(Color::TRANSPARENT).press_scale(1.0).cursor(rune::Cursor::Default)
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Pill {
+    /// White, dark ink: the one main action of a view.
+    Primary,
+    Secondary,
+    /// Red: an action that destroys something.
+    Danger,
+}
+
+/// The app's one pill button: 36 pt tall, an optional icon, then the label (the accessible name).
+pub fn pill(key: &str, label: &str, g: Option<G>, kind: Pill) -> El {
+    let (bg, fg, hover) = match kind {
+        Pill::Primary => (white(0.97), theme::ink(), white(0.9)),
+        Pill::Secondary => (white(0.1), white(0.92), white(0.16)),
+        Pill::Danger => (theme::danger(), white(0.98), white(0.12)),
+    };
+    let mut b = theme::focusable(row().key(key.to_string()).role("button").label(label))
+        .h(36.0)
+        .px(14.0)
+        .gap(8.0)
+        .radius(18.0)
+        .items_center()
+        .fill(bg)
+        .hover(hover)
+        .press_scale(0.96)
+        .cursor(rune::Cursor::Pointer);
+    if let Some(g) = g {
+        b = b.child(glyph(g, 15.0, fg));
+    }
+    b.child(text(label.to_string()).font(t(13.0, 600.0)).color(fg).a11y_hidden())
+}
+
+/// The app's one dialog: a modal scrim over the window (Escape, or a press outside the panel,
+/// calls `close`) and a panel `w` points wide (and `h` tall, if given) on the overlay surface,
+/// with a close button (`close_btn`: key and accessible name) in its top-right corner. `head`
+/// (usually a [`dialog_title`]) stays at the top; `body` goes under it and scrolls.
+///
+/// The panel never outgrows the window: it keeps a margin all round, narrowing and shortening
+/// as the window does, and then only the body scrolls (in a viewport keyed `<key>-scroll`).
+#[allow(clippy::too_many_arguments)]
+pub fn dialog_frame<S: 'static>(layer_key: &str, key: &str, label: &str, close_btn: (&str, &str), w: f32, h: Option<f32>, head: Option<El>, body: El, close: fn(&mut S)) -> El {
+    // A column item that may shrink below its content's height, down to nothing.
+    let shrinks = |e: El| e.shrink().min_h(0.0);
+    let mut panel = shrinks(theme::overlay_surface(col().key(key.to_string()).role("dialog").label(label).w_full().max_w(w).padding(24.0).gap(16.0), theme::Overlay::Dialog));
+    if let Some(h) = h {
+        panel = panel.h(h);
+    }
+    if let Some(head) = head {
+        panel = panel.child(head);
+    }
+    // The viewport reaches 4 pt past the body on every side, so focus rings drawn just outside
+    // its controls aren't clipped.
+    let viewport = shrinks(col()).mx(-4.0).my(-4.0).scroll(rune::ScrollSpec { stick_bottom: false }).scroll_edge_fade(16.0);
+    let body = smooth_wheel::<S>(viewport.child(col().padding(4.0).child(body)), format!("{key}-scroll"));
+    col()
+        .key(layer_key.to_string())
+        .pin(Some(0.0), Some(0.0), Some(0.0), Some(0.0))
+        .padding(24.0)
+        .fill(theme::scrim())
+        .items_center()
+        .justify_center()
+        .modal(false, close)
+        .on_press(close)
+        .child(
+            // a press on the panel itself isn't an outside click
+            panel.on_press(|_: &mut S| {}).child(body)
+                .child(icon_button::<S>(close_btn.0, close_btn.1, G::Close, 16.0, white(0.6)).pin(None, Some(12.0), Some(12.0), None).on_press(close)),
+        )
+}
+
+/// A dialog's title, kept clear of the close button.
+pub fn dialog_title(title: &str) -> El {
+    text(title.to_string()).font(t(theme::DIALOG_TITLE, 700.0)).color(white(theme::TEXT)).role("heading").label(title).mr(40.0)
+}
+
+/// A switch's track and knob, drawn on or off. Decorative: the control around it carries the
+/// role, name and state.
+pub fn switch_mark(on: bool) -> El {
+    el().size(36.0, 20.0).radius(10.0).fill(if on { theme::accent() } else { white(0.2) }).a11y_hidden()
+        .child(el().absolute(if on { 18.0 } else { 2.0 }, 2.0).size(16.0, 16.0).radius(8.0).fill(white(0.98)))
+}
+
+/// A radio button's ring, with the accent dot when it's the chosen one. Decorative, as
+/// [`switch_mark`].
+pub fn radio_mark(on: bool) -> El {
+    let ring = el().size(18.0, 18.0).radius(9.0).border(1.5, if on { theme::accent() } else { white(0.35) }).items_center().justify_center().a11y_hidden();
+    if on { ring.child(el().size(8.0, 8.0).radius(4.0).fill(theme::accent())) } else { ring }
+}
+
+/// One muted line where a list or page has nothing to show.
+pub fn empty(msg: &str) -> El {
+    text(msg.to_string()).font(t(13.0, 500.0)).color(white(theme::TEXT_MUTED))
 }
 
 /// A horizontal slider: thin track filled to `frac`, 24 pt hit height. `set` gets 0..1.
@@ -221,15 +319,33 @@ pub fn transport<S: 'static>(v: &View, prefix: &str, play_size: f32) -> El {
 
 /// The now-playing bar, tinted by the track.
 /// `track_actions` sit after the title, as React's PlayerBar has its heart and More there.
-pub fn nowbar<S: 'static>(v: &View, track_actions: El, extras: El, on_cover: Option<fn(&mut S)>) -> El {
+///
+/// `room` is the window's width and the width the extras side's content took last layout (the
+/// row keyed `nowbar-extras`, `None` before the first), which centre the transport.
+pub fn nowbar<S: 'static>(v: &View, track_actions: El, extras: El, on_cover: Option<fn(&mut S)>, room: (f32, Option<f32>)) -> El {
     let h = hue(v.track_id);
     let seed = v.track_id.unwrap_or(0);
     let mut cover = with_image(tile(h, 48.0, seed, 8.0), crate::art::cover(v.cover.as_deref(), 48.0), 48.0, 8.0);
     if let Some(f) = on_cover {
         cover = el().key("bar-cover").role("button").label("Expand video").radius(8.0).cursor(rune::Cursor::Pointer).press_scale(0.95).on_press(f).child(cover);
     }
+    // The transport sits on the window's centre line whenever there's room. The two sides grow
+    // from the same zero basis with the same minimum, the extras' width, so they split what the
+    // middle leaves equally, each with its content against its outer edge; the middle shrinks
+    // first, from 560 down to the transport and a usable seek slider (300). When even that
+    // leaves too little for two sides as wide as the extras, the title side gives way instead,
+    // down to its cover and actions (160, truncating the title and artist): the transport then
+    // sits as near the centre as the extras allow, and nothing overlaps. The extras side is
+    // what the caller put in it (views::bar_extras drops the least useful extras when narrow).
+    const PAD: f32 = 16.0;
+    const GAP: f32 = 16.0;
+    const MIDDLE_MIN: f32 = 300.0;
+    let (win_w, extras_w) = room;
+    let sides = win_w - 2.0 * PAD - 2.0 * GAP - MIDDLE_MIN;
+    let left_min = extras_w.map_or(160.0, |e| e.min(sides - e)).max(160.0);
     let left = row()
-        .w(300.0)
+        .grow(1.0)
+        .min_w(left_min)
         .gap(12.0)
         .items_center()
         .child(cover)
@@ -244,8 +360,9 @@ pub fn nowbar<S: 'static>(v: &View, track_actions: El, extras: El, on_cover: Opt
         )
         .child(track_actions);
     let middle = col()
-        .grow(1.0)
-        .min_w(0.0)
+        .w(560.0)
+        .shrink()
+        .min_w(MIDDLE_MIN)
         .items_center()
         .child(transport::<S>(v, "bar", 40.0))
         .child(
@@ -258,16 +375,17 @@ pub fn nowbar<S: 'static>(v: &View, track_actions: El, extras: El, on_cover: Opt
                 .child(col().grow(1.0).child(seek::<S>(v, "bar-seek", 10000.0, 4.0).w_full()))
                 .child(text(fmt_time(v.duration)).font(tnum(t(11.0, 500.0))).color(white(0.55)).w(44.0)),
         );
-    let mut right = row().w(420.0).gap(6.0).items_center().justify_end();
-    right = right.child(extras).child(volume::<S>(v, "bar-volume", 90.0));
+    // (the content row keeps its own width, so measuring it doesn't feed back into the layout)
+    let right = row().grow(1.0).justify_end()
+        .child(row().key("nowbar-extras").gap(6.0).items_center().child(extras).child(volume::<S>(v, "bar-volume", 90.0)));
     row()
         .key("nowbar")
         .w_full()
         .h(84.0)
-        .px(16.0)
-        .gap(16.0)
+        .px(PAD)
+        .gap(GAP)
         .items_center()
-        .linear_gradient(std::f32::consts::FRAC_PI_2, [(0.0, oklch(0.24, 0.07, h)), (1.0, oklch(0.18, 0.03, h + 20.0))])
+        .linear_gradient(std::f32::consts::FRAC_PI_2, theme::bar_bg())
         .border(1.0, white(0.06))
         .child(left)
         .child(middle)

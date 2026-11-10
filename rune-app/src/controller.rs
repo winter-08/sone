@@ -14,8 +14,8 @@
 //! stops the audio and opens it in video.rs; pause, seek, volume, next/previous, repeat and
 //! MPRIS act on it; its end advances the queue; any audio track closes it.
 //!
-//! Not in this slice yet (logged when hit): MCP `play_source` / `shuffle_source`, autoplay
-//! radio, and toasts beyond a one-line notice.
+//! Not in this slice yet (logged when hit): MCP `play_source` / `shuffle_source` and autoplay
+//! radio.
 
 use serde_json::{Value, json};
 use sone_host_shim::{AppHandle, Manager};
@@ -62,6 +62,9 @@ pub enum Cmd {
     JumpTo(u64),
     /// Play a collection from its page (Play / Shuffle). `source` is {type,id,name}.
     PlayCollection { tracks: Vec<Value>, source: Value, album_mode: bool, shuffle: bool },
+    /// A track row clicked in a collection (playFromSource, §2.3): play `tracks[index]` (even
+    /// with shuffle on), the rest queued after it. `tracks` in the collection's own order.
+    PlayFrom { tracks: Vec<Value>, index: usize, source: Value, album_mode: bool },
     /// An artist page's Play: fetch the top tracks (as the React page does), then play them.
     PlayArtist { id: u64, name: String, shuffle: bool },
     /// Play these track ids now (a track clicked in search or on Home).
@@ -141,7 +144,6 @@ pub struct View {
     pub quality: Option<String>,
     pub current: Option<QItem>,
     pub queue: Vec<QItem>,
-    pub notice: Option<String>,
     /// The "playing from" collection's name, when there is one.
     pub playing_from: Option<String>,
     pub history: Vec<QItem>,
@@ -249,6 +251,18 @@ pub fn send(cmd: Cmd) {
     }
 }
 
+/// The queue snapshot waiting on its 2 s debounce (§1.5), for `flush_snapshot`.
+static PENDING_SNAPSHOT: Mutex<Option<String>> = Mutex::new(None);
+
+/// Write a snapshot still waiting on its debounce now (the React teardown flush, AI:808-814).
+/// Called on the way out, from whichever thread is exiting.
+pub fn flush_snapshot() {
+    let Some(s) = PENDING_SNAPSHOT.lock().unwrap().take() else { return };
+    if let Err(e) = playback::save_playback_queue(crate::host().state::<AppState>(), s) {
+        log::warn!("[rune] save_playback_queue on exit: {e}");
+    }
+}
+
 /// Called for every event the backend emits (see main.rs).
 pub fn on_backend_event(name: &str, payload: &str) {
     let relevant = name.starts_with("mcp:")
@@ -286,6 +300,9 @@ enum Msg {
     RateLimitResume { pgen: u64, retry: Option<Value>, context_first: bool },
     SaveDue(u64),
     LoginPoll(u64, Duration),
+    /// Tracks fetched off the actor for an id request (§2.5): the successful ones in request
+    /// order, how many were asked, and whether the UI asked (it hears about failures; MCP doesn't).
+    Fetched { tracks: Vec<Value>, action: String, asked: usize, seq: u64, from_ui: bool },
 }
 
 const HISTORY_CAP: usize = 500;
@@ -537,7 +554,8 @@ struct Player {
     save_seq: u64,
     resume_seq_gen: Option<u64>,
     restored: bool,
-    notice: Option<String>,
+    /// Bumped per UI/MCP "play_now" id request; a fetch that lands after a newer one is dropped.
+    fetch_seq: u64,
     signed_in: bool,
     login: Login,
     login_seq: u64,
@@ -582,7 +600,7 @@ impl Player {
             save_seq: 0,
             resume_seq_gen: None,
             restored: false,
-            notice: None,
+            fetch_seq: 0,
             signed_in: false,
             login: Login::Idle,
             login_seq: 0,
@@ -607,10 +625,18 @@ impl Player {
         if t["_qid"].is_string() { t } else { self.stamp(t) }
     }
 
-    fn toast(&mut self, s: impl Into<String>) {
+    /// An info toast in the main window (interact.rs draws them; its version wakes the poll).
+    fn toast(&self, s: impl Into<String>) {
         let s = s.into();
         log::info!("[ui notice] {s}");
-        self.notice = Some(s);
+        crate::interact::toast(s, crate::interact::Kind::Info);
+    }
+
+    /// An error toast (React showToast(..., "error")).
+    fn toast_error(&self, s: impl Into<String>) {
+        let s = s.into();
+        log::info!("[ui notice] {s}");
+        crate::interact::toast(s, crate::interact::Kind::Error);
     }
 
     async fn startup(&mut self) {
@@ -664,6 +690,7 @@ impl Player {
                 Msg::SaveDue(seq) if seq == self.save_seq => self.save_snapshot(),
                 Msg::SaveDue(_) => {}
                 Msg::LoginPoll(seq, every) => self.login_poll(seq, every).await,
+                Msg::Fetched { tracks, action, asked, seq, from_ui } => self.on_fetched(tracks, &action, asked, seq, from_ui).await,
             }
             self.sync().await;
         }
@@ -801,8 +828,12 @@ impl Player {
             Cmd::ToggleShuffle => self.toggle_shuffle(),
             Cmd::CycleRepeat => self.prefs.repeat = (self.prefs.repeat + 1) % 3,
             Cmd::PlayCollection { tracks, source, album_mode, shuffle } => {
-                self.play_all_src(tracks, Some(source), album_mode, shuffle).await;
+                // usePlaySource: playAllFromSource refused (nothing playable) → info toast.
+                if !self.play_all_src(tracks, Some(source), album_mode, shuffle).await {
+                    self.toast("No playable tracks");
+                }
             }
+            Cmd::PlayFrom { tracks, index, source, album_mode } => self.play_from_src(tracks, index, source, album_mode).await,
             Cmd::PlayArtist { id, name, shuffle } => {
                 // The React artist source pages the top tracks (view-all); when that fails it
                 // plays what the page already loaded (its Top tracks module).
@@ -819,8 +850,15 @@ impl Player {
                             .map(|it| crate::data::data(&it).clone()).collect::<Vec<_>>()
                     }).unwrap_or_default()
                 } else { paged };
+                // usePlaySource: nothing loaded → "Couldn't load tracks" (error).
+                if tracks.is_empty() {
+                    self.toast_error("Couldn't load tracks");
+                    return;
+                }
                 let source = json!({"type": "artist", "id": id, "name": name});
-                self.play_all_src(tracks, Some(source), false, shuffle).await;
+                if !self.play_all_src(tracks, Some(source), false, shuffle).await {
+                    self.toast("No playable tracks");
+                }
             }
             Cmd::RemoveAt(i) => self.remove_from_queue(i),
             Cmd::ClearQueue => self.clear_queue(),
@@ -852,7 +890,7 @@ impl Player {
                                 crate::video::pause();
                             }
                         }
-                        Err(e) => self.toast(format!("Couldn't switch quality: {e}")),
+                        Err(e) => self.toast_error(format!("Couldn't switch quality: {e}")),
                     }
                 }
             }
@@ -863,15 +901,9 @@ impl Player {
             Cmd::SetMaxQuality(q) => {
                 let _ = utility::set_max_quality(self.state(), q);
             }
-            Cmd::QueueIds(ids) => {
-                self.mcp_play_tracks(&json!({"trackIds": ids, "action": "queue"})).await;
-            }
-            Cmd::PlayIds(ids) => {
-                self.mcp_play_tracks(&json!({"trackIds": ids, "action": "play_now"})).await;
-            }
-            Cmd::PlayNextIds(ids) => {
-                self.mcp_play_tracks(&json!({"trackIds": ids, "action": "play_next"})).await;
-            }
+            Cmd::QueueIds(ids) => self.fetch_tracks(ids, "queue", true),
+            Cmd::PlayIds(ids) => self.fetch_tracks(ids, "play_now", true),
+            Cmd::PlayNextIds(ids) => self.fetch_tracks(ids, "play_next", true),
             Cmd::JumpTo(id) => {
                 if let Some(i) = self.upcoming().iter().position(|t| tid(t) == id) {
                     self.play_from_queue(i).await;
@@ -885,7 +917,10 @@ impl Player {
         let p: Value = serde_json::from_str(payload).unwrap_or(Value::Null);
         match name {
             // §7.1
-            "mcp:play-tracks" => self.mcp_play_tracks(&p).await,
+            "mcp:play-tracks" => {
+                let ids: Vec<u64> = p["trackIds"].as_array().map(|a| a.iter().filter_map(Value::as_u64).collect()).unwrap_or_default();
+                self.fetch_tracks(ids, p["action"].as_str().unwrap_or(""), false);
+            }
             "mcp:pause" => self.pause().await,
             "mcp:resume" => self.resume().await,
             "mcp:skip-next" | "tray:next-track" => self.play_next(true, false).await,
@@ -967,7 +1002,7 @@ impl Player {
             }
             "video-error" => {
                 self.playing = false;
-                self.toast("Unable to play this video");
+                self.toast_error("Unable to play this video");
             }
             // §3
             "track-finished" => {
@@ -984,11 +1019,36 @@ impl Player {
                 let msg = if kind == "device_busy" {
                     "Audio device is busy — close other apps using it".to_string()
                 } else {
-                    p["message"].as_str().map(|m| m.chars().take(80).collect::<String>() + "…").unwrap_or_else(|| "Playback error".into())
+                    match p["message"].as_str().filter(|m| !m.is_empty()) {
+                        Some(m) if m.chars().count() > 80 => m.chars().take(80).collect::<String>() + "…",
+                        Some(m) => m.to_string(),
+                        None => "Playback error".into(),
+                    }
                 };
-                self.toast(msg);
+                self.toast_error(msg);
             }
-            "audio-resampled" | "audio-bit-depth-changed" | "scrobble-auth-error" => self.toast(format!("{name}: {payload}")),
+            // AI:1051-1105: what exclusive / bit-perfect output had to change, and an expired
+            // scrobbling session.
+            "audio-resampled" => {
+                let hz = |v: &Value| {
+                    let n = v.as_f64().unwrap_or(0.0);
+                    if n >= 1000.0 { format!("{}kHz", n / 1000.0) } else { format!("{n}Hz") }
+                };
+                self.toast(format!("DAC doesn't support {} — resampling to {}", hz(&p["from"]), hz(&p["to"])));
+            }
+            "audio-bit-depth-changed" => {
+                self.toast(format!("DAC doesn't support {} — playing as {} (lossless)", p["from"].as_str().unwrap_or(""), p["to"].as_str().unwrap_or("")));
+            }
+            "scrobble-auth-error" => {
+                let provider = p.as_str().unwrap_or("");
+                let name = match provider {
+                    "lastfm" => "Last.fm",
+                    "listenbrainz" => "ListenBrainz",
+                    "librefm" => "Libre.fm",
+                    other => other,
+                };
+                self.toast_error(format!("{name} session expired — reconnect in Scrobbling settings"));
+            }
             _ => {}
         }
     }
@@ -1130,8 +1190,8 @@ impl Player {
                 self.mark_loading(false);
                 let f = classify(&e);
                 match &f {
-                    Fail::Blocked(r) => self.toast(r.clone()),
-                    Fail::Network => self.toast("Network error — check your internet connection"),
+                    Fail::Blocked(r) => self.toast_error(r.clone()),
+                    Fail::Network => self.toast_error("Network error — check your internet connection"),
                     Fail::RateLimited(after) => {
                         if retry_rl {
                             let _ = playback::stop_track(self.state()).await;
@@ -1145,7 +1205,7 @@ impl Player {
                             self.toast("Track unavailable")
                         }
                     }
-                    Fail::Transient => self.toast(format!("Playback failed: {e}")),
+                    Fail::Transient => self.toast_error(format!("Playback failed: {e}")),
                 }
                 Err(f)
             }
@@ -1290,17 +1350,53 @@ impl Player {
         let _ = self.play_track(t, true, false, false, true, false).await;
     }
 
-    async fn mcp_play_tracks(&mut self, p: &Value) {
-        let ids: Vec<u64> = p["trackIds"].as_array().map(|a| a.iter().filter_map(Value::as_u64).collect()).unwrap_or_default();
-        let action = p["action"].as_str().unwrap_or("");
-        // Fetch all in parallel, keep the successful ones in their original order (MCPB:221-251).
-        let h = self.h.clone();
-        let futs = ids.iter().map(|id| {
-            let h = h.clone();
-            let id = *id;
-            async move { metadata::get_track(h.state::<AppState>(), id).await.ok() }
+    /// playFromSource (§2.3): play `tracks[index]`; the rest is what follows it, then what came
+    /// before (wrap-around), shuffled when shuffle mode is on. The manual queue survives.
+    async fn play_from_src(&mut self, tracks: Vec<Value>, index: usize, source: Value, album_mode: bool) {
+        let Some(track) = tracks.get(index).cloned() else { return };
+        let rest = wrap_after(&tracks, index);
+        self.set_queue_src(rest, false, self.prefs.shuffle, Some(source), tracks, album_mode);
+        self.fail_count = 0;
+        if self.play_track(track, true, false, false, true, true).await == Err(Fail::Unplayable) {
+            self.play_next(true, true).await;
+        }
+    }
+
+    /// mcp:play-tracks and the UI's id plays (§2.5): fetch every id off the actor (a long list
+    /// would otherwise hold up pause/next/seek and track-finished), then `on_fetched` applies it.
+    fn fetch_tracks(&mut self, ids: Vec<u64>, action: &str, from_ui: bool) {
+        if ids.is_empty() {
+            return;
+        }
+        if action == "play_now" {
+            self.fetch_seq += 1;
+        }
+        let (tx, h, action, asked, seq) = (self.tx.clone(), self.h.clone(), action.to_string(), ids.len(), self.fetch_seq);
+        sone_host_shim::async_runtime::spawn(async move {
+            // Keep the successful ones in their original order (MCPB:221-251).
+            let futs = ids.into_iter().map(|id| {
+                let h = h.clone();
+                async move { metadata::get_track(h.state::<AppState>(), id).await.ok() }
+            });
+            let tracks: Vec<Value> = join_all(futs).await.into_iter().flatten().collect();
+            let _ = tx.send(Msg::Fetched { tracks, action, asked, seq, from_ui });
         });
-        let tracks: Vec<Value> = join_all(futs).await.into_iter().flatten().collect();
+    }
+
+    async fn on_fetched(&mut self, tracks: Vec<Value>, action: &str, asked: usize, seq: u64, from_ui: bool) {
+        // play_now: the latest request wins; queue / play_next always land.
+        if action == "play_now" && seq != self.fetch_seq {
+            return;
+        }
+        // MCP stays silent on failures (§2.5); the UI says what it couldn't load (useMediaPlay).
+        if from_ui {
+            let missed = asked - tracks.len();
+            if tracks.is_empty() {
+                self.toast_error(if action == "play_now" { "Failed to play" } else { "Couldn't load tracks" });
+            } else if missed > 0 {
+                self.toast_error(format!("Couldn't load {missed} track{}", if missed == 1 { "" } else { "s" }));
+            }
+        }
         if tracks.is_empty() {
             return;
         }
@@ -1362,7 +1458,7 @@ impl Player {
     fn record_unplayable(&mut self, toasted: &mut bool) -> bool {
         self.fail_count += 1;
         if self.fail_count >= MAX_CONSECUTIVE_FAILS {
-            self.toast("Multiple tracks failed to play — stopped");
+            self.toast_error("Multiple tracks failed to play — stopped");
             self.fail_count = 0;
             self.playing = false;
             return true;
@@ -1395,8 +1491,8 @@ impl Player {
                             match classify(&e) {
                                 Fail::RateLimited(a) => self.schedule_rate_limit(a, None, false),
                                 Fail::Unplayable => self.toast("Track unavailable"),
-                                Fail::Network => self.toast("Network error — check your internet connection"),
-                                _ => self.toast(format!("Playback failed: {e}")),
+                                Fail::Network => self.toast_error("Network error — check your internet connection"),
+                                _ => self.toast_error(format!("Playback failed: {e}")),
                             }
                         }
                     }
@@ -1629,8 +1725,8 @@ impl Player {
                         match classify(&e) {
                             Fail::RateLimited(a) => self.toast(format!("Too many requests — try again in {}s", a.unwrap_or(5))),
                             Fail::Unplayable => self.toast("Track unavailable"),
-                            Fail::Network => self.toast("Network error — check your internet connection"),
-                            _ => self.toast(format!("Playback failed: {e}")),
+                            Fail::Network => self.toast_error("Network error — check your internet connection"),
+                            _ => self.toast_error(format!("Playback failed: {e}")),
                         }
                     }
                 }
@@ -1675,7 +1771,7 @@ impl Player {
                                 (self.queue, self.original, self.manual) = (q, o, m);
                                 self.playing = false;
                                 self.mark_loading(false);
-                                self.toast(format!("Playback failed: {e}"));
+                                self.toast_error(format!("Playback failed: {e}"));
                             }
                         }
                         return;
@@ -1753,8 +1849,8 @@ impl Player {
                 match classify(&e) {
                     Fail::RateLimited(a) => self.toast(format!("Too many requests — try again in {}s", a.unwrap_or(5))),
                     Fail::Unplayable => self.toast("Track unavailable"),
-                    Fail::Network => self.toast("Network error — check your internet connection"),
-                    _ => self.toast(format!("Playback failed: {e}")),
+                    Fail::Network => self.toast_error("Network error — check your internet connection"),
+                    _ => self.toast_error(format!("Playback failed: {e}")),
                 }
             }
         }
@@ -1927,8 +2023,11 @@ impl Player {
     }
 
     fn save_snapshot(&mut self) {
+        PENDING_SNAPSHOT.lock().unwrap().take();
         let s = self.snapshot_json();
-        let _ = playback::save_playback_queue(self.state(), s);
+        if let Err(e) = playback::save_playback_queue(self.state(), s) {
+            log::warn!("[rune] save_playback_queue: {e}");
+        }
     }
 
     fn restore_snapshot(&mut self) {
@@ -2077,6 +2176,7 @@ impl Player {
                 if self.pubd.snapshot_key.is_some() {
                     self.save_seq += 1;
                     self.later(SAVE_DEBOUNCE, Msg::SaveDue(self.save_seq));
+                    *PENDING_SNAPSHOT.lock().unwrap() = Some(sk.clone());
                 }
                 want.snapshot_key = Some(sk);
             }
@@ -2112,7 +2212,6 @@ impl Player {
             quality: Some(quality_text(&self.stream_info)).filter(|s| !s.is_empty()),
             current: self.current.as_ref().map(qitem),
             queue: self.upcoming().iter().map(qitem).collect(),
-            notice: self.notice.clone(),
             playing_from: self.playback_source.as_ref().and_then(|s| s["name"].as_str()).map(str::to_string),
             history: self.history.iter().rev().take(50).map(qitem).collect(),
             bit_perfect: self.bit_perfect,
@@ -2151,6 +2250,11 @@ impl Player {
             VERSION.fetch_add(1, Ordering::Relaxed);
         }
     }
+}
+
+/// The tracks after `i`, then the ones before it (playFromSource's wrap-around rest).
+fn wrap_after(tracks: &[Value], i: usize) -> Vec<Value> {
+    tracks[i + 1..].iter().chain(&tracks[..i]).cloned().collect()
 }
 
 fn fisher_yates(mut v: Vec<Value>) -> Vec<Value> {
@@ -2249,5 +2353,20 @@ mod pkce_tests {
         assert_eq!(pkce_code("https://tidal.com/android/login/auth?state=x"), None);
         assert_eq!(pkce_code("https://tidal.com/oops"), None);
         assert_eq!(pkce_code("short"), None);
+    }
+}
+
+#[cfg(test)]
+mod play_from_tests {
+    use super::{tid, wrap_after};
+    use serde_json::json;
+
+    #[test]
+    fn the_rest_follows_the_clicked_track_and_wraps() {
+        let all: Vec<_> = (1..=5).map(|i| json!({"id": i})).collect();
+        let ids = |v: Vec<serde_json::Value>| v.iter().map(tid).collect::<Vec<_>>();
+        assert_eq!(ids(wrap_after(&all, 2)), [4, 5, 1, 2]);
+        assert_eq!(ids(wrap_after(&all, 0)), [2, 3, 4, 5]);
+        assert_eq!(ids(wrap_after(&all, 4)), [1, 2, 3, 4]);
     }
 }

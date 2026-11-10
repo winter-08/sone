@@ -28,6 +28,11 @@ rune-app/target/debug/sone-rune-wrapped
 
 It uses your normal SONE profile (`~/.config/sone`). Rust 1.99.1 comes from `rust-toolchain.toml`.
 
+Menus, the search dropdown, toasts and dialogs are frosted glass (a backdrop blur under a dark
+tint in the playing cover's hue, `theme::overlay_surface`); the page, sidebar, drawer and player
+bar stay opaque. `SONE_GLASS=0` (read at startup) draws the overlays on the plain opaque surface
+instead, as a Reduce Transparency setting would.
+
 ## Verify against the original
 
 ```bash

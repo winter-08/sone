@@ -15,6 +15,7 @@ mod hls_relay;
 mod home;
 mod icons;
 mod interact;
+mod theme;
 mod ui;
 mod video;
 mod video_ui;
@@ -61,6 +62,8 @@ fn mini_poll(s: &mut Mini, _: f64, tx: &mut Tx) -> bool {
 fn mini_view(_: &Mini, _: &mut Cx<Mini>) -> El {
     let v = controller::view();
     let h = ui::hue(v.track_id);
+    // This window's own frame: its hue and a fresh glass budget, nothing left from the main one.
+    theme::set_ambient(h);
     let volume = if v.bit_perfect {
         ui::icon_button::<Mini>("mini-vol", "Volume disabled in bit-perfect mode", glyph::G::Speaker, 16.0, ui::white(0.35))
     } else {
@@ -116,7 +119,8 @@ fn poll(s: &mut App, _: f64, tx: &mut Tx) -> bool {
     }
     let (state, ticks) = controller::versions();
     // (Covers don't appear here: art.rs fills their pixels in place, without a rebuild.)
-    let v = (state, ticks, data::version().wrapping_add(interact::version() << 40));
+    // (Home's carousel arrows change as a row reaches an end: home::version.)
+    let v = (state, ticks, data::version().wrapping_add(interact::version() << 40).wrapping_add(home::version() << 20));
     tx.wake_after(Duration::from_millis(200));
     let mut changed = v != s.seen;
     // Synced lyrics: the active line changes at its timestamp, not on the next clock tick, and
@@ -186,19 +190,28 @@ fn on_key(s: &mut App, e: &KeyEvent, tx: &mut Tx) -> bool {
 fn view(s: &App, cx: &mut Cx<App>) -> El {
     art::set_scale(cx.env().scale);
     let v = controller::view();
-    let h = ui::hue(v.track_id);
+    theme::set_ambient(ui::hue(v.track_id));
+    // The root fills the window, so its width is the window's.
+    let shell = cx.layout_with("root", |r| views::Shell::for_width(r[2])).unwrap_or_else(|| views::Shell::for_width(initial_size().0));
+    let (header, page) = (views::header(s), views::page(s, &v));
     // Shell data (Home, folders, ...) is loaded by the controller once signed in.
-    let main = col().grow(1.0).min_w(0.0).h_full().child(views::header(s)).child(views::page(s, &v));
     if !v.signed_in {
         return views::login(s, &v);
     }
-    let mut body = row().grow(1.0).min_h(0.0).w_full().child(views::sidebar(s)).child(main);
-    if let Some(d) = views::drawer(s, &v) {
-        body = body.child(d);
+    // The header spans the page and the drawer, so the window controls stay in the top-right
+    // corner; the drawer sits beside the page below it, or over the page's right edge.
+    let mut content = row().grow(1.0).min_h(0.0).w_full().child(page);
+    if let Some(d) = views::drawer(s, &v, shell) {
+        content = content.child(d);
     }
+    let main = col().grow(1.0).min_w(0.0).h_full().child(header).child(content);
+    let body = row().grow(1.0).min_h(0.0).w_full().child(views::sidebar(s, shell.sidebar_w)).child(main);
     // A minimised video's picture in the bar opens the player again (PlayerBar "Expand video").
     let expand: Option<fn(&mut App)> = v.video.as_ref().map(|_| (|s: &mut App| s.nav.video.expanded = true) as fn(&mut App));
-    let mut root = col().key("root").w_full().h_full().fill(ui::base(h)).child(body).child(ui::nowbar::<App>(&v, views::bar_track_actions(&v), views::bar_extras(&v), expand));
+    // The player bar centres its transport from the window's width and its extras' width.
+    let win_w = cx.layout_with("root", |r| r[2].round()).unwrap_or(initial_size().0);
+    let room = (win_w, cx.layout_with("nowbar-extras", |r| r[2].ceil()));
+    let mut root = col().key("root").w_full().h_full().fill(theme::ground()).child(body).child(ui::nowbar::<App>(&v, views::bar_track_actions(&v), views::bar_extras(&v, shell), expand, room));
     if let Some(d) = views::dropdown(s) {
         root = root.child(d);
     }
@@ -278,7 +291,12 @@ fn main() {
     let mini_app = rune::App::new(mini_spec).on_close(|_, _| MINI_OPEN.store(false, std::sync::atomic::Ordering::Relaxed));
     let (_, mini_window) = app.window(rune::WindowSpec::from_app("mini", mini_app).configured_options(options.into()));
     let _ = MINI.set(mini_window);
-    handle.on_exit(|code| std::process::exit(code));
+    // A queue change still inside its save debounce is written on the way out (§1.5).
+    handle.on_exit(|code| {
+        controller::flush_snapshot();
+        std::process::exit(code)
+    });
     app.run();
+    controller::flush_snapshot();
 }
 

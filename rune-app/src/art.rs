@@ -15,16 +15,18 @@
 //! - Download once: the JPEG bytes are kept under `$XDG_CACHE_HOME/sone-rune/art` (pruned to
 //!   `DISK_BUDGET` at startup, oldest first).
 //! - Bounded network: `DOWNLOADS` at a time on the backend's shared client (connection reuse,
-//!   and the user's proxy settings), in the order views ask, which is layout order. A failed URL
-//!   isn't asked again this run.
+//!   and the user's proxy settings), in the order views ask, which is layout order. A URL the
+//!   server refused isn't asked again this run; one that failed in transit, not for
+//!   `RETRY_FAILED_AFTER`.
 //! - No fade-in: covers appear without animating anything.
 //!
 //! The Afterglow placeholder shows until a cover is filled in, and whenever there is none
 //! (offline, no image on the item, `SONE_ART=0`).
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{HashMap, VecDeque};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{LazyLock, Mutex};
+use std::time::{Duration, Instant};
 
 use rune::Pixels;
 use serde_json::Value;
@@ -35,6 +37,7 @@ const KEEP: usize = 200;
 const DOWNLOADS: usize = 6;
 const DECODES: usize = 4;
 const DISK_BUDGET: u64 = 300 * 1024 * 1024;
+const RETRY_FAILED_AFTER: Duration = Duration::from_secs(30);
 
 static SCALE: AtomicU32 = AtomicU32::new(0x3f80_0000); // 1.0
 static NET: LazyLock<tokio::sync::Semaphore> = LazyLock::new(|| tokio::sync::Semaphore::new(DOWNLOADS));
@@ -49,7 +52,9 @@ struct Held {
     order: VecDeque<Slot>,
     /// Downloads in flight, with the slots waiting on each.
     waiting: HashMap<String, Vec<(u32, Pixels)>>,
-    failed: HashSet<String>,
+    /// URLs whose download failed: a transport failure with its time (asked again after
+    /// `RETRY_FAILED_AFTER`), or None for an HTTP error status (not asked again this run).
+    failed: HashMap<String, Option<Instant>>,
 }
 static HELD: LazyLock<Mutex<Held>> = LazyLock::new(Default::default);
 
@@ -162,7 +167,7 @@ fn disk_path(url: &str) -> PathBuf {
 
 /// The slot for `url` drawn `pt` points square: empty until the image is in, then filled in
 /// place (the windows showing it redraw; the view doesn't re-run). None with `SONE_ART=0` or
-/// for a URL that failed.
+/// for a URL that failed (see `Held::failed`).
 pub fn pixels(url: &str, pt: f32) -> Option<Pixels> {
     if *OFF {
         return None;
@@ -170,8 +175,13 @@ pub fn pixels(url: &str, pt: f32) -> Option<Pixels> {
     let side = px(pt).ceil().clamp(1.0, 2048.0) as u32;
     let key: Slot = (url.to_string(), side);
     let mut held = HELD.lock().unwrap();
-    if held.failed.contains(url) {
-        return None;
+    match held.failed.get(url) {
+        Some(None) => return None,
+        Some(Some(at)) if at.elapsed() < RETRY_FAILED_AFTER => return None,
+        Some(Some(_)) => {
+            held.failed.remove(url);
+        }
+        None => {}
     }
     if let Some(p) = held.slots.get(&key).cloned() {
         if let Some(pos) = held.order.iter().position(|k| *k == key) {
@@ -229,33 +239,43 @@ async fn fill(bytes: Vec<u8>, slots: Vec<(u32, Pixels)>) {
 
 fn download(url: String, path: PathBuf) {
     sone_host_shim::async_runtime::spawn(async move {
-        let bytes = {
+        // Err(true): a transport failure, worth asking again later; Err(false): the server's answer.
+        let bytes: Result<Vec<u8>, bool> = {
             let _permit = NET.acquire().await;
             let client = crate::host().state::<AppState>().proxied_http.client();
             match client {
                 Ok(c) => match c.get(&url).send().await {
-                    Ok(r) if r.status().is_success() => r.bytes().await.ok().map(|b| b.to_vec()),
+                    Ok(r) if r.status().is_success() => r.bytes().await.map(|b| b.to_vec()).map_err(|_| true),
                     Ok(r) => {
                         log::debug!("[art] {} for {url}", r.status());
-                        None
+                        Err(false)
                     }
                     Err(e) => {
                         log::debug!("[art] {url}: {e}");
-                        None
+                        Err(true)
                     }
                 },
-                Err(_) => None, // the proxy plan blocks traffic: no artwork
+                Err(_) => Err(true), // the proxy plan blocks traffic: no artwork (for now)
             }
         };
         let waiters = {
             let mut held = HELD.lock().unwrap();
             let w = held.waiting.remove(&url).unwrap_or_default();
-            if bytes.is_none() {
-                held.failed.insert(url.clone());
+            match bytes {
+                Err(true) => {
+                    held.failed.insert(url.clone(), Some(Instant::now()));
+                    // Drop its empty slots too, or the retry would find one and never download.
+                    held.slots.retain(|(u, _), _| *u != url);
+                    held.order.retain(|(u, _)| *u != url);
+                }
+                Err(false) => {
+                    held.failed.insert(url.clone(), None);
+                }
+                Ok(_) => {}
             }
             w
         };
-        let Some(bytes) = bytes else { return };
+        let Ok(bytes) = bytes else { return };
         if let Some(dir) = path.parent() {
             let _ = tokio::fs::create_dir_all(dir).await;
         }
