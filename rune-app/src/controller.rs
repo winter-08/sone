@@ -983,6 +983,7 @@ impl Player {
                 }
             }
             "mpris:set-loop-status" => self.prefs.repeat = p.as_u64().unwrap_or(0).min(2) as u8,
+            "mpris:set-fullscreen" => crate::full_ui::request(p.as_bool().unwrap_or(false)),
             "mpris:open-uri" => {
                 if let Some(id) = p.as_str().and_then(|u| u.strip_prefix("tidal://track/")).and_then(|s| s.parse::<u64>().ok()) {
                     if let Ok(t) = metadata::get_track(self.state(), id).await {

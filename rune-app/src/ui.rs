@@ -317,17 +317,28 @@ pub fn transport<S: 'static>(v: &View, prefix: &str, play_size: f32) -> El {
         )
 }
 
+/// What pressing the bar's cover does: its accessible name and the action.
+pub type CoverAction<S> = (&'static str, fn(&mut S));
+
 /// The now-playing bar, tinted by the track.
 /// `track_actions` sit after the title, as React's PlayerBar has its heart and More there.
 ///
 /// `room` is the window's width and the width the extras side's content took last layout (the
 /// row keyed `nowbar-extras`, `None` before the first), which centre the transport.
-pub fn nowbar<S: 'static>(v: &View, track_actions: El, extras: El, on_cover: Option<fn(&mut S)>, room: (f32, Option<f32>)) -> El {
+/// `on_cover` makes the cover a button: its accessible name and what a press does.
+pub fn nowbar<S: 'static>(v: &View, track_actions: El, extras: El, on_cover: Option<CoverAction<S>>, room: (f32, Option<f32>)) -> El {
     let h = hue(v.track_id);
     let seed = v.track_id.unwrap_or(0);
-    let mut cover = with_image(tile(h, 48.0, seed, 8.0), crate::art::cover(v.cover.as_deref(), 48.0), 48.0, 8.0);
-    if let Some(f) = on_cover {
-        cover = el().key("bar-cover").role("button").label("Expand video").radius(8.0).cursor(rune::Cursor::Pointer).press_scale(0.95).on_press(f).child(cover);
+    // The cover flies to the full-screen player and back (full_ui): it leaves the bar while the
+    // player is up, so the player's cover can take it over, and returns on the close spring.
+    let mut cover = if crate::full_ui::covers_bar() {
+        el().key("bar-art-slot").size(48.0, 48.0).a11y_hidden()
+    } else {
+        with_image(tile(h, 48.0, seed, 8.0), crate::art::cover(v.cover.as_deref(), 48.0), 48.0, 8.0)
+            .key("bar-art").matched(crate::full_ui::COVER).motion(crate::full_ui::CLOSE)
+    };
+    if let Some((label, f)) = on_cover {
+        cover = theme::focusable(el().key("bar-cover").role("button").label(label)).radius(8.0).cursor(rune::Cursor::Pointer).press_scale(0.95).on_press(f).child(cover);
     }
     // The transport sits on the window's centre line whenever there's room. The two sides grow
     // from the same zero basis with the same minimum, the extras' width, so they split what the

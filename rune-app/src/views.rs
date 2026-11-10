@@ -104,6 +104,8 @@ pub struct Nav {
     pub search_sel: Option<usize>,
     /// The music video player (video_ui.rs).
     pub video: crate::video_ui::Player,
+    /// The full-screen now-playing player (full_ui.rs).
+    pub full: crate::full_ui::Full,
     /// Home: the feed tab ("static" is For you) and how many further pages of it to show.
     pub home_tab: String,
     pub home_pages: usize,
@@ -126,7 +128,7 @@ impl Default for Nav {
         Nav { page: Page::Home, back: vec![], fwd: vec![], search: TextEdit::new(""), lib: LibTab::Playlists, tab: SearchTab::All, filter: TextEdit::new(""), queue_open: false, suggest_due: None, menu_open: false, settings_tab: SettingsTab::Playback, drawer: None, login_mode: LoginMode::Pkce, settings_open: false, dialog: None,
             discord_status: TextEdit::new(""), lb_token: TextEdit::new(""), overlay_host: TextEdit::new(""), proxy_user: TextEdit::new(""),
             discord_due: None, proxy_due: None, lb_status: None, ctx: None, create: None, lyric_line: None, lyrics_scrolled: false, search_open: false, search_sel: None,
-            video: Default::default(), home_tab: "static".into(), home_pages: 0, content_w: 1000.0, pkce_paste: TextEdit::new("") }
+            video: Default::default(), full: Default::default(), home_tab: "static".into(), home_pages: 0, content_w: 1000.0, pkce_paste: TextEdit::new("") }
     }
 }
 
@@ -834,29 +836,36 @@ pub fn bar_extras(v: &View, shell: Shell) -> El {
                 icon::<App>("mini", "Close miniplayer", G::PopOut).on_press(|_: &mut App| crate::set_mini(false))
             } else {
                 icon::<App>("mini", "Open miniplayer", G::PopOut).on_press(|_: &mut App| crate::set_mini(true))
-            })
-            .child({
-                let full = icon::<App>("full", "Fullscreen player", G::Maximize);
-                // PlayerBar MaximizeButton: for a video, the video player, maximised; a closed
-                // (or restored) video starts again first.
-                if v.video.is_some() {
-                    let open = v.video_open;
-                    full.on_press_tx(move |s: &mut App, tx: &mut Tx| {
-                        if !open {
-                            controller::send(Cmd::TogglePlay);
-                        }
-                        s.nav.video.expanded = true;
-                        if !s.nav.video.fullscreen {
-                            s.nav.video.fullscreen = true;
-                            tx.toggle_maximized();
-                        }
-                    })
-                } else {
-                    full
-                }
             });
     }
+    // PlayerBar MaximizeButton, for a video: the video player, maximised; a closed (or
+    // restored) video starts again first. A track's full-screen player opens from the bar's
+    // cover instead (bar_cover_action).
+    if v.video.is_some() {
+        let open = v.video_open;
+        r = r.child(icon::<App>("full", "Fullscreen player", G::Maximize).on_press_tx(move |s: &mut App, tx: &mut Tx| {
+            if !open {
+                controller::send(Cmd::TogglePlay);
+            }
+            s.nav.video.expanded = true;
+            if !s.nav.video.fullscreen {
+                s.nav.video.fullscreen = true;
+                tx.toggle_maximized();
+            }
+        }));
+    }
     r
+}
+
+/// What pressing the bar's cover does, with its accessible name: a minimised video's picture
+/// opens the video player again (PlayerBar "Expand video"); a track's cover opens the
+/// full-screen player, flying up to its place there (full_ui).
+pub fn bar_cover_action(v: &View) -> Option<ui::CoverAction<App>> {
+    if v.video.is_some() {
+        Some(("Expand video", |s: &mut App| s.nav.video.expanded = true))
+    } else {
+        v.current.as_ref().map(|_| ("Open full-screen player", crate::full_ui::open as fn(&mut App)))
+    }
 }
 
 // ------------------------------------------------------------------ pages

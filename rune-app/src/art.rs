@@ -202,10 +202,11 @@ pub fn pixels(url: &str, pt: f32) -> Option<Pixels> {
     if path.exists() {
         drop(held);
         let s = slot.clone();
+        let url = url.to_string();
         sone_host_shim::async_runtime::spawn(async move {
             // a prune racing this read just leaves the placeholder this time
             if let Ok(bytes) = tokio::fs::read(&path).await {
-                fill(bytes, vec![(side, s)]).await;
+                fill(url, bytes, vec![(side, s)]).await;
             }
         });
     } else if let Some(waiters) = held.waiting.get_mut(url) {
@@ -218,12 +219,19 @@ pub fn pixels(url: &str, pt: f32) -> Option<Pixels> {
     Some(slot)
 }
 
-/// Decode `bytes` once and fill each waiting slot at its size, off the UI thread.
-async fn fill(bytes: Vec<u8>, slots: Vec<(u32, Pixels)>) {
+/// Decode `bytes` once and fill each waiting slot at its size, off the UI thread. The first
+/// decode of an image also measures its colour (see [`cover_color`]).
+async fn fill(url: String, bytes: Vec<u8>, slots: Vec<(u32, Pixels)>) {
     let _permit = CPU.acquire().await;
     let _ = tokio::task::spawn_blocking(move || {
         let Ok(img) = image::load_from_memory(&bytes) else { return };
         let img = img.to_rgba8();
+        let key = color_key(&url);
+        if !COLORS.lock().unwrap().contains_key(key) {
+            let c = measure(&img);
+            COLORS.lock().unwrap().insert(key.to_string(), c);
+            crate::controller::bump(); // views tinted by the cover draw again
+        }
         for (side, slot) in slots {
             // Covers at exactly the drawn size (never upscaled); others keep their aspect and
             // are drawn with Fill.
@@ -235,6 +243,88 @@ async fn fill(bytes: Vec<u8>, slots: Vec<(u32, Pixels)>) {
         }
     })
     .await;
+}
+
+// ---- cover colour
+//
+// The full-screen player and the miniplayer tint themselves from the cover: its most vivid
+// colour, and how light the whole image is (a white cover needs a heavier scrim under text).
+// Measured once per image from whichever size is decoded first, and kept for the run.
+
+/// A cover's colour in OKLCH.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct CoverColor {
+    /// The most vivid colour's lightness, chroma and hue. `c` is 0 for a grey cover, which
+    /// has no hue of its own: use the track's (`ui::hue`).
+    pub l: f32,
+    pub c: f32,
+    pub h: f32,
+    /// The whole cover's mean lightness, 0 (black) to 1 (white).
+    pub mean_l: f32,
+}
+
+static COLORS: LazyLock<Mutex<HashMap<String, CoverColor>>> = LazyLock::new(Default::default);
+
+/// What a URL's colour is filed under: the image without its size, so every size of one cover
+/// shares a measurement.
+fn color_key(url: &str) -> &str {
+    match url.strip_prefix("https://resources.tidal.com/images/") {
+        Some(_) => url.rsplit_once('/').map_or(url, |(image, _size)| image),
+        None => url,
+    }
+}
+
+/// The colour of a track's cover (by uuid or URL), once any size of it has been decoded. None
+/// before that and without a cover; the views showing it are rebuilt when it arrives.
+pub fn cover_color(uuid: Option<&str>) -> Option<CoverColor> {
+    let url = cover(uuid, 48.0)?;
+    COLORS.lock().unwrap().get(color_key(&url)).copied()
+}
+
+fn oklch(r: u8, g: u8, b: u8) -> (f32, f32, f32) {
+    let lin = |c: u8| {
+        let c = c as f32 / 255.0;
+        if c <= 0.04045 { c / 12.92 } else { ((c + 0.055) / 1.055).powf(2.4) }
+    };
+    let (r, g, b) = (lin(r), lin(g), lin(b));
+    let l = (0.412_221_47 * r + 0.536_332_55 * g + 0.051_445_995 * b).cbrt();
+    let m = (0.211_903_5 * r + 0.680_699_5 * g + 0.107_396_96 * b).cbrt();
+    let s = (0.088_302_46 * r + 0.281_718_85 * g + 0.629_978_7 * b).cbrt();
+    let ok_l = 0.210_454_26 * l + 0.793_617_8 * m - 0.004_072_047 * s;
+    let a = 1.977_998_5 * l - 2.428_592_2 * m + 0.450_593_7 * s;
+    let bb = 0.025_904_037 * l + 0.782_771_77 * m - 0.808_675_77 * s;
+    (ok_l, a.hypot(bb), bb.atan2(a).to_degrees().rem_euclid(360.0))
+}
+
+/// Sample the image on a 24 x 24 grid, sort the samples into twelve hue buckets weighted by
+/// chroma squared (and a little by lightness), and take the heaviest bucket's weighted mean.
+fn measure(img: &image::RgbaImage) -> CoverColor {
+    const N: u32 = 24;
+    #[derive(Default, Clone, Copy)]
+    struct Bucket { w: f32, l: f32, c: f32, x: f32, y: f32 }
+    let (w, h) = img.dimensions();
+    let mut buckets = [Bucket::default(); 12];
+    let mut sum_l = 0.0;
+    for j in 0..N {
+        for i in 0..N {
+            let p = img.get_pixel((i * 2 + 1) * w / (N * 2), (j * 2 + 1) * h / (N * 2)).0;
+            let (l, c, hue) = oklch(p[0], p[1], p[2]);
+            sum_l += l;
+            let weight = c * c * (0.3 + l);
+            let b = &mut buckets[(hue / 30.0) as usize % 12];
+            b.w += weight;
+            b.l += l * weight;
+            b.c += c * weight;
+            b.x += hue.to_radians().cos() * weight;
+            b.y += hue.to_radians().sin() * weight;
+        }
+    }
+    let mean_l = sum_l / (N * N) as f32;
+    let best = buckets.iter().copied().fold(Bucket::default(), |a, b| if b.w > a.w { b } else { a });
+    if best.w < 0.02 {
+        return CoverColor { l: mean_l, c: 0.0, h: 0.0, mean_l };
+    }
+    CoverColor { l: best.l / best.w, c: best.c / best.w, h: best.y.atan2(best.x).to_degrees().rem_euclid(360.0), mean_l }
 }
 
 fn download(url: String, path: PathBuf) {
@@ -283,7 +373,7 @@ fn download(url: String, path: PathBuf) {
         if tokio::fs::write(&tmp, &bytes).await.is_ok() {
             let _ = tokio::fs::rename(&tmp, &path).await;
         }
-        fill(bytes, waiters).await;
+        fill(url, bytes, waiters).await;
     });
 }
 

@@ -10,11 +10,13 @@ mod art;
 mod bio;
 mod controller;
 mod data;
+mod full_ui;
 mod glyph;
 mod hls_relay;
 mod home;
 mod icons;
 mod interact;
+mod mini;
 mod theme;
 mod ui;
 mod video;
@@ -28,56 +30,8 @@ use std::time::Duration;
 use tauri_app_lib as backend;
 
 static HOST: OnceLock<AppHandle> = OnceLock::new();
-static MINI: OnceLock<rune::WindowHandle> = OnceLock::new();
-static MINI_OPEN: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
-pub fn mini_open() -> bool {
-    MINI_OPEN.load(std::sync::atomic::Ordering::Relaxed)
-}
-
-/// Open or close the floating miniplayer window (React's second Tauri window).
-pub fn set_mini(open: bool) {
-    MINI_OPEN.store(open, std::sync::atomic::Ordering::Relaxed);
-    if let Some(w) = MINI.get() {
-        if open { w.open() } else { w.close() }
-    }
-    controller::bump();
-}
-
-struct Mini {
-    seen: (u64, u64),
-}
-
-fn mini_poll(s: &mut Mini, _: f64, tx: &mut Tx) -> bool {
-    let v = controller::versions();
-    tx.wake_after(Duration::from_millis(150));
-    let changed = v != s.seen;
-    if changed && (v.0 == s.seen.0 || ui::dragging()) {
-        tx.instant(); // a clock tick lands at once, as in the main window
-    }
-    s.seen = v;
-    changed
-}
-
-fn mini_view(_: &Mini, _: &mut Cx<Mini>) -> El {
-    let v = controller::view();
-    let h = ui::hue(v.track_id);
-    // This window's own frame: its hue and a fresh glass budget, nothing left from the main one.
-    theme::set_ambient(h);
-    let volume = if v.bit_perfect {
-        ui::icon_button::<Mini>("mini-vol", "Volume disabled in bit-perfect mode", glyph::G::Speaker, 16.0, ui::white(0.35))
-    } else {
-        ui::volume::<Mini>(&v, "mini-volume", 90.0)
-    };
-    col().key("mini-root").w_full().h_full().padding(14.0).gap(10.0).fill(ui::base(h))
-        .child(row().gap(12.0).items_center()
-            .child(ui::with_image(ui::tile(h, 56.0, v.track_id.unwrap_or(0), 8.0), art::cover(v.cover.as_deref(), 56.0), 56.0, 8.0))
-            .child(col().grow(1.0).min_w(0.0)
-                .child(rune::text(if v.title.is_empty() { "Nothing playing".to_string() } else { v.title.clone() }).font(ui::t(14.0, 600.0)).color(ui::white(0.95)).truncate())
-                .child(rune::text(v.artist.clone()).font(ui::t(12.0, 400.0)).color(ui::white(0.6)).truncate()))
-            .child(ui::icon_button::<Mini>("mini-close", "Close miniplayer", glyph::G::Close, 14.0, ui::white(0.6)).on_press(|_: &mut Mini| set_mini(false))))
-        .child(row().items_center().gap(8.0).child(ui::transport::<Mini>(&v, "mini", 34.0)).child(rune::spacer()).child(volume))
-}
+pub use mini::{mini_open, set_mini};
 
 pub fn host() -> &'static AppHandle {
     HOST.get().expect("backend host not started")
@@ -117,6 +71,11 @@ fn poll(s: &mut App, _: f64, tx: &mut Tx) -> bool {
     if let Some(next) = video_next {
         tx.wake_after(next + Duration::from_millis(5));
     }
+    // The full-screen player: closes with nothing playing, follows MPRIS, fades its controls.
+    let (full_changed, full_next) = full_ui::tick(s);
+    if let Some(next) = full_next {
+        tx.wake_after(next + Duration::from_millis(5));
+    }
     let (state, ticks) = controller::versions();
     // (Covers don't appear here: art.rs fills their pixels in place, without a rebuild.)
     // (Home's carousel arrows change as a row reaches an end: home::version.)
@@ -127,21 +86,24 @@ fn poll(s: &mut App, _: f64, tx: &mut Tx) -> bool {
     // (unless the user scrolled away) the drawer glides to keep it centred (LyricsTab).
     let lyric_moved = lyric_tick(s, tx);
     // A clock tick (or a seek bar drag) lands at once; a seek, a new track, new data or the next
-    // lyric line animate.
-    if changed && !lyric_moved && ((state, v.2) == (s.seen.0, s.seen.2) || ui::dragging()) {
+    // lyric line animate, as does the full player's opening, closing or controls fading.
+    if changed && !lyric_moved && !full_changed && ((state, v.2) == (s.seen.0, s.seen.2) || ui::dragging()) {
         tx.instant();
     }
-    changed |= lyric_moved || video_changed;
+    changed |= lyric_moved || video_changed || full_changed;
     s.seen = v;
     changed
 }
 
+/// The drawer's Lyrics tab and the full player's lyrics column each follow the active line.
 fn lyric_tick(s: &mut App, tx: &mut Tx) -> bool {
-    let lines = (s.nav.drawer == Some(views::Drawer::Lyrics))
+    let drawer = s.nav.drawer == Some(views::Drawer::Lyrics);
+    let full = s.nav.full.open && s.nav.full.lyrics;
+    let lines = (drawer || full)
         .then(|| controller::now_playing().0).flatten()
         .and_then(views::synced_lyrics);
     let Some(lines) = lines else {
-        let was = s.nav.lyric_line.take().is_some();
+        let was = s.nav.lyric_line.take().is_some() | s.nav.full.lyric_line.take().is_some();
         return was;
     };
     let (pos, playing) = controller::clock();
@@ -149,21 +111,38 @@ fn lyric_tick(s: &mut App, tx: &mut Tx) -> bool {
     if playing && let Some(at) = next {
         tx.wake_after(Duration::from_secs_f64((at - pos).max(0.0) + 0.005));
     }
-    if line == s.nav.lyric_line {
-        return false;
+    let mut moved = false;
+    if !drawer {
+        moved |= s.nav.lyric_line.take().is_some();
+    } else if line != s.nav.lyric_line {
+        s.nav.lyric_line = line;
+        if let Some(i) = line
+            && !s.nav.lyrics_scrolled
+        {
+            tx.scroll_center(format!("ly-{i}"));
+        }
+        moved = true;
     }
-    s.nav.lyric_line = line;
-    if let Some(i) = line
-        && !s.nav.lyrics_scrolled
-    {
-        tx.scroll_center(format!("ly-{i}"));
+    if !full {
+        moved |= s.nav.full.lyric_line.take().is_some();
+    } else if line != s.nav.full.lyric_line {
+        // A column that just opened (or a new track) lands on its line; then it glides.
+        let fresh = s.nav.full.lyric_line.is_none();
+        s.nav.full.lyric_line = line;
+        if let Some(i) = line {
+            if fresh { tx.scroll_center_in_instant("full-lyrics", format!("fly-{i}")) } else { tx.scroll_center_in("full-lyrics", format!("fly-{i}")) }
+        }
+        moved = true;
     }
-    true
+    moved
 }
 
 fn on_key(s: &mut App, e: &KeyEvent, tx: &mut Tx) -> bool {
-    // a context menu is the top Escape layer (React dismissStack), then the video player
-    if matches!(e.key, Key::Escape) && (interact::on_escape(s) || video_ui::on_escape(s, tx)) {
+    // any key brings the full player's controls back
+    full_ui::wake(s);
+    // a context menu is the top Escape layer (React dismissStack), then the full-screen or
+    // the video player (never open together)
+    if matches!(e.key, Key::Escape) && (interact::on_escape(s) || full_ui::on_escape(s) || video_ui::on_escape(s, tx)) {
         return true;
     }
     // "/" (outside a text field) and Ctrl+K focus the search bar
@@ -182,6 +161,7 @@ fn on_key(s: &mut App, e: &KeyEvent, tx: &mut Tx) -> bool {
     }
     match &e.key {
         Key::Text(t) if t == " " => controller::send(controller::Cmd::TogglePlay),
+        Key::Text(t) if s.nav.full.open && t.eq_ignore_ascii_case("l") => full_ui::toggle_lyrics(s),
         _ => return false,
     }
     true
@@ -206,8 +186,8 @@ fn view(s: &App, cx: &mut Cx<App>) -> El {
     }
     let main = col().grow(1.0).min_w(0.0).h_full().child(header).child(content);
     let body = row().grow(1.0).min_h(0.0).w_full().child(views::sidebar(s, shell.sidebar_w)).child(main);
-    // A minimised video's picture in the bar opens the player again (PlayerBar "Expand video").
-    let expand: Option<fn(&mut App)> = v.video.as_ref().map(|_| (|s: &mut App| s.nav.video.expanded = true) as fn(&mut App));
+    // The bar's cover opens the video player again, or the full-screen player.
+    let expand = views::bar_cover_action(&v);
     // The player bar centres its transport from the window's width and its extras' width.
     let win_w = cx.layout_with("root", |r| r[2].round()).unwrap_or(initial_size().0);
     let room = (win_w, cx.layout_with("nowbar-extras", |r| r[2].ceil()));
@@ -223,6 +203,11 @@ fn view(s: &App, cx: &mut Cx<App>) -> El {
     }
     if let Some(m) = views::account_menu(s, &v) {
         root = root.child(m);
+    }
+    // (under the context menus: its More button opens the track menu over it)
+    let win_h = cx.layout_with("root", |r| r[3].round()).unwrap_or(initial_size().1);
+    if let Some(p) = full_ui::overlay(s, &v, (win_w, win_h)) {
+        root = root.child(p);
     }
     for o in interact::overlay(s) {
         root = root.child(o);
@@ -280,17 +265,7 @@ fn main() {
     // Matches the desktop entry package.nix installs, so the desktop shows its name and icon.
     rune::set_app_id(option_env!("SONE_RUNE_APP_ID").unwrap_or("sone-rune"));
     let mut app = rune::App::new(spec);
-    let mini_spec = AppSpec::<Mini> {
-        fonts: FONTS,
-        families: ("Inter", "ui-monospace"),
-        poll: Some(mini_poll),
-        min_size: Some((380.0, 150.0)),
-        ..AppSpec::new("SONE Miniplayer", (420.0, 160.0), || Mini { seen: (0, 0) }, mini_view)
-    };
-    let options = rune::WindowOptions { always_on_top: true, resizable: false, visible: false, ..Default::default() };
-    let mini_app = rune::App::new(mini_spec).on_close(|_, _| MINI_OPEN.store(false, std::sync::atomic::Ordering::Relaxed));
-    let (_, mini_window) = app.window(rune::WindowSpec::from_app("mini", mini_app).configured_options(options.into()));
-    let _ = MINI.set(mini_window);
+    mini::attach(&mut app);
     // A queue change still inside its save debounce is written on the way out (§1.5).
     handle.on_exit(|code| {
         controller::flush_snapshot();
