@@ -338,7 +338,16 @@ pub fn nowbar<S: 'static>(v: &View, track_actions: El, extras: El, on_cover: Opt
             .key("bar-art").matched(crate::full_ui::COVER).motion(crate::full_ui::CLOSE)
     };
     if let Some((label, f)) = on_cover {
-        cover = theme::focusable(el().key("bar-cover").role("button").label(label)).radius(8.0).cursor(rune::Cursor::Pointer).press_scale(0.95).on_press(f).child(cover);
+        let mut button = theme::focusable(el().key("bar-cover").role("button").label(label)).radius(8.0).cursor(rune::Cursor::Pointer).press_scale(0.95).hover_group().on_press(f).child(cover);
+        // Hovering the cover says what a press does: the expand mark over a scrim. It sits beside
+        // the artwork, not inside it, so it stays behind when the cover flies to the player.
+        if !crate::full_ui::covers_bar() {
+            button = button.child(
+                el().absolute(0.0, 0.0).size(48.0, 48.0).radius(8.0).fill(theme::black(0.5)).items_center().justify_center().group_opacity(0.0, 1.0).a11y_hidden()
+                    .child(glyph(G::Maximize, 18.0, white(0.95))),
+            );
+        }
+        cover = button;
     }
     // The transport sits on the window's centre line whenever there's room. The two sides grow
     // from the same zero basis with the same minimum, the extras' width, so they split what the
