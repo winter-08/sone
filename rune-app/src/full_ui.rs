@@ -9,9 +9,8 @@
 //! `matched` flight: the bar's cover leaves the tree while this one mounts, ui::nowbar);
 //! closing flies it back, a quarter faster.
 //!
-//! The motion spike (fx.rs, off with `SONE_FX=0`) adds the open's overshoot, the pause shrink,
-//! the directional track change, the heart pop, the bar's rise and the audio-reactive cover
-//! and scrim.
+//! fx.rs (off with `SONE_FX=0`) adds the open's overshoot, the pause shrink, the directional
+//! track change, the heart pop and the bar's rise.
 //!
 //! Rune has no OS fullscreen, so "full screen" fills the window, as the video player does.
 
@@ -214,28 +213,24 @@ pub fn overlay(s: &App, v: &View, win: (f32, f32)) -> Option<El> {
     let art = if f.lyrics { (vmin * 0.55).min(600.0).min(w * 0.5 - 128.0) } else { (vmin * 0.66).min(760.0).min(w - 96.0) };
     let art = art.min(stage_h - 8.0).max(140.0).floor();
 
-    // ---- ground: black, the cover blurred (drawn 1.18x so no edge shows), then the scrim
-    let mut blurred = el().key(format!("full-bg-{}", cur.id)).pin(Some(0.0), Some(0.0), Some(0.0), Some(0.0)).blur(48.0).transition(swap(first, 0.7));
-    blurred = match crate::art::cover(v.cover.as_deref(), 320.0).and_then(|u| crate::art::pixels(&u, 320.0)) {
+    // ---- ground: black, the cover blurred (drawn 1.18x, as when the blur was live, so the crop
+    // is the same), then the scrim. The cover comes blurred from art::ground, once per track:
+    // a live 48 pt blur re-ran over the whole window on every frame the player drew.
+    let blurred = el().key(format!("full-bg-{}", cur.id)).pin(Some(0.0), Some(0.0), Some(0.0), Some(0.0)).transition(swap(first, 0.7));
+    let blurred = match crate::art::cover(v.cover.as_deref(), 320.0).and_then(|u| crate::art::ground(&u)) {
         Some(px) => blurred.child(el().absolute(-w * 0.09, -h * 0.09).size(w * 1.18, h * 1.18).pixels_fit(&px, rune::SurfaceFit::Fill)),
-        // No cover: the Afterglow disc, blurred the same way.
+        // No cover: the Afterglow disc, blurred live (no picture to blur ahead).
         None => {
             let d = w.max(h) * 1.15;
-            blurred.child(ui::art(hue, d, cur.id, 0.0).absolute((w - d) / 2.0, (h - d) / 2.0))
+            blurred.blur(48.0).child(ui::art(hue, d, cur.id, 0.0).absolute((w - d) / 2.0, (h - d) / 2.0))
         }
     };
     // A bright sleeve gets up to 0.22 more scrim, so white text keeps its contrast on it.
     let mean_l = crate::art::cover_color(v.cover.as_deref()).map_or(0.3, |c| c.mean_l);
     let scrim = 0.6 + ((mean_l - 0.45) * 0.5).clamp(0.0, 0.22);
-    fx::set_exclusive(v.exclusive || v.bit_perfect);
-    let mut veil = el().pin(Some(0.0), Some(0.0), Some(0.0), Some(0.0)).fill(theme::black(scrim));
-    // (fx: the scrim opens a little with loudness, the blur itself never changes)
-    if fx::on() {
-        veil = veil.live_opacity(&fx::react().scrim);
-    }
     let ground = el().key("full-ground").pin(Some(0.0), Some(0.0), Some(0.0), Some(0.0)).fill(theme::black(1.0)).a11y_hidden()
         .child(blurred)
-        .child(veil);
+        .child(el().pin(Some(0.0), Some(0.0), Some(0.0), Some(0.0)).fill(theme::black(scrim)));
 
     // ---- the cover: radius 10, a layered shadow, a hairline that keeps a black or white
     // sleeve's edge. The picture is fetched at the largest size the player draws, so opening
@@ -254,12 +249,11 @@ pub fn overlay(s: &App, v: &View, win: (f32, f32)) -> Option<El> {
     let cover = el().key("full-cover").matched(COVER).size(art, art).radius(10.0).motion(fx::open_spring()).a11y_hidden();
     let cover = if fx::on() {
         // The whole sleeve is per track, so a track change can push it aside; it settles lower
-        // with a softer shadow while paused, and breathes with the music (react).
+        // with a softer shadow while paused.
         let paused = !v.playing;
         let mut sleeve = el().key(format!("full-sleeve-{}", cur.id)).size(art, art).radius(10.0).fill(oklch(0.2, 0.02, hue))
             .transition(fx::cover_change(first))
-            .scale(if paused { fx::PAUSED_SCALE } else { 1.0 }).scale_motion(if paused { fx::PAUSE } else { fx::RESUME })
-            .live_scale(&fx::react().scale);
+            .scale(if paused { fx::PAUSED_SCALE } else { 1.0 }).scale_motion(if paused { fx::PAUSE } else { fx::RESUME });
         sleeve = if paused {
             sleeve.shadow(1.0, 3.0, theme::black(0.18))
                 .shadow(8.0, 18.0, theme::black(0.24))

@@ -5,10 +5,11 @@
 
 ## Full screen
 
-- Ground: black, the cover blurred over it (sigma 48, drawn ~1.15x so no edge shows), then a
-  black scrim at 0.6. A bright cover gets up to +0.22 more scrim, by its mean lightness
-  (`art::cover_color`), so text keeps its contrast on a white sleeve. No cover: the Afterglow
-  disc, blurred the same way.
+- Ground: black, the cover blurred over it (sigma 48 at the 1400x900 design size, drawn 1.18x
+  the window), then a black scrim at 0.6. The blur is done once per track on the CPU
+  (`art::ground`, 128 px; see "Motion spike"). A bright cover gets up to +0.22 more scrim, by
+  its mean lightness (`art::cover_color`), so text keeps its contrast on a white sleeve. No
+  cover: the Afterglow disc, blurred live.
 - Opened by pressing the album art in the player bar (not a button on the bar's right).
 - A centred square cover, 62% of the window's shorter side (smaller with lyrics open), radius
   10, standing alone: nothing under it. (The prototype had title, artist and heart under the
@@ -52,8 +53,9 @@ fullscreen (Rune has none; the player fills the window, as the video player does
 
 ## Motion spike
 
-Extra motion inside the full-screen player only (`src/fx.rs`; every tunable number is a const
-there). Nothing in the normal view changed.
+One-shot motion inside the full-screen player only (`src/fx.rs`; every tunable number is a
+const there). Nothing in the normal view changed. Each effect plays for a few hundred ms after
+an event and draws nothing at rest.
 
 - **Cover flight:** the open spring overshoots a little (bounce 0.12); the close stays critically
   damped and a quarter faster.
@@ -68,87 +70,76 @@ there). Nothing in the normal view changed.
   track that was already loved never pops when it shows; an unlike just swaps the glyph.
 - **Bar reveal:** the auto-hiding centre and right rise 7 pt as they fade in; the exit is opacity
   only (the offset drops back after the fade).
-- **Audio-reactive:** while the player is open and playing, the cover scales 1.000-1.020 with
-  loudness and the scrim opens up to 12% of itself (about -0.07 alpha). Blur is never animated.
-  A `sone-fx` thread steps an envelope at 30 Hz (attack 60 ms, release 250 ms) over the backend's
-  `audio_level` RMS, mapped through dB against a running reference (jumps up, falls 1.5 dB/s, 18 dB
-  range, squared) so quiet masters move and loud ones don't pin. It publishes two `Live` values
-  (`live_scale` on the sleeve, `live_opacity` on the scrim): each step is a frame with no view,
-  layout or poll. Values are rounded to 1/4096, so silence publishes nothing. The tap leads the
-  sound (it measures each decoder buffer as it leaves for the sink, ~10-26 a second), so the loop
-  reads it 100 ms late, 350 ms in exclusive/bit-perfect mode; true sync would need the device's
-  delay (`snd_pcm_delay`) with each level. `audio_level::set_enabled(true)` exactly while the
-  loop should run: player open, playing, `SONE_FX` on, no reduced motion, not occluded, and
-  focused unless `SONE_FX_UNFOCUSED` allows otherwise. On any exit (close, pause, track end, focus
-  loss with the switch, covered window) it is disabled at once, the envelope falls back to rest
-  and the thread parks.
-- **Reduced motion:** Rune's `cx.system_reduced_motion()` (GNOME enable-animations, KDE duration
-  factor) turns the reactive loop off; Rune itself snaps the flight, pause scale and pushes and
-  lands the heart's final pose.
-- **Occlusion:** Rune reports a covered or minimised window only as `Skipped` frames
-  (`on_frame_encoded`; macOS and X11 report covering, Wayland reports neither), which stop the
-  loop. On Wayland a minimised player keeps the loop and the tap running, though Rune draws
-  nothing for a hidden window and `Live` doesn't wake one.
+- **Reduced motion:** Rune snaps the flight, the pause scale and the pushes, and lands the heart's
+  final pose.
+
+**Tried and removed: the audio-reactive cover and scrim.** While playing, the cover scaled
+1.000-1.020 with loudness and the scrim opened up to 12%, driven by a `sone-fx` thread stepping
+an envelope at 30 Hz over an RMS level tap in the backend (`audio_level.rs`, on both output
+paths). It took the open, playing player from ~4 to ~27 frames/s (192% -> 1257% CPU under
+lavapipe), focused or not: Rune has no partial redraw, so each step redrew the whole window,
+the 48 pt ground blur included. The loop, the level tap, and the focus/occlusion/reduced-motion
+tracking that only it needed are gone; `src-tauri` is back to its pre-spike state.
+
+**The ground is blurred once per track.** The live 48 pt blur re-ran over the whole window on
+every frame the player drew: ~40% of an open frame in software (below). `art::ground` now cuts
+the cover to 128 px, blurs it there (sigma 3.7, the same share of the 1.18x-window ground as
+48 pt at 1400x900) off the UI thread like the other covers, and the renderer stretches it with
+its bilinear filter. Linear interpolation of a gaussian of sigma texels is off by at most
+0.24 A / (8 sigma^2) for a step of contrast A: 0.2% at 128 px (64 px would be 0.8%, with slope
+kinks every 26 pt). Side by side with the live blur in the sandbox the ground differs by 0.16
+of 255 on average, 3 at most (a linear-light blur did not match: the renderer blurs the stored
+sRGB values). The blur now scales with the window, as the picture does, and HiDPI gets all of
+it (the renderer caps a live blur at 64 device pixels). A track with no cover still blurs the
+Afterglow disc live.
 
 ### Switches (read once at startup)
 
 | Env | Effect |
 | --- | --- |
-| `SONE_FX=0` | Everything above off; the player draws as before the spike. |
-| `SONE_FX_UNFOCUSED=0` | Pause the reactive loop (and the tap) while the window isn't focused. Default: keep going (a player on a second monitor is usually unfocused). |
-| `SONE_PERF=1` | Every 5 s, one `[perf]` line on the log and stderr: state, frames/s (Rune's `on_frame_encoded` `Drawn` reports), view runs/s, polls/s, level updates/s, process CPU (utime+stime, all threads) as % of one core, RSS. Unset: no thread, one relaxed load per view and poll run. |
-| `SONE_LEVEL_TAP=1` | (backend) Force the level tap on whatever the UI asks, for measuring the tap alone. |
+| `SONE_FX=0` | The one-shot motion off; the player draws as before the spike. |
+| `SONE_PERF=1` | Every 5 s, one `[perf]` line on the log and stderr: open/closed, playing/paused, focused/unfocused, `fx=on/off`, frames/s (Rune's `on_frame_encoded` `Drawn` reports), view runs/s, polls/s, process CPU (utime+stime, all threads) as % of one core, RSS. Unset: no thread, no frame hook, no focus handler; one relaxed load per view and poll run. |
 
 ### Measured (2026-11-11)
 
-Verifier sandbox (`verifier/harness/sandbox.sh`): headless sway at 1400x900@60, lavapipe
-(software Vulkan), fake TIDAL, PipeWire null sink; fixture 1002 (96 kHz noise) on repeat-one.
-A driver plays, opens the player through MPRIS `Fullscreen`, pauses and resumes through MCP, and
-unfocuses by creating a second headless output and focusing it (a virtual keyboard on the seat
-gives the window keyboard focus at all; without it Rune never hears a focus change). Phases of
-21 s; the `[perf]` intervals fully inside a phase are kept; medians over 3 baseline runs and 4
-spike runs (12 intervals each).
+Verifier sandbox (`verifier/harness/sandbox.sh`): headless sway at 1400x900@60, fake TIDAL,
+PipeWire null sink; fixture 1002 (10 s of 96 kHz noise) on repeat-one. A driver plays, opens the
+player through MPRIS `Fullscreen`, pauses and resumes through MCP, and unfocuses by creating a
+second headless output and focusing it. Phases of 21 s; the `[perf]` intervals fully inside a
+phase are kept; medians over 3 runs per cell. Software: lavapipe, the sandbox default. GPU:
+`SPIKE_GPU=1` (sway's Vulkan renderer, Rune on the RTX 3090's NVIDIA driver; sway stayed under
+210 MB, well inside its leak watchdog).
 
-| State | Baseline `SONE_FX=0`: frames/s, views/s, CPU | Spike: frames/s, views/s, CPU |
-| --- | --- | --- |
-| closed, playing | 7.6, 1.4, 53% | 7.5, 1.4, 53% (tap off) |
-| open, playing, focused | 4.2, 1.0, 192% | 27.3, 1.2, 1257% |
-| open, paused | 0.0, 0.0, 0.2% | 0.0, 0.0, 0.2% (tap off) |
-| open, playing, unfocused | 3.2, 1.2, 148% | 27.0, 1.2, 1240% |
-| open, playing, unfocused, `SONE_FX_UNFOCUSED=0` | - | 3.0, 1.2, 139% (tap off) |
+| State | lavapipe `SONE_FX=0` | lavapipe default | GPU `SONE_FX=0` | GPU default |
+| --- | --- | --- | --- | --- |
+| closed, playing | 7.8 f/s, 1.4 v/s, 54% | 7.8, 1.4, 55% | 9.2, 1.4, 2.8% | 8.6, 1.2, 1.8% |
+| open, playing, focused | 7.0, 1.4, 189% | 7.0, 1.2, 189% | 10.2, 1.0, 1.8% | 10.3, 1.0, 1.8% |
+| open, paused | 0.0, 0.0, 0.4% | 0.0, 0.0, 0.4% | 0.0, 0.0, 0.6% | 0.0, 0.0, 0.6% |
+| open, playing, unfocused | 6.4, 1.2, 173% | 4.4, 1.2, 119% | 7.8, 1.0, 1.8% | 7.6, 1.0, 1.8% |
 
-- **Closed is zero.** Same frames and view runs as the baseline; the level tap stays disabled and
-  the `sone-fx` thread is never started until the player first opens. Cross-check against the
-  binary built from the commit before the spike (no `[perf]`, CPU from /proc by the driver):
-  51.7% closed+playing, against 48.0% baseline and 44-52% spike, inside the run-to-run noise
-  (closed+playing itself swings 4-14 frames/s between intervals in every build: the bar's clock and
-  the 10 s repeat). The 7 frames/s closed is the app's own, before and after.
-- **Paused is zero** once the shrink settles (about 1 s including the envelope falling back).
-- **The reactive loop is the whole cost:** ~23 extra frames/s (its 30 Hz target, less what
-  lavapipe could draw), each a full-window redraw that includes the 48-sigma ground blur. In
-  software that is ~0.45 core-seconds a frame across lavapipe's threads, so the CPU column is
-  dominated by software rendering and says little about a GPU; frames/s and views/s are the
-  numbers to carry over. View runs don't move (the loop never runs the view).
-- One-shot effects (open overshoot, pause, push, heart, bar rise) cost frames only while they
-  play (≤ 0.45 s each) and nothing at rest; they don't show at a 5 s resolution.
-- In 2 of the first 6 spike runs the first open phase drew like the baseline although `tap=on`:
-  the tap delivered no levels then (the `levels/s` field was added after that and shows ~26/s in
-  every later run). Worth a look on the backend side if it recurs.
+- **The one-shots cost nothing at rest:** every state matches `SONE_FX=0` within the
+  interval-to-interval spread (each cell's 5 s intervals range over 4-12 frames/s, see below).
+- **What draws ~8 frames/s with music playing is the sandbox, not the app.** The clock ticks
+  land with `tx.instant()`, one frame a second, as `ui.rs` says. On top of that, the 10 s fixture
+  restarts every 1.4-4.7 s of wall time (each restart re-locks the decoder's caps: a real
+  pipeline restart, so the sandbox's sink isn't paced in real time). Each restart is a position
+  jump, which the controller signals as a change, and the seek fill glides back on its 0.12 s
+  spring: ~17 frames at 60 Hz each time. With that spring temporarily removed: 1.0 frames/s and
+  7.4% CPU closed, 1.0 frames/s open. Both the spring and the jump rule predate the player work
+  (`03152f3`); on real music they cost one short glide per track or seek.
+- **Why an open frame is expensive in software:** 0.47 core-seconds above a closed frame with the
+  live blur (47% at 1 frame/s, against 7.4% closed), 0.28 without any blur, and 0.28 with the
+  pre-blurred ground: the live blur was 0.19 core-seconds, ~40% of the frame; the rest is
+  lavapipe rasterising the full-window player (the cover's 72 pt shadow, scrim, bar gradient).
+  Open+playing now draws ~7 frames/s (was 4.2) at the same CPU: cheaper frames let more of each
+  seek glide through.
+- **On the GPU it is all small:** 1.8% of a core open and playing (about 10 frames/s, glides
+  included), 0.6% paused. The lavapipe CPU column measures software rasterisation; frames/s and
+  views/s are what carry over.
+- `polls/s` sits at 55-60 in every state, frames or not; a poll costs little (7.4% total closed
+  in software includes the audio path) and wasn't looked into.
 
-Not measured here: a GPU (the sandbox's `SPIKE_GPU=1` sway leaks; see sandbox.sh), real music
-(noise keeps the envelope busy, which is close to the worst case), Wayland occlusion (not
-reported) and X11 covering. To measure on a real machine: run with `SONE_PERF=1`, play something,
-open the player, and read the `[perf]` lines (log and stderr) after 10 s in each state: focused,
-paused, focused on another monitor, minimised (on X11 expect `skipped` frames and `fx=on`, not
-`reacting`, with `tap=off`), closed (expect `tap=off` and the same frames/s as with `SONE_FX=0`).
-
-### Recommendation
-
-| Effect | Cost | Verdict |
-| --- | --- | --- |
-| Open overshoot | none at rest | keep |
-| Pause shrink | none at rest | keep |
-| Directional track change | none at rest | keep |
-| Heart pop | none at rest | keep |
-| Bar rise | none at rest | keep |
-| Audio-reactive cover + scrim | ~25 full redraws/s for as long as music plays with the player up | tune: measure on a GPU first. If it costs more than a few % of a core there, halve the rate (`REACT_HZ` 15 still reads as motion through the envelope). Either value alone costs the same: Rune has no partial redraw, so any change redraws the window, blur included, and a subtree with image pixels can't be `cache()`d. |
+Not measured: real music (a track change every few minutes instead of every few seconds), a
+HiDPI display, X11. To measure on a real machine: `SONE_PERF=1`, play something, read the
+`[perf]` lines after 10 s in each state; with the seek glide only on track changes and seeks,
+expect about 1 frame/s while playing, open or closed, and 0 paused.

@@ -79,8 +79,7 @@ fn poll(s: &mut App, _: f64, tx: &mut Tx) -> bool {
     if let Some(next) = full_next {
         tx.wake_after(next + Duration::from_millis(5));
     }
-    // The motion spike's audio-reactive loop runs while the player is open and playing; a space
-    // press that toggled playback under it lands without the pause shrink.
+    // A space press that toggled playback under the open player lands without the pause shrink.
     if fx::follow(s.nav.full.open, controller::clock().1) {
         tx.instant();
     }
@@ -181,9 +180,6 @@ fn on_key(s: &mut App, e: &KeyEvent, tx: &mut Tx) -> bool {
 fn view(s: &App, cx: &mut Cx<App>) -> El {
     perf::view_ran();
     art::set_scale(cx.env().scale);
-    if fx::on() {
-        fx::set_reduced(cx.system_reduced_motion());
-    }
     let v = controller::view();
     theme::set_ambient(ui::hue(v.track_id));
     // The root fills the window, so its width is the window's.
@@ -233,10 +229,10 @@ fn view(s: &App, cx: &mut Cx<App>) -> El {
     if let Some(t) = interact::toast_layer() {
         root = root.child(t);
     }
-    // The spike's audio-reactive loop and the perf line follow window focus; nothing redraws.
-    if fx::on() || perf::on() {
+    // The perf line reports window focus; nothing redraws.
+    if perf::on() {
         root = root.on_window_focus(|_: &mut App, focused, tx| {
-            fx::set_focused(focused);
+            perf::set_focused(focused);
             tx.live_only();
         });
     }
@@ -287,8 +283,8 @@ fn main() {
     // Matches the desktop entry package.nix installs, so the desktop shows its name and icon.
     rune::set_app_id(option_env!("SONE_RUNE_APP_ID").unwrap_or("sone-rune"));
     let mut app = rune::App::new(spec);
-    // Frame counts for SONE_PERF, and the spike's cue that the window is covered or minimised.
-    if fx::on() || perf::on() {
+    // Frame counts for SONE_PERF.
+    if perf::on() {
         app = app.on_frame_encoded(perf::frame);
     }
     perf::start();

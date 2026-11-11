@@ -1,17 +1,18 @@
 //! `SONE_PERF=1` (read once): every 5 s one line on the log and stderr with what the window
-//! did in that interval, for measuring the motion spike (PLAYER_DESIGN.md, "Motion spike"):
+//! did in that interval (PLAYER_DESIGN.md, "Motion spike"):
 //!
-//! `[perf] open playing focused fx=reacting tap=on (10.8 levels/s) | frames 30.2/s (drawn 151, unchanged 0, skipped 0)
+//! `[perf] open playing focused fx=on | frames 4.2/s (drawn 21, unchanged 0, skipped 0)
 //! views 1.0/s polls 6.2/s | cpu 41.3% rss 512 MB`
 //!
 //! Frames are Rune's own `on_frame_encoded` reports for the main window: `Drawn` frames were
 //! encoded and presented. Views count `view` runs (commits); polls count `poll` runs. CPU is the
 //! process's utime + stime from /proc/self/stat (all threads, audio included) as a share of one
-//! core. Unset, no thread runs and the view and poll counters are one relaxed load each; the frame
-//! hook stays installed only while the spike is on, which needs it to notice a covered window.
+//! core. Focus comes from the root's window-focus handler. Unset, no thread runs, neither the
+//! frame hook nor the focus handler is installed, and the view and poll counters are one relaxed
+//! load each.
 
 use std::sync::LazyLock;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 const EVERY: Duration = Duration::from_secs(5);
@@ -23,6 +24,7 @@ static POLLS: AtomicU64 = AtomicU64::new(0);
 static DRAWN: AtomicU64 = AtomicU64::new(0);
 static UNCHANGED: AtomicU64 = AtomicU64::new(0);
 static SKIPPED: AtomicU64 = AtomicU64::new(0);
+static FOCUSED: AtomicBool = AtomicBool::new(true);
 
 pub fn on() -> bool {
     static ON: LazyLock<bool> = LazyLock::new(|| std::env::var("SONE_PERF").is_ok_and(|v| v.trim() == "1"));
@@ -41,23 +43,19 @@ pub fn poll_ran() {
     }
 }
 
-/// The main window's frame hook, installed when perf or the spike needs it: counts frames, and
-/// tells the spike when the window stops drawing because it is covered or minimised.
+/// The root's window-focus handler, installed only with SONE_PERF=1.
+pub fn set_focused(focused: bool) {
+    FOCUSED.store(focused, Ordering::Relaxed);
+}
+
+/// The main window's frame hook, installed only with SONE_PERF=1.
 pub fn frame(f: &rune::FrameEncoded) {
     let counter = match f.outcome() {
-        rune::FrameOutcome::Drawn => {
-            crate::fx::set_occluded(false);
-            &DRAWN
-        }
-        rune::FrameOutcome::Skipped => {
-            crate::fx::set_occluded(true);
-            &SKIPPED
-        }
+        rune::FrameOutcome::Drawn => &DRAWN,
+        rune::FrameOutcome::Skipped => &SKIPPED,
         _ => &UNCHANGED,
     };
-    if on() {
-        counter.fetch_add(1, Ordering::Relaxed);
-    }
+    counter.fetch_add(1, Ordering::Relaxed);
 }
 
 /// Starts the logging thread, when SONE_PERF=1.
@@ -66,22 +64,21 @@ pub fn start() {
         return;
     }
     std::thread::Builder::new().name("sone-perf".into()).spawn(|| {
-        let mut last = (Instant::now(), cpu_ticks(), [0u64; 5], tauri_app_lib::audio_level::seq());
+        let counters = || [&DRAWN, &UNCHANGED, &SKIPPED, &VIEWS, &POLLS].map(|c| c.load(Ordering::Relaxed));
+        let mut last = (Instant::now(), cpu_ticks(), [0u64; 5]);
         loop {
             std::thread::sleep(EVERY);
-            let now = (Instant::now(), cpu_ticks(), [&DRAWN, &UNCHANGED, &SKIPPED, &VIEWS, &POLLS].map(|c| c.load(Ordering::Relaxed)), tauri_app_lib::audio_level::seq());
+            let now = (Instant::now(), cpu_ticks(), counters());
             let secs = now.0.duration_since(last.0).as_secs_f64();
             let d: Vec<u64> = (0..5).map(|i| now.2[i] - last.2[i]).collect();
             let cpu = (now.1 - last.1) as f64 / USER_HZ / secs * 100.0;
             let (_, playing) = crate::controller::clock();
             let line = format!(
-                "[perf] {} {} {} fx={} tap={} ({:.1} levels/s) | frames {:.1}/s (drawn {}, unchanged {}, skipped {}) views {:.1}/s polls {:.1}/s | cpu {:.1}% rss {} MB",
+                "[perf] {} {} {} fx={} | frames {:.1}/s (drawn {}, unchanged {}, skipped {}) views {:.1}/s polls {:.1}/s | cpu {:.1}% rss {} MB",
                 if crate::full_ui::covers_bar() { "open" } else { "closed" },
                 if playing { "playing" } else { "paused" },
-                if crate::fx::focused() { "focused" } else { "unfocused" },
-                if !crate::fx::on() { "off" } else if crate::fx::running() { "reacting" } else { "on" },
-                if tauri_app_lib::audio_level::enabled() { "on" } else { "off" },
-                (now.3 - last.3) as f64 / secs,
+                if FOCUSED.load(Ordering::Relaxed) { "focused" } else { "unfocused" },
+                if crate::fx::on() { "on" } else { "off" },
                 d[0] as f64 / secs, d[0], d[1], d[2], d[3] as f64 / secs, d[4] as f64 / secs, cpu, rss_mb(),
             );
             log::info!("{line}");

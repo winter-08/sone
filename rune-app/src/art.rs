@@ -44,14 +44,38 @@ static NET: LazyLock<tokio::sync::Semaphore> = LazyLock::new(|| tokio::sync::Sem
 static CPU: LazyLock<tokio::sync::Semaphore> = LazyLock::new(|| tokio::sync::Semaphore::new(DECODES));
 static OFF: LazyLock<bool> = LazyLock::new(|| std::env::var("SONE_ART").is_ok_and(|v| v == "0"));
 
-type Slot = (String, u32); // (url, side in pixels)
+/// The full-screen player's ground (full_ui), cut from the cover this many pixels square and
+/// blurred here, once, by `GROUND_SIGMA`; the renderer then stretches it over the window with
+/// its bilinear filter, which costs a textured quad a frame instead of a live blur.
+///
+/// The live blur was 48 pt over a ground drawn 1.18 times the window's long side: 1652 pt at
+/// the 1400x900 design size, so 48 / 1652 x 128 = 3.7 of these pixels. The blur is now a fixed
+/// share of the ground, so it scales with the window as the picture does (and HiDPI gets the
+/// full blur: the renderer caps a live one at 64 device pixels). Why 128 and not 64: the
+/// stretch interpolates linearly between texels, which is off a smooth curve by at most
+/// h^2/8 x |f''|; for a step of contrast A blurred by sigma texels, |f''| <= 0.24 A / sigma^2,
+/// so the error is 0.2% of A at sigma 3.7 (under one level of 255, before the scrim), and the
+/// slope changes at each texel (every ~13 pt) are too small to band. At 64 pixels sigma would
+/// be 1.9: 0.8% and kinks every 26 pt, which can show on a hard-edged cover. Aliasing is
+/// nil either way: the gaussian passes exp(-2 pi^2 sigma^2 / 4) of the texture's Nyquist.
+const GROUND_PX: u32 = 128;
+const GROUND_SIGMA: f32 = 3.7;
+
+/// What a slot holds: the image at a side in pixels, or the full-screen player's ground.
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+enum Cut {
+    Side(u32),
+    Ground,
+}
+
+type Slot = (String, Cut);
 
 #[derive(Default)]
 struct Held {
     slots: HashMap<Slot, Pixels>,
     order: VecDeque<Slot>,
     /// Downloads in flight, with the slots waiting on each.
-    waiting: HashMap<String, Vec<(u32, Pixels)>>,
+    waiting: HashMap<String, Vec<(Cut, Pixels)>>,
     /// URLs whose download failed: a transport failure with its time (asked again after
     /// `RETRY_FAILED_AFTER`), or None for an HTTP error status (not asked again this run).
     failed: HashMap<String, Option<Instant>>,
@@ -169,11 +193,20 @@ fn disk_path(url: &str) -> PathBuf {
 /// place (the windows showing it redraw; the view doesn't re-run). None with `SONE_ART=0` or
 /// for a URL that failed (see `Held::failed`).
 pub fn pixels(url: &str, pt: f32) -> Option<Pixels> {
+    slot(url, Cut::Side(px(pt).ceil().clamp(1.0, 2048.0) as u32))
+}
+
+/// The full-screen player's ground for the cover at `url`: `GROUND_PX` square, blurred, filled
+/// in place like [`pixels`].
+pub fn ground(url: &str) -> Option<Pixels> {
+    slot(url, Cut::Ground)
+}
+
+fn slot(url: &str, cut: Cut) -> Option<Pixels> {
     if *OFF {
         return None;
     }
-    let side = px(pt).ceil().clamp(1.0, 2048.0) as u32;
-    let key: Slot = (url.to_string(), side);
+    let key: Slot = (url.to_string(), cut);
     let mut held = HELD.lock().unwrap();
     match held.failed.get(url) {
         Some(None) => return None,
@@ -206,13 +239,13 @@ pub fn pixels(url: &str, pt: f32) -> Option<Pixels> {
         sone_host_shim::async_runtime::spawn(async move {
             // a prune racing this read just leaves the placeholder this time
             if let Ok(bytes) = tokio::fs::read(&path).await {
-                fill(url, bytes, vec![(side, s)]).await;
+                fill(url, bytes, vec![(cut, s)]).await;
             }
         });
     } else if let Some(waiters) = held.waiting.get_mut(url) {
-        waiters.push((side, slot.clone()));
+        waiters.push((cut, slot.clone()));
     } else {
-        held.waiting.insert(url.to_string(), vec![(side, slot.clone())]);
+        held.waiting.insert(url.to_string(), vec![(cut, slot.clone())]);
         drop(held);
         download(url.to_string(), path);
     }
@@ -221,7 +254,7 @@ pub fn pixels(url: &str, pt: f32) -> Option<Pixels> {
 
 /// Decode `bytes` once and fill each waiting slot at its size, off the UI thread. The first
 /// decode of an image also measures its colour (see [`cover_color`]).
-async fn fill(url: String, bytes: Vec<u8>, slots: Vec<(u32, Pixels)>) {
+async fn fill(url: String, bytes: Vec<u8>, slots: Vec<(Cut, Pixels)>) {
     let _permit = CPU.acquire().await;
     let _ = tokio::task::spawn_blocking(move || {
         let Ok(img) = image::load_from_memory(&bytes) else { return };
@@ -232,17 +265,31 @@ async fn fill(url: String, bytes: Vec<u8>, slots: Vec<(u32, Pixels)>) {
             COLORS.lock().unwrap().insert(key.to_string(), c);
             crate::controller::bump(); // views tinted by the cover draw again
         }
-        for (side, slot) in slots {
+        for (cut, slot) in slots {
             // Covers at exactly the drawn size (never upscaled); others keep their aspect and
             // are drawn with Fill.
+            let side = match cut {
+                Cut::Side(side) => side,
+                Cut::Ground => GROUND_PX,
+            };
             let (w, h) = img.dimensions();
             let k = (side as f32 / w.min(h) as f32).min(1.0);
             let (nw, nh) = (((w as f32 * k).round() as u32).max(1), ((h as f32 * k).round() as u32).max(1));
             let out = if (nw, nh) == (w, h) { img.clone() } else { image::imageops::resize(&img, nw, nh, image::imageops::FilterType::Triangle) };
+            let out = if cut == Cut::Ground { blur(&out) } else { out };
             slot.set(nw, nh, out.into_raw());
         }
     })
     .await;
+}
+
+/// The ground's blur: `GROUND_SIGMA` on the sRGB values, edges clamped. Side by side with the
+/// live blur in the verifier sandbox the ground differs by 0.16 of 255 on average (at most 3):
+/// the renderer's blur works on the stored sRGB values too (a linear-light blur visibly moved
+/// edges towards the dark side), and only its fade towards black at the ground's edges, mostly
+/// off-window, is gone.
+fn blur(img: &image::RgbaImage) -> image::RgbaImage {
+    image::imageops::blur(img, GROUND_SIGMA)
 }
 
 // ---- cover colour
