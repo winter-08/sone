@@ -350,6 +350,9 @@ struct Position {
     generation: u64,
     reset_at: Option<Instant>,
     correction: u64,
+    /// When the last seek was asked for, until the backend reports a position near the clock.
+    /// Just after a flushing seek it can report 0 (or where it was): those reads are dropped.
+    seek_at: Option<Instant>,
 }
 
 impl Position {
@@ -375,6 +378,7 @@ fn preview_seek(f: f32) {
     p.last = f as f64 * dur;
     p.at = Some(Instant::now());
     p.generation += 1;
+    p.seek_at = Some(Instant::now());
     drop(p);
     VERSION.fetch_add(1, Ordering::Relaxed);
 }
@@ -1117,6 +1121,7 @@ impl Player {
             p.at = Some(Instant::now());
             p.loading = false;
             p.reset_at = None;
+            p.seek_at = Some(Instant::now());
             p.correction += 1;
             p.correction
         };
@@ -1257,6 +1262,7 @@ impl Player {
             p.last = 0.0;
             p.at = Some(Instant::now());
             p.reset_at = Some(Instant::now());
+            p.seek_at = None;
             p.correction += 1;
             drop(p);
             self.gapless_failed = None;
@@ -1905,6 +1911,7 @@ impl Player {
             self.notify_seek(secs);
         } else {
             // The clock may have jumped ahead to the target (preview_seek): read it back.
+            pos().seek_at = None;
             self.poll_position(false).await;
         }
     }
@@ -2024,7 +2031,12 @@ impl Player {
             if p.generation == pgen {
                 let interp = p.interpolated();
                 let settling = p.reset_at.is_some_and(|t| t.elapsed() < SETTLE_WINDOW);
-                if !(settling && v as f64 > interp + 2.0) {
+                let seeking = p.seek_at.is_some_and(|t| t.elapsed() < SETTLE_WINDOW);
+                let far = (v as f64 - interp).abs() > 2.0;
+                if seeking && !far {
+                    p.seek_at = None;
+                }
+                if !(settling && v as f64 > interp + 2.0) && !(seeking && far) {
                     p.last = v as f64;
                     p.at = Some(Instant::now());
                 }
