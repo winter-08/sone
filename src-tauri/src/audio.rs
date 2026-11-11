@@ -3104,6 +3104,10 @@ impl AudioPlayer {
                     }
 
                     AudioCommand::GetPosition { reply } => {
+                        // A query that fails is an error, not 0: just after a flushing
+                        // seek it fails until the new segment arrives, and callers that
+                        // took 0 as the position jumped the clock (or a relative MPRIS
+                        // seek) back to the start.
                         let pos = match backend.as_ref() {
                             Some(PlaybackBackend::Normal { pipeline, .. }) => pipeline
                                 .query_position::<gst::ClockTime>()
@@ -3111,19 +3115,19 @@ impl AudioPlayer {
                                 // re-bases per track, so it is already B-relative — no
                                 // offset subtraction needed.
                                 .map(|pos| pos.nseconds() as f32 / 1_000_000_000.0)
-                                .unwrap_or(0.0),
+                                .ok_or_else(|| "Position unknown".to_string()),
                             Some(PlaybackBackend::DirectAlsa { .. }) => {
                                 let frames = frames_written.load(Ordering::Relaxed);
                                 let rate = current_sample_rate.load(Ordering::Relaxed);
                                 if rate > 0 {
-                                    frames as f32 / rate as f32
+                                    Ok(frames as f32 / rate as f32)
                                 } else {
-                                    0.0
+                                    Err("Position unknown".to_string())
                                 }
                             }
-                            None => 0.0,
+                            None => Ok(0.0),
                         };
-                        reply.send(Ok(pos)).ok();
+                        reply.send(pos).ok();
                     }
 
                     AudioCommand::IsFinished { reply } => {
@@ -3345,7 +3349,9 @@ impl AudioPlayer {
                                 // `get_position` cannot be called here — it is an
                                 // `AudioPlayer` method, and this thread is the one
                                 // its reply would have to come back through. This is
-                                // the body of the `GetPosition` arm.
+                                // the body of the `GetPosition` arm, with 0 where that
+                                // arm reports an unknown position: a rebuild needs a
+                                // place to start.
                                 let position_secs = match backend.as_ref() {
                                     Some(PlaybackBackend::Normal { pipeline, .. }) => pipeline
                                         .query_position::<gst::ClockTime>()

@@ -1007,7 +1007,11 @@ impl Player {
                 self.seek_to(new).await;
             }
             "mpris:seek" => {
-                let cur = playback::get_playback_position(self.state()).await.unwrap_or(0.0) as f64;
+                // Relative to the clock when the backend can't say (just after a seek).
+                let cur = match playback::get_playback_position(self.state()).await {
+                    Ok(v) => v as f64,
+                    Err(_) => pos().interpolated(),
+                };
                 let new = (cur + p.as_f64().unwrap_or(0.0)).max(0.0);
                 if playback::seek_track(self.state(), new as f32).await.is_ok() {
                     self.notify_seek(new);
