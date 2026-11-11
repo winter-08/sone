@@ -245,10 +245,22 @@ pub fn send_play_ids(ids: Vec<u64>) {
     send(Cmd::PlayIds(ids));
 }
 
+/// The seek asked for last, not yet taken by the controller. Seeks are latest-wins: a flushing
+/// seek waits for the stream to refill after the one before (about 170 ms), and a dragged seek
+/// bar asks for one every frame, so handling each in turn left seconds of seeks to work through.
+static PENDING_SEEK: Mutex<Option<f32>> = Mutex::new(None);
+
 pub fn send(cmd: Cmd) {
     match cmd {
         Cmd::Next => crate::fx::commanded(1.0),
         Cmd::Previous => crate::fx::commanded(-1.0),
+        Cmd::SeekFraction(f) => {
+            preview_seek(f);
+            // One message stands for every seek until the controller takes the slot.
+            if PENDING_SEEK.lock().unwrap().replace(f).is_some() {
+                return;
+            }
+        }
         _ => {}
     }
     if let Some(tx) = TX.get() {
@@ -349,6 +361,20 @@ impl Position {
 
 fn pos() -> std::sync::MutexGuard<'static, Position> {
     POSITION.get().expect("position").lock().unwrap()
+}
+
+/// The clock jumps to a seek's target as it's asked for, so the seek bar and time follow the
+/// pointer while the backend catches up. A new generation drops position reads already in
+/// flight, which would pull the clock back to where playback was.
+fn preview_seek(f: f32) {
+    let dur = VIEW.get().map(|v| v.lock().unwrap().duration).unwrap_or(0.0);
+    let Some(p) = POSITION.get().filter(|_| dur > 0.0) else { return };
+    let mut p = p.lock().unwrap();
+    p.last = f as f64 * dur;
+    p.at = Some(Instant::now());
+    p.generation += 1;
+    drop(p);
+    VERSION.fetch_add(1, Ordering::Relaxed);
 }
 
 // ---- track JSON helpers (tracks stay JSON, as in the frontend and queue.json)
@@ -823,7 +849,8 @@ impl Player {
             Cmd::TogglePlay => self.toggle_play().await,
             Cmd::Next => self.play_next(true, false).await,
             Cmd::Previous => self.play_previous().await,
-            Cmd::SeekFraction(f) => {
+            Cmd::SeekFraction(_) => {
+                let Some(f) = PENDING_SEEK.lock().unwrap().take() else { return };
                 if let Some(t) = &self.current {
                     let s = f as f64 * duration(t) as f64;
                     self.seek_to(s).await;
@@ -1874,6 +1901,9 @@ impl Player {
         }
         if playback::seek_track(self.state(), secs as f32).await.is_ok() {
             self.notify_seek(secs);
+        } else {
+            // The clock may have jumped ahead to the target (preview_seek): read it back.
+            self.poll_position(false).await;
         }
     }
 
