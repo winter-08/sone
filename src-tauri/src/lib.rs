@@ -4,6 +4,7 @@
 extern crate sone_host_shim as tauri;
 
 mod audio;
+pub mod audio_level;
 pub mod cache;
 pub mod commands;
 mod crypto;

@@ -555,6 +555,21 @@ fn parse_pcm_format(caps: &gst::CapsRef) -> Option<PcmFormat> {
     })
 }
 
+/// Feeds a buffer to the level tap. Maps it read-only: a writable map could
+/// copy-on-write a buffer the pipeline still shares.
+fn tap_level(pad: &gst::Pad, buffer: &gst::BufferRef) {
+    let Some(caps) = pad.current_caps() else { return };
+    let Some(s) = caps.structure(0) else { return };
+    if s.get::<&str>("layout").is_ok_and(|l| l != "interleaved") {
+        return;
+    }
+    let (Ok(format), Ok(channels)) = (s.get::<&str>("format"), s.get::<i32>("channels")) else {
+        return;
+    };
+    let Ok(map) = buffer.map_readable() else { return };
+    crate::audio_level::tap(map.as_slice(), format, channels.max(0) as u32);
+}
+
 #[cfg(target_os = "linux")]
 fn gst_format_to_alsa(gst_format: &str) -> alsa::pcm::Format {
     match gst_format {
@@ -1502,6 +1517,7 @@ fn spawn_alsa_writer(
                             let can_hw = pcm.state() == alsa::pcm::State::Running
                                 && pcm.hw_params_current().map(|p| p.can_pause()).unwrap_or(false);
                             if can_hw { pcm.pause(true).ok(); }
+                            crate::audio_level::reset();
 
                             while paused.load(Ordering::Acquire) && !stop.load(Ordering::Acquire) {
                                 if can_hw {
@@ -1571,6 +1587,7 @@ fn spawn_alsa_writer(
                             }
                         }
                         resolve_pending(&mut pending_promotion_from, &current_fmt);
+                        crate::audio_level::tap(&chunk.data, &current_fmt.gst_format, current_fmt.channels);
                         let vol = f32::from_bits(combined_vol.load(Ordering::Relaxed));
                         apply_volume(&mut chunk.data, &current_fmt, vol);
                         match write_bytes(&pcm, &chunk.data, &current_fmt, &frames_written, &silence_buf, &stop) {
@@ -1642,6 +1659,7 @@ fn spawn_alsa_writer(
                             continue; // stale EOS from old pipeline
                         }
                         let got_shutdown = drain_writer_rx(&rx);
+                        crate::audio_level::reset();
                         match write_silence(&pcm, &silence_buf, &stop) {
                             Ok(()) => {}
                             Err(WRITE_STOPPED) => break 'main,
@@ -1717,6 +1735,7 @@ fn spawn_alsa_writer(
                                         pcm.prepare().ok();
                                     }
                                     resolve_pending(&mut pending_promotion_from, &current_fmt);
+                                    crate::audio_level::tap(&chunk.data, &current_fmt.gst_format, current_fmt.channels);
                                     let vol = f32::from_bits(combined_vol.load(Ordering::Relaxed));
                                     apply_volume(&mut chunk.data, &current_fmt, vol);
                                     match write_bytes(&pcm, &chunk.data, &current_fmt, &frames_written, &silence_buf, &stop) {
@@ -1732,6 +1751,7 @@ fn spawn_alsa_writer(
                                 Ok(WriterCommand::Shutdown) => break 'main,
                                 Ok(WriterCommand::Flush) => {
                                     let got_shutdown = drain_writer_rx(&rx);
+                                    crate::audio_level::reset();
                                     pcm.drop().ok();
                                     if got_shutdown { break 'main; }
                                     pcm.prepare().ok();
@@ -1790,6 +1810,7 @@ fn spawn_alsa_writer(
 
                     Ok(WriterCommand::Flush) => {
                         let got_shutdown = drain_writer_rx(&rx);
+                        crate::audio_level::reset();
                         pcm.drop().ok();
                         if got_shutdown { break 'main; }
                         pcm.prepare().ok();
@@ -1798,11 +1819,13 @@ fn spawn_alsa_writer(
 
                     Ok(WriterCommand::Shutdown) => {
                         log::debug!("[alsa-writer] shutdown");
+                        crate::audio_level::reset();
                         pcm.drop().ok();
                         break;
                     }
 
                     Err(crossbeam_channel::RecvTimeoutError::Timeout) => {
+                        crate::audio_level::reset();
                         match write_silence(&pcm, &silence_buf, &stop) {
                             Ok(()) => {}
                             Err(WRITE_STOPPED) => break 'main,
@@ -1983,6 +2006,7 @@ impl AudioPlayer {
         std::thread::spawn(move || {
             // GST_PLUGIN_PATH is set in main(), before any thread exists.
             gst::init().expect("Failed to initialize GStreamer");
+            crate::audio_level::init_from_env();
 
             // Captured once, before anything promotes it. Re-reading this at a
             // later call site would bake the promoted rank in as "original" and
@@ -2585,6 +2609,29 @@ impl AudioPlayer {
                                         }
                                         gst::PadProbeReturn::Ok
                                     });
+                                    // Level tap: ahead of both volume stages, so visuals follow
+                                    // the music, not the slider or normalisation.
+                                    sink_pad.add_probe(
+                                        gst::PadProbeType::BUFFER
+                                            | gst::PadProbeType::EVENT_DOWNSTREAM
+                                            | gst::PadProbeType::EVENT_FLUSH,
+                                        |pad, info| {
+                                            match info.data {
+                                                Some(gst::PadProbeData::Buffer(ref buffer)) => {
+                                                    if crate::audio_level::enabled() {
+                                                        tap_level(pad, buffer);
+                                                    }
+                                                }
+                                                Some(gst::PadProbeData::Event(ref event)) => {
+                                                    if matches!(event.type_(), gst::EventType::FlushStart | gst::EventType::Eos) {
+                                                        crate::audio_level::reset();
+                                                    }
+                                                }
+                                                _ => {}
+                                            }
+                                            gst::PadProbeReturn::Ok
+                                        },
+                                    );
                                 }
 
                                 // autoaudiosink is a bin — its real child sink
@@ -2915,6 +2962,7 @@ impl AudioPlayer {
                             }
                             None => Err("No active pipeline".into()),
                         };
+                        crate::audio_level::reset();
                         reply.send(result).ok();
                     }
 
@@ -3004,6 +3052,7 @@ impl AudioPlayer {
                                 Ok(())
                             }
                         };
+                        crate::audio_level::reset();
                         reply.send(result).ok();
                     }
 

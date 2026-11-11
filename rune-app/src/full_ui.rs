@@ -9,10 +9,15 @@
 //! `matched` flight: the bar's cover leaves the tree while this one mounts, ui::nowbar);
 //! closing flies it back, a quarter faster.
 //!
+//! The motion spike (fx.rs, off with `SONE_FX=0`) adds the open's overshoot, the pause shrink,
+//! the directional track change, the heart pop, the bar's rise and the audio-reactive cover
+//! and scrim.
+//!
 //! Rune has no OS fullscreen, so "full screen" fills the window, as the video player does.
 
 use crate::controller::{self, Cmd, QItem, View};
 use crate::data::{self, Key};
+use crate::fx;
 use crate::glyph::{G, glyph};
 use crate::interact::{self, Anchor, Fav, Say};
 use crate::theme;
@@ -27,8 +32,6 @@ const CONTROLS_IDLE: Duration = Duration::from_secs(3);
 
 /// The cover's shared-element id: the bar's cover and this player's carry it.
 pub const COVER: &str = "now-cover";
-/// The open flight and entrance: 440 ms, the nearest spring to `cubic-bezier(0.32, 0.72, 0, 1)`.
-const OPEN: Spring = Spring::new(0.44, 0.0);
 /// The flight back to the bar, about a quarter faster (the bar's cover springs on it).
 pub const CLOSE: Spring = Spring::new(0.33, 0.0);
 
@@ -53,6 +56,9 @@ pub struct Full {
     opened_on: Option<u64>,
     /// A key woke the controls; the next poll redraws.
     dirty: bool,
+    /// The track liked from this player and how many times, keying the heart's pop (fx) so it
+    /// plays on the like itself, never for a track that was already loved when it showed.
+    pop: Option<(u64, u32)>,
     /// What MPRIS was last told (§8.3: pushed once, then on every change).
     told_mpris: Option<bool>,
 }
@@ -73,6 +79,7 @@ pub fn open(s: &mut App) {
     f.lyrics = false;
     f.lyric_line = None;
     f.opened_on = controller::now_playing().0;
+    f.pop = None;
     f.controls = true;
     f.hide_at = Some(Instant::now() + CONTROLS_IDLE);
     SHOWN.store(true, Ordering::Relaxed);
@@ -220,9 +227,15 @@ pub fn overlay(s: &App, v: &View, win: (f32, f32)) -> Option<El> {
     // A bright sleeve gets up to 0.22 more scrim, so white text keeps its contrast on it.
     let mean_l = crate::art::cover_color(v.cover.as_deref()).map_or(0.3, |c| c.mean_l);
     let scrim = 0.6 + ((mean_l - 0.45) * 0.5).clamp(0.0, 0.22);
+    fx::set_exclusive(v.exclusive || v.bit_perfect);
+    let mut veil = el().pin(Some(0.0), Some(0.0), Some(0.0), Some(0.0)).fill(theme::black(scrim));
+    // (fx: the scrim opens a little with loudness, the blur itself never changes)
+    if fx::on() {
+        veil = veil.live_opacity(&fx::react().scrim);
+    }
     let ground = el().key("full-ground").pin(Some(0.0), Some(0.0), Some(0.0), Some(0.0)).fill(theme::black(1.0)).a11y_hidden()
         .child(blurred)
-        .child(el().pin(Some(0.0), Some(0.0), Some(0.0), Some(0.0)).fill(theme::black(scrim)));
+        .child(veil);
 
     // ---- the cover: radius 10, a layered shadow, a hairline that keeps a black or white
     // sleeve's edge. The picture is fetched at the largest size the player draws, so opening
@@ -232,12 +245,32 @@ pub fn overlay(s: &App, v: &View, win: (f32, f32)) -> Option<El> {
     if let Some(px) = crate::art::cover(v.cover.as_deref(), COVER_PT).and_then(|u| crate::art::pixels(&u, COVER_PT)) {
         picture = picture.child(el().absolute(0.0, 0.0).size(art, art).radius(10.0).pixels_fit(&px, rune::SurfaceFit::Fill));
     }
-    let cover = el().key("full-cover").matched(COVER).size(art, art).radius(10.0).fill(oklch(0.2, 0.02, hue)).motion(OPEN).a11y_hidden()
+    let picture = picture.key(format!("full-art-{}", cur.id)).absolute(0.0, 0.0);
+    let hairline = el().absolute(0.0, 0.0).size(art, art).radius(10.0).border(1.0, white(0.1));
+    let lifted = |e: El| e
         .shadow(2.0, 4.0, theme::black(0.22))
         .shadow(12.0, 28.0, theme::black(0.32))
-        .box_shadow(Shadow { y: 32.0, blur: 72.0, spread: -12.0, color: theme::black(0.5), ..Shadow::default() })
-        .child(picture.key(format!("full-art-{}", cur.id)).absolute(0.0, 0.0).transition(swap(first, 0.32)))
-        .child(el().absolute(0.0, 0.0).size(art, art).radius(10.0).border(1.0, white(0.1)));
+        .box_shadow(Shadow { y: 32.0, blur: 72.0, spread: -12.0, color: theme::black(0.5), ..Shadow::default() });
+    let cover = el().key("full-cover").matched(COVER).size(art, art).radius(10.0).motion(fx::open_spring()).a11y_hidden();
+    let cover = if fx::on() {
+        // The whole sleeve is per track, so a track change can push it aside; it settles lower
+        // with a softer shadow while paused, and breathes with the music (react).
+        let paused = !v.playing;
+        let mut sleeve = el().key(format!("full-sleeve-{}", cur.id)).size(art, art).radius(10.0).fill(oklch(0.2, 0.02, hue))
+            .transition(fx::cover_change(first))
+            .scale(if paused { fx::PAUSED_SCALE } else { 1.0 }).scale_motion(if paused { fx::PAUSE } else { fx::RESUME })
+            .live_scale(&fx::react().scale);
+        sleeve = if paused {
+            sleeve.shadow(1.0, 3.0, theme::black(0.18))
+                .shadow(8.0, 18.0, theme::black(0.24))
+                .box_shadow(Shadow { y: 18.0, blur: 44.0, spread: -12.0, color: theme::black(0.36), ..Shadow::default() })
+        } else {
+            lifted(sleeve)
+        };
+        cover.child(sleeve.child(picture).child(hairline))
+    } else {
+        lifted(cover.fill(oklch(0.2, 0.02, hue))).child(picture.transition(swap(first, 0.32))).child(hairline)
+    };
 
     // ---- stage: the cover alone and centred, or cover left and lyrics right
     let mut stage = row().key("full-stage").pin(Some(sx), Some(sy), Some(sx), Some(128.0))
@@ -273,17 +306,29 @@ fn bar(s: &App, v: &View, cur: &QItem, w: f32, first: bool, shown: bool) -> El {
 
     let loved = interact::is_fav(Fav::Track, &cur.id.to_string());
     let (fid, fl) = (cur.id.to_string(), cur.title.clone());
+    let mut mark = glyph(if loved { G::HeartFilled } else { G::Heart }, 16.0, if loved { theme::accent() } else { white(0.45) });
+    // (fx: a like pops the heart; an unlike just swaps it)
+    if let Some((_, n)) = f.pop.filter(|&(id, _)| loved && id == cur.id) {
+        mark = mark.key(format!("full-love-pop-{n}")).sequence(rune::Sequence::new(fx::HEART_POP));
+    }
+    let id = cur.id;
     let heart = theme::focusable(el().key("full-love").role("button").label(if loved { "Unlike" } else { "Like" }))
         .size(28.0, 28.0).radius(14.0).items_center().justify_center()
         .hover(white(0.06)).press_scale(0.9).cursor(rune::Cursor::Pointer)
-        .on_press(move |_: &mut App| interact::toggle_fav(Fav::Track, fid.clone(), fl.clone(), Say::Nothing))
-        .child(glyph(if loved { G::HeartFilled } else { G::Heart }, 16.0, if loved { theme::accent() } else { white(0.45) }));
+        .on_press(move |s: &mut App| {
+            if fx::on() && !interact::is_fav(Fav::Track, &fid) {
+                let f = &mut s.nav.full;
+                f.pop = Some((id, f.pop.map_or(0, |(_, n)| n) + 1));
+            }
+            interact::toggle_fav(Fav::Track, fid.clone(), fl.clone(), Say::Nothing)
+        })
+        .child(mark);
     let track = interact::json_of_track(cur.id, &cur.title, &cur.artist);
     let more = ui::icon_button::<App>("full-more", "More options", G::More, 16.0, white(0.45))
         .on_press(move |s: &mut App| interact::open_track(s, track.clone(), None, Anchor::Below("full-more".into())));
     // A new track's words fade in over the last one's place.
     let words = col().key(format!("full-words-{}", cur.id)).shrink().min_w(0.0).gap(2.0)
-        .transition(Transition::opacity().springs(SpringPair::new(if first { Spring::NONE } else { Spring::new(0.26, 0.0) }, Spring::NONE)))
+        .transition(if fx::on() { fx::words_change(first) } else { Transition::opacity().springs(SpringPair::new(if first { Spring::NONE } else { Spring::new(0.26, 0.0) }, Spring::NONE)) })
         .child(text(cur.title.clone()).font(t(13.0, 600.0)).color(white(0.95)).truncate().role("heading").label(cur.title.clone()))
         .child(text(cur.artist.clone()).font(t(12.0, 400.0)).color(white(0.6)).truncate());
     let left = row().grow(1.0).min_w(side).gap(12.0).pl(8.0).items_center()
@@ -322,7 +367,8 @@ fn bar(s: &App, v: &View, cur: &QItem, w: f32, first: bool, shown: bool) -> El {
 
     let faded = |e: El| {
         let fade = if shown { Curve::tween(0.15, Easing::cubic(0.0, 0.0, 0.58, 1.0)) } else { Curve::tween(0.24, Easing::cubic(0.42, 0.0, 1.0, 1.0)) };
-        e.opacity(if shown { 1.0 } else { 0.0 }).opacity_motion(fade)
+        let e = e.opacity(if shown { 1.0 } else { 0.0 }).opacity_motion(fade);
+        if fx::on() { fx::bar_rise(e, shown) } else { e }
     };
     // (the gradient stays with the left side, under what is playing)
     let inner = row().w_full().gap(24.0).items_center().pt(64.0).px(24.0).pb(18.0)

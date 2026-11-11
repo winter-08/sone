@@ -246,6 +246,11 @@ pub fn send_play_ids(ids: Vec<u64>) {
 }
 
 pub fn send(cmd: Cmd) {
+    match cmd {
+        Cmd::Next => crate::fx::commanded(1.0),
+        Cmd::Previous => crate::fx::commanded(-1.0),
+        _ => {}
+    }
     if let Some(tx) = TX.get() {
         let _ = tx.send(Msg::Ui(cmd));
     }
