@@ -128,7 +128,7 @@ impl Default for Nav {
         Nav { page: Page::Home, back: vec![], fwd: vec![], search: TextEdit::new(""), lib: LibTab::Playlists, tab: SearchTab::All, filter: TextEdit::new(""), queue_open: false, suggest_due: None, menu_open: false, settings_tab: SettingsTab::Playback, drawer: None, login_mode: LoginMode::Pkce, settings_open: false, dialog: None,
             discord_status: TextEdit::new(""), lb_token: TextEdit::new(""), overlay_host: TextEdit::new(""), proxy_user: TextEdit::new(""),
             discord_due: None, proxy_due: None, lb_status: None, ctx: None, create: None, lyric_line: None, lyrics_scrolled: false, search_open: false, search_sel: None,
-            video: Default::default(), full: Default::default(), home_tab: "static".into(), home_pages: 0, content_w: 1000.0, pkce_paste: TextEdit::new("") }
+            video: Default::default(), full: Default::default(), home_tab: "static".into(), home_pages: 0, content_w: 0.0, pkce_paste: TextEdit::new("") }
     }
 }
 
@@ -1899,8 +1899,7 @@ pub(crate) fn play_feed_item(kind: &str, id: Value, title: &str) {
 /// The sign-in screen (React Login): PKCE or login-code mode, then the waiting state.
 pub fn login(s: &App, v: &View) -> El {
     use controller::Login;
-    let mut c = col().key("login").w(420.0).gap(14.0).items_center()
-        .child(row().items_end().child(text(&crate::TITLE[..1]).font(t(56.0, 700.0)).color(white(0.95)).a11y_hidden()).child(heading(&crate::TITLE[1..], 56.0)));
+    let mut c = col().key("login").w(420.0).gap(14.0).items_center().child(wordmark());
     match &v.login {
         Login::PkceWaiting { url, error } => {
             let u = url.clone();
@@ -1977,9 +1976,25 @@ pub fn login(s: &App, v: &View) -> El {
                 .child(text("Use custom credentials").font(t(12.0, 500.0)).color(white(0.55)).a11y_hidden()));
         }
     }
+    login_frame(c)
+}
+
+/// The app's name, as the sign-in screen shows it.
+fn wordmark() -> El {
+    row().items_end().child(text(&crate::TITLE[..1]).font(t(56.0, 700.0)).color(white(0.95)).a11y_hidden()).child(heading(&crate::TITLE[1..], 56.0))
+}
+
+/// The sign-in screen's window: its background and window buttons, `c` centred.
+fn login_frame(c: El) -> El {
     col().key("login-root").w_full().h_full().fill(ui::base(270.0))
         .child(row().w_full().px(12.0).py(8.0).child(spacer()).child(window_buttons()))
         .child(col().grow(1.0).w_full().items_center().justify_center().child(c))
+}
+
+/// What shows while the saved sign-in is checked at launch: the sign-in screen's frame and
+/// name, with nothing to press.
+pub fn splash() -> El {
+    login_frame(col().key("login").w(420.0).items_center().child(wordmark()))
 }
 
 

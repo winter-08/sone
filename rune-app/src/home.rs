@@ -55,6 +55,11 @@ pub fn home(s: &App) -> El {
     let first = match views::ready_or(Key::Home(slug.clone())) { Ok(v) => v, Err(e) => return e };
     let home = &first["home"];
     let w = s.nav.content_w;
+    // Rows and grids are sized to the measured width; until the first layout measures it, drawing
+    // them at a guess made every card jump to its real size on launch.
+    if w <= 0.0 {
+        return col().w_full();
+    }
     let mut c = col().w_full().gap(32.0);
 
     let tabs = home["tabs"].as_array().cloned().unwrap_or_default();

@@ -192,11 +192,16 @@ fn view(s: &App, cx: &mut Cx<App>) -> El {
     theme::set_ambient(ui::hue(v.track_id));
     // The root fills the window, so its width is the window's.
     let shell = cx.layout_with("root", |r| views::Shell::for_width(r[2])).unwrap_or_else(|| views::Shell::for_width(initial_size().0));
-    let (header, page) = (views::header(s), views::page(s, &v));
+    // Until the saved sign-in has been checked (about 0.6 s, the keyring among it), neither the
+    // login screen nor the shell: a signed-in launch went through the login screen first.
+    if !v.auth_known {
+        return views::splash();
+    }
     // Shell data (Home, folders, ...) is loaded by the controller once signed in.
     if !v.signed_in {
         return views::login(s, &v);
     }
+    let (header, page) = (views::header(s), views::page(s, &v));
     // The header spans the page and the drawer, so the window controls stay in the top-right
     // corner; the drawer sits beside the page below it, or over the page's right edge.
     let mut content = row().grow(1.0).min_h(0.0).w_full().child(page);

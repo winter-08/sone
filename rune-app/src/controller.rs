@@ -150,6 +150,8 @@ pub struct View {
     pub bit_perfect: bool,
     pub exclusive: bool,
     pub signed_in: bool,
+    /// The saved sign-in has been checked at launch, so `signed_in` is known.
+    pub auth_known: bool,
     pub login: Login,
     /// The current track's radio (mixes.TRACK_MIX) and main artist, for the drawer tabs.
     pub track_mix: Option<String>,
@@ -2253,6 +2255,7 @@ impl Player {
             bit_perfect: self.bit_perfect,
             exclusive: self.exclusive,
             signed_in: self.signed_in,
+            auth_known: self.restored,
             login: self.login.clone(),
             track_mix: self.current.as_ref().and_then(|t| t["mixes"]["TRACK_MIX"].as_str()).map(str::to_string),
             artist_id: self.current.as_ref().and_then(|t| t["artist"]["id"].as_u64().or(t["artists"][0]["id"].as_u64())),
