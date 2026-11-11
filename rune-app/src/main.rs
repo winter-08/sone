@@ -41,11 +41,20 @@ pub fn host() -> &'static AppHandle {
 
 pub struct App {
     seen: (u64, u64, u64),
+    /// When the 200 ms tick's next wake is due (Rune's clock).
+    tick_at: f64,
     pub nav: views::Nav,
 }
 
-fn poll(s: &mut App, _: f64, tx: &mut Tx) -> bool {
+fn poll(s: &mut App, t: f64, tx: &mut Tx) -> bool {
     perf::poll_ran();
+    // One 200 ms tick, asked for again only by the poll it wakes. Rune keeps every distinct
+    // deadline, so a fresh wake_after from every poll (frames and input poll too) starts
+    // another endless chain each time, and they pile up to a poll per frame interval.
+    if t >= s.tick_at {
+        s.tick_at = t + 0.2;
+        tx.wake_after(Duration::from_millis(200));
+    }
     if s.nav.suggest_due.is_some_and(|t| std::time::Instant::now() >= t) {
         s.nav.suggest_due = None;
         let q = s.nav.search.text.trim().to_string();
@@ -87,7 +96,6 @@ fn poll(s: &mut App, _: f64, tx: &mut Tx) -> bool {
     // (Covers don't appear here: art.rs fills their pixels in place, without a rebuild.)
     // (Home's carousel arrows change as a row reaches an end: home::version.)
     let v = (state, ticks, data::version().wrapping_add(interact::version() << 40).wrapping_add(home::version() << 20));
-    tx.wake_after(Duration::from_millis(200));
     let mut changed = v != s.seen;
     // Synced lyrics: the active line changes at its timestamp, not on the next clock tick, and
     // (unless the user scrolled away) the drawer glides to keep it centred (LyricsTab).
@@ -278,7 +286,7 @@ fn main() {
         on_key: Some(on_key),
         // Video frames (video.rs) wake the window as they arrive.
         setup: Some(|_: &mut App, w| video::set_waker(w)),
-        ..AppSpec::new(TITLE, initial_size(), || App { seen: (0, 0, 0), nav: views::Nav::default() }, view)
+        ..AppSpec::new(TITLE, initial_size(), || App { seen: (0, 0, 0), tick_at: 0.0, nav: views::Nav::default() }, view)
     };
     // Matches the desktop entry package.nix installs, so the desktop shows its name and icon.
     rune::set_app_id(option_env!("SONE_RUNE_APP_ID").unwrap_or("sone-rune"));
