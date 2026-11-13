@@ -248,6 +248,20 @@ pub fn forget_where(f: impl Fn(&PKey) -> bool) {
 }
 
 
+/// Whether every collection `f` picks already holds the item `id` (a track or album id, a
+/// playlist uuid, a mix id); true when none is loaded. A favourite added back after it was
+/// removed is still in its list, which then needn't be fetched again.
+pub fn all_hold(f: impl Fn(&PKey) -> bool, id: &str) -> bool {
+    let st = STORE.lock().unwrap();
+    st.iter().filter(|(k, e)| f(k) && !e.idle).all(|(_, e)| e.items.iter().any(|v| item_id(v) == id))
+}
+
+/// A collection item's id as favourites name it: a playlist's uuid, else its id.
+fn item_id(v: &Value) -> String {
+    let d = track_of(v);
+    d["uuid"].as_str().map(str::to_string).unwrap_or_else(|| d["id"].as_str().map(str::to_string).unwrap_or_else(|| d["id"].to_string()))
+}
+
 /// Everything loaded so far and where paging stands: (items, next raw offset, more to come),
 /// for a play source that goes on fetching the rest.
 pub fn loaded(key: &PKey) -> (Vec<Value>, usize, bool) {
@@ -439,5 +453,25 @@ pub fn play_with(key: PKey, preview: Vec<Value>, source: Value, shuffle: bool, s
     l.play_shuffle = shuffle;
     l.start_at = start_at;
     crate::controller::send(crate::controller::Cmd::PlaySource(Box::new(l)));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn items_are_named_as_favourites_name_them() {
+        // a Loved Tracks page item, a library playlist, a library mix, a bare album
+        assert_eq!(item_id(&json!({"item": {"id": 1001}, "created": "x"})), "1001");
+        assert_eq!(item_id(&json!({"itemType": "PLAYLIST", "data": {"uuid": "u-1", "title": "P"}})), "u-1");
+        assert_eq!(item_id(&json!({"data": {"id": "mix0001"}})), "mix0001");
+        assert_eq!(item_id(&json!({"id": 77, "title": "A"})), "77");
+    }
+
+    #[test]
+    fn a_list_nobody_loaded_holds_everything() {
+        assert!(all_hold(|k| matches!(k, PKey::ArtistViewAll(4242, _)), "1"));
+    }
 }
 

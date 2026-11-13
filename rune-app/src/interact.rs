@@ -202,10 +202,7 @@ pub fn toggle_fav(k: Fav, id: String, label: String, say: Say) {
         let l = clip(&label, 28);
         match res {
             Ok(()) => {
-                // library lists the sidebar shows
-                for key in [Key::FavAlbums, Key::FavArtists, Key::FavMixes, Key::Folders] {
-                    data::forget(&key);
-                }
+                refresh_lists(k, &id, now_on);
                 match (say, k, now_on) {
                     (Say::Loved, _, true) => toast(format!("Added \"{l}\" to Loved tracks"), Kind::Success),
                     (Say::Loved, _, false) => toast(format!("Removed \"{l}\" from Loved tracks"), Kind::Success),
@@ -236,6 +233,31 @@ pub fn toggle_fav(k: Fav, id: String, label: String, say: Say) {
             }
         }
     });
+}
+
+/// The list a favourite of kind `k` shows in, after the server took a change to `id` (React adds
+/// to and removes from its caches, useFavorites.ts):
+/// - Loved Tracks, Loved Videos and the library's albums, artists and mixes hide what was
+///   removed already (they filter by the favourite ids), so only an addition fetches them again,
+///   and only when a loaded list doesn't hold it yet;
+/// - the playlist lists (folders) don't filter, so a playlist added or removed fetches them again.
+/// Only that kind's lists start over: the others keep their place.
+fn refresh_lists(k: Fav, id: &str, now_on: bool) {
+    use crate::paged::{self, Lib, PKey};
+    fn lib(l: Lib) -> impl Fn(&PKey) -> bool {
+        move |key| matches!(key, PKey::Library { kind, .. } if *kind == l)
+    }
+    let loved = |key: &PKey| matches!(key, PKey::Loved { .. });
+    let videos = |key: &PKey| *key == PKey::LovedVideos;
+    match k {
+        Fav::Track if now_on && !paged::all_hold(loved, id) => paged::forget_where(loved),
+        Fav::Video if now_on && !paged::all_hold(videos, id) => paged::forget_where(videos),
+        Fav::Album if now_on && !paged::all_hold(lib(Lib::Albums), id) => data::forget(&Key::FavAlbums),
+        Fav::Artist if now_on && !paged::all_hold(lib(Lib::Artists), id) => data::forget(&Key::FavArtists),
+        Fav::Mix if now_on && !paged::all_hold(lib(Lib::Mixes), id) => data::forget(&Key::FavMixes),
+        Fav::Playlist if !(now_on && paged::all_hold(lib(Lib::Playlists), id)) => data::forget(&Key::Folders),
+        _ => {}
+    }
 }
 
 // ------------------------------------------------------------------ toasts
