@@ -36,6 +36,13 @@ pub struct Custom {
     dismissed: bool,
 }
 
+impl Custom {
+    /// Closes the help dialog; whether it was open.
+    pub fn close_help(&mut self) -> bool {
+        std::mem::replace(&mut self.help, false)
+    }
+}
+
 /// Whether the build has embedded credentials, so the simple view can sign in at all (React
 /// loadCreds: with neither the login-code nor the PKCE pair it opens on the advanced view).
 pub fn has_defaults() -> bool {
@@ -119,7 +126,7 @@ pub fn view(s: &App, failed: Option<&str>) -> El {
             .child(text("What are Client ID and Client Secret?").font(t(13.0, 500.0)).color(theme::accent()).a11y_hidden())));
     // API credentials (greyed out for Token Import, which reads them from the paste).
     let secret_input = {
-        let i = input(&c.client_secret, "login-secret", "Client Secret", if import { "Auto-extracted from cURL" } else { "Leave blank for Lossless (CD quality)" }, field_of!(client_secret));
+        let i = input(&c.client_secret, if c.show_secret { "login-secret-shown" } else { "login-secret" }, "Client Secret", if import { "Auto-extracted from cURL" } else { "Leave blank for Lossless (CD quality)" }, field_of!(client_secret));
         if c.show_secret { i } else { i.secure() }
     };
     let show = c.show_secret;

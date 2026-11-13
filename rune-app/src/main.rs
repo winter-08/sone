@@ -244,6 +244,10 @@ fn on_key(s: &mut App, e: &KeyEvent, tx: &mut Tx) -> bool {
     if matches!(e.key, Key::Escape) && (interact::on_escape(s) || full_ui::on_escape(s) || video_ui::on_escape(s, tx)) {
         return true;
     }
+    // a dialog over Settings, the profile editor or the sign-in help closes before what's under it
+    if matches!(e.key, Key::Escape) && settings::on_escape(s) {
+        return true;
+    }
     if matches!(e.key, Key::Escape) && (s.nav.menu_open || s.nav.settings_open) {
         if s.nav.menu_open { s.nav.menu_open = false } else { s.nav.settings_open = false }
         return true;

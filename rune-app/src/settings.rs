@@ -315,6 +315,32 @@ fn reset_after_logout(s: &mut App) {
     n.set = Form::default();
 }
 
+/// Escape on the innermost of this module's layers (React's dismiss stack): the sign-in help,
+/// the profile editor, then over Settings the content-off confirmation, the token regeneration
+/// question and the colour picker. Whether it closed one; Settings itself is main.rs's layer.
+pub fn on_escape(s: &mut App) -> bool {
+    let f = &mut s.nav.set;
+    if let Some(c) = &mut f.custom_login
+        && c.close_help()
+    {
+        return true;
+    }
+    if f.profile_edit.take().is_some() {
+        return true;
+    }
+    if !s.nav.settings_open {
+        return false;
+    }
+    if f.pending_off.take().is_some() {
+        return true;
+    }
+    if f.mcp_confirm {
+        f.mcp_confirm = false;
+        return true;
+    }
+    f.pick.take().is_some()
+}
+
 /// Run the debounced saves that are due and apply async results (called from App::poll).
 pub fn flush_settings(s: &mut App) {
     let signed_in = controller::signed_in();

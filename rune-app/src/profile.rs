@@ -197,7 +197,7 @@ pub fn page(_s: &App) -> El {
 
 /// A header action: a 22 pt icon over its caption (ProfilePage HeaderAction).
 fn action(key: &str, label: &str, g: G) -> El {
-    theme::focusable(col().key(key.to_string()).role("button").label(label)).gap(6.0).items_center().padding(4.0).radius(8.0).hover(white(0.06)).cursor(rune::Cursor::Pointer)
+    theme::focusable(col().key(key.to_string()).role("button").label(label)).help(label).gap(6.0).items_center().padding(4.0).radius(8.0).hover(white(0.06)).cursor(rune::Cursor::Pointer)
         .child(crate::glyph::glyph(g, 22.0, white(0.8)))
         .child(text(label.to_string()).font(t(11.0, 600.0)).color(white(0.7)).a11y_hidden())
 }
