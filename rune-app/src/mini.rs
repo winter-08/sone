@@ -254,10 +254,12 @@ fn compact(v: &View, w: f32, h: f32) -> El {
         meta = meta.child(artist(v, 13.0));
     }
     if let Some(src) = v.playing_from.as_ref().filter(|_| seek) {
+        // show-source opens the collection the context queue came from
+        let page = v.context_source.as_ref().or(v.source.as_ref()).filter(|s| crate::queue_ui::navigable(s)).and_then(crate::queue_ui::source_page);
         meta = meta.child(
             row().mt(2.0).gap(4.0).min_w(0.0)
                 .child(text("Playing from").font(t(12.0, 400.0)).color(white(0.4)))
-                .child(col().shrink().min_w(0.0).child(text(src.clone()).font(t(12.0, 400.0)).color(white(0.5)).truncate())),
+                .child(col().shrink().min_w(0.0).child(link(text(src.clone()).font(t(12.0, 400.0)).color(white(0.5)).truncate(), "mini-source", src.clone(), page))),
         );
     }
     let mut top = row().grow(1.0).min_h(0.0).gap(12.0).child(cover(v, top_h.min(96.0)).self_center()).child(meta);
@@ -350,12 +352,30 @@ fn empty(tier: Tier, w: f32, h: f32) -> El {
 
 // ---- parts
 
+/// The miniplayer's title, artist and "Playing from" open their pages in the main window
+/// (useMiniplayerEmitter show-album / show-artist / show-source).
+fn link(e: El, key: &str, label: String, page: Option<crate::views::Page>) -> El {
+    let Some(page) = page else { return e };
+    theme::focusable(el().key(key.to_string()).role("link").label(label)).shrink().min_w(0.0).radius(3.0).hover_group().cursor(rune::Cursor::Pointer)
+        .on_press(move |_: &mut Mini| crate::queue_ui::request_nav(Some(page.clone())))
+        .child(e.group_color(white(1.0)).a11y_hidden())
+}
+
 fn title(v: &View, size: f32) -> El {
-    text(v.title.clone()).font(t(size, 600.0)).color(white(0.95)).truncate()
+    let words = text(v.title.clone()).font(t(size, 600.0)).color(white(0.95)).truncate();
+    let album = v.current.as_ref().filter(|_| v.video.is_none()).and_then(|c| c.album_id).map(crate::views::Page::Album);
+    let words = link(words, "mini-title", v.title.clone(), album);
+    // (MiniPlayer marks AI-generated tracks; it shows no explicit badge)
+    if v.current.as_ref().is_some_and(|c| c.ai) && v.video.is_none() {
+        return rune::row().min_w(0.0).gap(6.0).items_center().child(words.shrink()).child(crate::content::ai_badge());
+    }
+    words
 }
 
 fn artist(v: &View, size: f32) -> El {
-    text(v.artist.clone()).font(t(size, 400.0)).color(white(0.6)).truncate()
+    let words = text(v.artist.clone()).font(t(size, 400.0)).color(white(0.6)).truncate();
+    let page = v.current.as_ref().filter(|_| v.video.is_none()).and_then(|c| c.artist_id).map(crate::views::Page::Artist);
+    link(words, "mini-artist", v.artist.clone(), page)
 }
 
 /// A clock time beside the seek bar, wide enough for "1:07:00" so nothing shifts as it ticks.

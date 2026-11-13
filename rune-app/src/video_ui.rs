@@ -230,7 +230,7 @@ pub fn overlay(s: &App, v: &View) -> Option<El> {
     let mut title_row = row().gap(8.0).items_center().min_w(0.0)
         .child(text(info.title.clone()).font(t(17.0, 700.0)).color(white(0.97)).truncate().role("heading"));
     if info.explicit {
-        title_row = title_row.child(text("E").font(t(10.0, 700.0)).color(theme::ink()).px(4.0).radius(3.0).fill(white(0.7)));
+        title_row = title_row.child(crate::content::explicit_badge());
     }
     let top = row().key("video-top").pin(Some(0.0), Some(0.0), Some(0.0), None).px(24.0).pt(20.0).pb(40.0).items_start()
         .linear_gradient(std::f32::consts::FRAC_PI_2 * 2.0, [(0.0, theme::black(0.6)), (1.0, theme::black(0.0))])
@@ -251,7 +251,8 @@ pub fn overlay(s: &App, v: &View) -> Option<El> {
     let seek = row().w_full().gap(12.0).items_center()
         .child(text(ui::fmt_time(v.position)).font(ui::tnum(t(11.0, 500.0))).color(white(0.6)).w(44.0).align(rune::Align::End))
         .child(col().grow(1.0).child(ui::seek::<App>(v, "video-seek", 10000.0, 4.0).w_full()))
-        .child(text(ui::fmt_time(v.duration)).font(ui::tnum(t(11.0, 500.0))).color(white(0.6)).w(44.0));
+        // (a press shows the time left, as React's VideoScrubber)
+        .child(ui::duration_label::<App>(v, "video-duration", ui::tnum(t(11.0, 500.0)), 44.0));
     let controls = row().w_full().mt(14.0).items_center()
         .child(row().w(260.0).gap(4.0).items_center()
             .child(btn("video-fav", if fav { "Remove from favorites" } else { "Add to favorites" }, if fav { G::HeartFilled } else { G::Heart }, 16.0, if fav { theme::accent() } else { white(0.6) })

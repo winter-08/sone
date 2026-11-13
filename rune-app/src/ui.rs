@@ -234,16 +234,78 @@ pub fn dragging() -> bool {
 
 pub fn seek<S: 'static>(v: &View, key: &str, w: f32, h: f32) -> El {
     let frac = if v.duration > 0.0 { (v.position / v.duration) as f32 } else { 0.0 };
-    slider::<S>(key, "Position", w, h, frac, (v.position, v.duration.max(0.0)), Cmd::SeekFraction)
+    let s = slider::<S>(key, "Position", w, h, frac, (v.position, v.duration.max(0.0)), Cmd::SeekFraction);
+    // A video's scrubber seeks as it's dragged (VideoProgressScrubber); a track's only previews
+    // the time under the pointer and seeks once, on release (useProgressScrub).
+    if v.video.is_some() {
+        return s;
+    }
+    s.on_drag(move |_: &mut S, d, tx| {
+        DRAG_AT.with(|t| t.set(Some(std::time::Instant::now())));
+        tx.instant();
+        let f = (d.x / d.w).clamp(0.0, 1.0);
+        match d.phase {
+            rune::Phase::Up if d.cancelled() => crate::controller::end_scrub(),
+            rune::Phase::Up => send(Cmd::SeekFraction(f)),
+            _ => crate::controller::scrub(f),
+        }
+    })
 }
 
+/// VolumeSlider: the speaker (muted, below half, above) and the slider. With something playing
+/// the speaker mutes and unmutes (0 or full, as React's does) and the wheel anywhere on it
+/// steps 5%. Bit-perfect locks it at unity, except for a video's own audio.
 pub fn volume<S: 'static>(v: &View, key: &str, w: f32) -> El {
-    row()
-        .gap(8.0)
-        .items_center()
-        // VolumeSlider.tsx: muted, below half, above
-        .child(glyph(if v.volume <= 0.0 { G::VolumeX } else if v.volume < 0.5 { G::Volume1 } else { G::Speaker }, 16.0, white(0.6)))
-        .child(slider::<S>(key, "Volume", w, 4.0, v.volume, (v.volume as f64, 1.0), Cmd::SetVolume))
+    let locked = v.bit_perfect && v.video.is_none();
+    let level = if locked { 1.0 } else { v.volume };
+    let mark = glyph(if level <= 0.0 { G::VolumeX } else if level < 0.5 { G::Volume1 } else { G::Speaker }, 16.0, white(0.6));
+    // (only with a track: at start-up the bar shows exactly what the React bar names)
+    let speaker = if v.current.is_some() && !locked {
+        let vol = v.volume;
+        theme::focusable(el().key(format!("{key}-mute")).role("button").label(if vol > 0.0 { "Mute" } else { "Unmute" }))
+            .size(24.0, 24.0).radius(12.0).items_center().justify_center().hover(white(0.08)).cursor(rune::Cursor::Pointer)
+            .on_press(move |_: &mut S| send(Cmd::SetVolume(if vol > 0.0 { 0.0 } else { 1.0 })))
+            .child(mark)
+    } else {
+        mark
+    };
+    let mut slide = slider::<S>(key, "Volume", w, 4.0, level, (level as f64, 1.0), Cmd::SetVolume);
+    if locked {
+        slide = unavailable(slide).on_step(|_: &mut S, _, _| {}).on_drag(|_: &mut S, _, _| {});
+    }
+    let vol = v.volume;
+    let r = row().gap(8.0).items_center().child(speaker).child(slide);
+    if locked {
+        return r.opacity(0.4);
+    }
+    r.on_wheel(move |_: &mut S, ev, _| {
+        if ev.dy == 0.0 {
+            return false;
+        }
+        let next = (vol + if ev.dy < 0.0 { 0.05 } else { -0.05 }).clamp(0.0, 1.0);
+        send(Cmd::SetVolume((next * 100.0).round() / 100.0));
+        true
+    })
+}
+
+thread_local! {
+    /// The bar's duration shows the time left instead (a press on it toggles, as in React).
+    static TIME_LEFT: std::cell::RefCell<rune::Tracked<bool>> = std::cell::RefCell::new(rune::Tracked::new(false));
+}
+
+/// The duration under the seek bar, or the time left (`-m:ss`) once pressed; a button only
+/// while something plays.
+pub fn duration_label<S: 'static>(v: &View, key: &str, font: TextStyle, w: f32) -> El {
+    let left = TIME_LEFT.with_borrow(|t| **t);
+    let s = if v.current.is_none() { fmt_time(0.0) } else if left { format!("-{}", fmt_time((v.duration - v.position).max(0.0))) } else { fmt_time(v.duration) };
+    let label = text(s).font(font).color(white(0.55)).w(w);
+    if v.current.is_none() {
+        return label;
+    }
+    theme::focusable(el().key(key.to_string()).role("button").label(if left { "Show duration" } else { "Show time remaining" }))
+        .radius(4.0).cursor(rune::Cursor::Pointer)
+        .on_press(|_: &mut S| TIME_LEFT.with_borrow_mut(|t| **t = !**t))
+        .child(label.a11y_hidden())
 }
 
 /// Three bars that bounce while playing: the "this one is playing" mark in a track list.
@@ -310,11 +372,18 @@ pub fn transport<S: 'static>(v: &View, prefix: &str, play_size: f32) -> El {
         .child(icon_button::<S>(&format!("{prefix}-prev"), "Previous", G::Prev, 22.0, white(0.92)).on_press(|_: &mut S| send(Cmd::Previous)))
         .child(play)
         .child(icon_button::<S>(&format!("{prefix}-next"), "Next", G::Next, 22.0, white(0.92)).on_press(|_: &mut S| send(Cmd::Next)))
-        .child(
-            icon_button::<S>(&format!("{prefix}-repeat"), repeat_label, G::Repeat, 18.0, dim(v.repeat != Repeat::Off))
+        .child({
+            let b = icon_button::<S>(&format!("{prefix}-repeat"), repeat_label, G::Repeat, 18.0, dim(v.repeat != Repeat::Off))
                 .checked(v.repeat != Repeat::Off)
-                .on_press(|_: &mut S| send(Cmd::CycleRepeat)),
-        )
+                .on_press(|_: &mut S| send(Cmd::CycleRepeat));
+            // repeat one: the small "1" on the button's corner, as the React bar marks it
+            if v.repeat == Repeat::One {
+                b.child(el().absolute(22.0, 4.0).size(12.0, 12.0).radius(6.0).fill(white(0.95)).items_center().justify_center().a11y_hidden()
+                    .child(text("1").font(t(8.0, 800.0)).color(theme::ink())))
+            } else {
+                b
+            }
+        })
 }
 
 /// What pressing the bar's cover does: its accessible name and the action.
@@ -327,6 +396,17 @@ pub type CoverAction<S> = (&'static str, fn(&mut S));
 /// row keyed `nowbar-extras`, `None` before the first), which centre the transport.
 /// `on_cover` makes the cover a button: its accessible name and what a press does.
 pub fn nowbar<S: 'static>(v: &View, track_actions: El, extras: El, on_cover: Option<CoverAction<S>>, room: (f32, Option<f32>)) -> El {
+    let info = col()
+        .shrink()
+        .min_w(0.0)
+        .gap(2.0)
+        .child(text(if v.title.is_empty() { "Nothing playing".to_string() } else { v.title.clone() }).font(t(13.0, 600.0)).color(white(0.95)).truncate())
+        .child(text(v.artist.clone()).font(t(12.0, 400.0)).color(white(0.6)).truncate());
+    nowbar_with(v, info, track_actions, extras, on_cover, room)
+}
+
+/// [`nowbar`] with the caller's title and artist block (`info`), which may link them.
+pub fn nowbar_with<S: 'static>(v: &View, info: El, track_actions: El, extras: El, on_cover: Option<CoverAction<S>>, room: (f32, Option<f32>)) -> El {
     let h = hue(v.track_id);
     let seed = v.track_id.unwrap_or(0);
     // The cover flies to the full-screen player and back (full_ui): it leaves the bar while the
@@ -369,15 +449,8 @@ pub fn nowbar<S: 'static>(v: &View, track_actions: El, extras: El, on_cover: Opt
         .gap(12.0)
         .items_center()
         .child(cover)
-        .child(
-            // shrinks (and truncates) rather than grows, so the heart follows the title
-            col()
-                .shrink()
-                .min_w(0.0)
-                .gap(2.0)
-                .child(text(if v.title.is_empty() { "Nothing playing".to_string() } else { v.title.clone() }).font(t(13.0, 600.0)).color(white(0.95)).truncate())
-                .child(text(v.artist.clone()).font(t(12.0, 400.0)).color(white(0.6)).truncate()),
-        )
+        // shrinks (and truncates) rather than grows, so the heart follows the title
+        .child(info)
         .child(track_actions);
     let middle = col()
         .w(560.0)
@@ -393,7 +466,7 @@ pub fn nowbar<S: 'static>(v: &View, track_actions: El, extras: El, on_cover: Opt
                 .items_center()
                 .child(text(fmt_time(v.position)).font(tnum(t(11.0, 500.0))).color(white(0.55)).w(44.0).align(Align::End))
                 .child(col().grow(1.0).child(seek::<S>(v, "bar-seek", 10000.0, 4.0).w_full()))
-                .child(text(fmt_time(v.duration)).font(tnum(t(11.0, 500.0))).color(white(0.55)).w(44.0)),
+                .child(duration_label::<S>(v, "bar-duration", tnum(t(11.0, 500.0)), 44.0)),
         );
     // (the content row keeps its own width, so measuring it doesn't feed back into the layout)
     let right = row().grow(1.0).justify_end()

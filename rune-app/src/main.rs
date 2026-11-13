@@ -11,6 +11,7 @@ mod bio;
 mod content;
 mod controller;
 mod data;
+mod drawer_tabs;
 mod full_ui;
 mod fx;
 mod glyph;
@@ -20,6 +21,8 @@ mod icons;
 mod interact;
 mod mini;
 mod perf;
+mod queue_ui;
+mod signal_path;
 mod sources;
 mod theme;
 mod ui;
@@ -102,6 +105,7 @@ fn poll(s: &mut App, t: f64, tx: &mut Tx) -> bool {
         interact::load_favorites_once();
     }
     interact::apply_pending(s);
+    queue_ui::apply_nav(s);
     data::nudge_due_retries();
     // (Hover intent, the players' control fades and the lyric line only draw: off screen they
     // wait, and catch up on the poll that showing the window runs.)
@@ -123,6 +127,11 @@ fn poll(s: &mut App, t: f64, tx: &mut Tx) -> bool {
     if let Some(next) = full_next.filter(|_| s.shown) {
         tx.wake_after(next + Duration::from_millis(5));
     }
+    // The signal path panel's 2 s probe while it's open.
+    let (path_changed, path_next) = signal_path::tick();
+    if let Some(next) = path_next.filter(|_| s.shown) {
+        tx.wake_after(next);
+    }
     // A space press that toggled playback under the open player lands without the pause shrink.
     if fx::follow(s.nav.full.open, controller::clock().1) {
         tx.instant();
@@ -143,7 +152,7 @@ fn poll(s: &mut App, t: f64, tx: &mut Tx) -> bool {
     if changed && !lyric_moved && !full_changed && ((state, v.2) == (s.seen.0, s.seen.2) || ui::dragging()) {
         tx.instant();
     }
-    changed |= lyric_moved || video_changed || full_changed;
+    changed |= lyric_moved || video_changed || full_changed || path_changed;
     s.seen = v;
     changed
 }
@@ -233,6 +242,11 @@ fn on_key(s: &mut App, e: &KeyEvent, tx: &mut Tx) -> bool {
     }
     if matches!(e.key, Key::Escape) && (s.nav.menu_open || s.nav.settings_open) {
         if s.nav.menu_open { s.nav.menu_open = false } else { s.nav.settings_open = false }
+        return true;
+    }
+    // the now-playing drawer is the last Escape layer (NowPlayingDrawer useEscapeDismiss)
+    if matches!(e.key, Key::Escape) && Tracked::untracked(&s.nav.drawer).is_some() {
+        *s.nav.drawer = None;
         return true;
     }
     if e.mods.cmd || e.mods.ctrl || e.mods.alt || s.nav.search.focused || s.nav.filter.focused {
@@ -341,7 +355,7 @@ fn view(s: &App, cx: &mut Cx<App>) -> El {
         let mut v = (*s.ctl).clone();
         v.position = *s.pos;
         // The bar's cover opens the video player again, or the full-screen player.
-        ui::nowbar::<App>(&v, views::bar_track_actions(&v), views::bar_extras(&v, shell), views::bar_cover_action(&v), room)
+        ui::nowbar_with::<App>(&v, views::bar_info(&v), views::bar_track_actions(&v), views::bar_extras(&v, shell, *s.nav.drawer), views::bar_cover_action(&v), room)
     });
     let mut root = col().key("root").w_full().h_full().fill(theme::ground()).child(body).child(bar);
     if let Some(d) = views::dropdown(s) {
@@ -359,6 +373,10 @@ fn view(s: &App, cx: &mut Cx<App>) -> El {
     // (under the context menus: its More button opens the track menu over it)
     let win_h = cx.layout_with("root", |r| r[3].round()).unwrap_or(initial_size().1);
     if let Some(p) = full_ui::overlay(s, &v, (win_w, win_h)) {
+        root = root.child(p);
+    }
+    // (the quality badge's panel opens from the bar and from the full-screen player, over both)
+    if let Some(p) = signal_path::overlay(&v) {
         root = root.child(p);
     }
     for o in interact::overlay(s) {

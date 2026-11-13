@@ -266,13 +266,27 @@ fn compact_grid(si: usize, title: &str, items: &[Value], w: f32) -> El {
                 _ => data::artist_of(it),
             };
             let name = data::name(it);
+            // HomeSection: a track the content filter blocks (or AI content anything else, with
+            // AI off) dims; a blocked track opens its album, if it has one, instead of playing.
+            let restricted = if kind == "TRACK" { crate::content::blocked(it) } else { !crate::content::prefs().1 && d["ai"].as_bool() == Some(true) };
+            let mut words = row().min_w(0.0).gap(6.0).items_center().child(text(name.clone()).font(t(14.0, 500.0)).color(white(0.95)).truncate().shrink().a11y_hidden());
+            if let Some(b) = crate::content::badges(kind == "TRACK" && d["explicit"].as_bool() == Some(true), !is_my_tracks(it) && d["ai"].as_bool() == Some(true)) {
+                words = words.child(b);
+            }
             let mut line = theme::focusable_row(row().key(format!("home-{si}-c{r}")).role("button").label(name.clone())).w_full().h(56.0).px(8.0).gap(12.0).radius(6.0).items_center()
                 .hover(white(0.06)).cursor(rune::Cursor::Pointer)
                 .child(thumb(it, 40.0, 4.0))
                 .child(col().shrink().min_w(0.0).gap(2.0)
-                    .child(text(name.clone()).font(t(14.0, 500.0)).color(white(0.95)).truncate().a11y_hidden())
+                    .child(words)
                     .child(text(sub).font(t(12.0, 400.0)).color(white(0.55)).truncate().a11y_hidden()));
-            if kind == "TRACK" {
+            if restricted {
+                line = line.opacity(0.5);
+            }
+            if kind == "TRACK" && restricted {
+                if let Some(album) = d["album"]["id"].as_u64() {
+                    line = line.on_press(move |s: &mut App| views::go(s, views::Page::Album(album)));
+                }
+            } else if kind == "TRACK" {
                 let (id, tr, ttl) = (d["id"].as_u64().unwrap_or(0), tracks.clone(), title.to_string());
                 let track = d.clone();
                 line = line.on_press(move |_: &mut App| play_from(&ttl, &tr, id))
@@ -340,12 +354,22 @@ fn track_card(key: String, it: &Value, cw: f32, title: &str, tracks: &[Value]) -
     let id = d["id"].as_u64().unwrap_or(0);
     let a = cw - 16.0;
     let (tr, ttl) = (tracks.to_vec(), title.to_string());
-    theme::focusable_row(col().key(key).role("presentation")).w(cw).padding(8.0).gap(6.0).radius(12.0).hover(white(0.06)).cursor(rune::Cursor::Pointer)
+    // (a blocked track dims and neither plays nor opens its menu; its badges follow the title)
+    let blocked = crate::content::blocked(&d);
+    let mut words = row().w_full().min_w(0.0).gap(6.0).items_center().child(text(data::name(it)).font(t(13.0, 600.0)).color(white(0.9)).truncate().shrink());
+    if let Some(b) = crate::content::badges_for(&d) {
+        words = words.child(b);
+    }
+    let card = theme::focusable_row(col().key(key).role("presentation")).w(cw).padding(8.0).gap(6.0).radius(12.0)
+        .child(ui::with_image(ui::tile(ui::hue(Some(id)), a, id, 10.0), crate::art::item_url(it, a), a, 10.0))
+        .child(words)
+        .child(text(data::artist_of(it)).font(t(11.0, 400.0)).color(white(0.55)).truncate());
+    if blocked {
+        return card.opacity(0.5);
+    }
+    card.hover(white(0.06)).cursor(rune::Cursor::Pointer)
         .on_press(move |_: &mut App| play_from(&ttl, &tr, id))
         .on_secondary_press(move |s: &mut App, p, _| interact::open_track(s, d.clone(), None, Anchor::Point(p.x, p.y)))
-        .child(ui::with_image(ui::tile(ui::hue(Some(id)), a, id, 10.0), crate::art::item_url(it, a), a, 10.0))
-        .child(text(data::name(it)).font(t(13.0, 600.0)).color(white(0.9)).truncate())
-        .child(text(data::artist_of(it)).font(t(11.0, 400.0)).color(white(0.55)).truncate())
 }
 
 /// A promotion (`MAGAZINE`): its 550×400 image, header and subheader; it opens the playlist,

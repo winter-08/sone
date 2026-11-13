@@ -201,13 +201,18 @@ pub(crate) fn card_w(w: f32, key: String, title: &str, sub: &str, seed: u64, rou
     let h = ui::hue(Some(seed));
     let mut art = if round { ui::with_image(ui::art(h, a, seed, 0.0), img, a, a / 2.0) } else { ui::with_image(ui::tile(h, a, seed, 10.0), img, a, 10.0) };
     let kind = item.as_ref().and_then(Media::of);
+    let card_flags = item.as_ref().map(|it| {
+        let d = data::data(it);
+        (d["explicit"].as_bool() == Some(true), d["ai"].as_bool() == Some(true))
+    });
+    let ai_item = card_flags.is_some_and(|f| f.1);
     if let (Some(it), Some(kind)) = (item.clone(), kind) {
         let play_it = it.clone();
         let play_label = format!("Play {}", data::name(&it));
         if kind == Media::Artist {
             art = art.child(el().absolute(a / 2.0 - 24.0, a / 2.0 - 24.0).key(format!("{key}-play")).role("button").label(play_label).size(48.0, 48.0).radius(24.0).fill(theme::black(0.45))
                 .items_center().justify_center().group_opacity(0.0, 1.0).cursor(rune::Cursor::Pointer)
-                .on_press(move |_: &mut App| interact::play_media(&play_it, kind))
+                .on_press(move |_: &mut App| if !(ai_item && !crate::content::prefs().1) { interact::play_media(&play_it, kind) })
                 .child(glyph(G::Play, 28.0, white(1.0))));
         } else {
             let fav_kind = match kind { Media::Album => Fav::Album, Media::Playlist => Fav::Playlist, Media::Mix => Fav::Mix, Media::Artist => Fav::Artist };
@@ -219,7 +224,7 @@ pub(crate) fn card_w(w: f32, key: String, title: &str, sub: &str, seed: u64, rou
             art = art
                 .child(el().absolute(10.0, a - 50.0).key(format!("{key}-play")).role("button").label(play_label).size(40.0, 40.0).radius(20.0).fill(accent())
                     .items_center().justify_center().group_opacity(0.0, 1.0).press_scale(0.94).cursor(rune::Cursor::Pointer)
-                    .on_press(move |_: &mut App| interact::play_media(&play_it, kind))
+                    .on_press(move |_: &mut App| if !(ai_item && !crate::content::prefs().1) { interact::play_media(&play_it, kind) })
                     .child(glyph(G::Play, 20.0, theme::ink())))
                 .child(el().absolute(a - 42.0, a - 42.0).key(format!("{key}-fav")).role("button").label(fav_label).size(32.0, 32.0).radius(16.0).fill(theme::black(0.5))
                     .items_center().justify_center().group_opacity(0.0, 1.0).cursor(rune::Cursor::Pointer)
@@ -245,8 +250,19 @@ pub(crate) fn card_w(w: f32, key: String, title: &str, sub: &str, seed: u64, rou
     if let Some(it) = item.filter(|_| kind.is_some()) {
         c = c.on_secondary_press(move |s: &mut App, p, _| interact::open_media(s, it.clone(), Anchor::Point(p.x, p.y)));
     }
+    // MediaCard: the explicit and AI badges under the art; with AI content off an AI item dims
+    // and its play button does nothing.
+    let heading_el = heading(title, 13.0).truncate().focusable(true).no_focus_ring().on_press(move |s: &mut App| go(s, to.clone()));
+    let (flag_e, flag_ai) = card_flags.unwrap_or((false, false));
+    let head = match crate::content::badges(flag_e, flag_ai) {
+        Some(b) => row().w_full().min_w(0.0).gap(6.0).items_center().child(heading_el.shrink()).child(b),
+        None => heading_el,
+    };
+    if flag_ai && !crate::content::prefs().1 {
+        c = c.opacity(0.5);
+    }
     c.child(art)
-        .child(heading(title, 13.0).truncate().focusable(true).no_focus_ring().on_press(move |s: &mut App| go(s, to.clone())))
+        .child(head)
         .child(text(sub.to_string()).font(t(11.0, 400.0)).color(white(0.55)).truncate())
 }
 
@@ -291,6 +307,15 @@ fn track_row_with(key: String, n: usize, tr: &Value, actions: bool, pl: Option<c
             .child(el().absolute(2.0, 3.0).group_opacity(0.0, 1.0).child(glyph(G::Play, 14.0, white(0.92))))
     };
     let (menu_tr, menu_pl) = (tr.clone(), pl.clone());
+    // TrackList: a track the content filter blocks dims and does nothing (no play, no menu); an
+    // unavailable one (unless it's the one playing) dims and says so.
+    let blocked = crate::content::blocked(tr);
+    let unavailable = !active && d["itemType"].as_str() != Some("video") && crate::content::unavailable(d);
+    let mut title_row = row().min_w(0.0).gap(6.0).items_center()
+        .child(text(title.clone()).font(t(14.0, 500.0)).color(if active { accent_c } else { white(0.95) }).truncate().shrink());
+    if let Some(b) = crate::content::badges_for(tr) {
+        title_row = title_row.child(b);
+    }
     // Rows aren't accessible nodes in the React build either; their action buttons are.
     let mut r = row()
         .key(key.clone())
@@ -301,17 +326,23 @@ fn track_row_with(key: String, n: usize, tr: &Value, actions: bool, pl: Option<c
         .gap(12.0)
         .radius(8.0)
         .items_center()
-        .hover(white(0.05))
-        .hover_group()
-        .cursor(rune::Cursor::Pointer)
-        .on_press(on_play)
-        .on_secondary_press(move |s: &mut App, p, _| interact::open_track(s, menu_tr.clone(), menu_pl.clone(), Anchor::Point(p.x, p.y)))
+        .hover_group();
+    r = if blocked {
+        r.opacity(0.4)
+    } else if unavailable {
+        r.opacity(0.4).on_press(|_: &mut App| interact::toast("Track unavailable".into(), interact::Kind::Info))
+            .on_secondary_press(move |s: &mut App, p, _| interact::open_track(s, menu_tr.clone(), menu_pl.clone(), Anchor::Point(p.x, p.y)))
+    } else {
+        r.hover(white(0.05)).cursor(rune::Cursor::Pointer).on_press(on_play)
+            .on_secondary_press(move |s: &mut App, p, _| interact::open_track(s, menu_tr.clone(), menu_pl.clone(), Anchor::Point(p.x, p.y)))
+    };
+    let mut r = r
         .child(number)
         .child(
             col()
                 .grow(1.0)
                 .min_w(0.0)
-                .child(text(title.clone()).font(t(14.0, 500.0)).color(if active { accent_c } else { white(0.95) }).truncate())
+                .child(title_row)
                 .child(text(data::artist_of(tr)).font(t(12.0, 400.0)).color(white(0.55)).truncate()),
         )
         .child(text(ui::fmt_time(dur as f64)).font(ui::tnum(t(12.0, 400.0))).color(white(0.55)).w(48.0));
@@ -868,25 +899,67 @@ pub fn bar_track_actions(v: &View) -> El {
             .on_press(move |s: &mut App| interact::open_track(s, cur.clone(), None, Anchor::Below("more".into()))))
 }
 
+/// The bar's title and artist (PlayerBar TrackInfoSection): the title opens its album and the
+/// artist the artist's page, with the explicit and AI badges after the title. A video shows
+/// its title, explicit badge and artist, unlinked.
+pub fn bar_info(v: &View) -> El {
+    let base = col().shrink().min_w(0.0).gap(2.0);
+    let Some(cur) = &v.current else {
+        return base.child(text("Nothing playing").font(t(13.0, 600.0)).color(white(0.95)).truncate());
+    };
+    let title = text(v.title.clone()).font(t(13.0, 600.0)).color(white(0.95)).truncate();
+    let artist = text(v.artist.clone()).font(t(12.0, 400.0)).color(white(0.6)).truncate();
+    let link = |e: El, key: &str, label: String, go_to: Page| {
+        theme::focusable(el().key(key.to_string()).role("link").label(label)).shrink().min_w(0.0).radius(3.0).hover_group().cursor(rune::Cursor::Pointer)
+            .on_press(move |s: &mut App| go(s, go_to.clone()))
+            .child(e.group_color(white(1.0)).a11y_hidden())
+    };
+    let is_video = v.video.is_some();
+    let mut head = row().gap(6.0).min_w(0.0).items_center();
+    head = match cur.album_id.filter(|_| !is_video) {
+        Some(id) => head.child(link(title, "bar-title", v.title.clone(), Page::Album(id))),
+        None => head.child(title.shrink()),
+    };
+    if let Some(b) = crate::content::badges(cur.explicit, cur.ai && !is_video) {
+        head = head.child(b);
+    }
+    let foot = match cur.artist_id.filter(|_| !is_video) {
+        Some(id) => link(artist, "bar-artist", v.artist.clone(), Page::Artist(id)),
+        None => artist,
+    };
+    base.child(head).child(foot)
+}
+
 /// `shell` says which of the source and the quality badge there's room for: in a narrow window
 /// the source goes first, then the badge, so the transport and seek slider keep theirs.
-pub fn bar_extras(v: &View, shell: Shell) -> El {
+pub fn bar_extras(v: &View, shell: Shell, drawer: Option<Drawer>) -> El {
     let mut r = row().gap(4.0).items_center();
     if v.current.is_some() {
+        // PlayingFromLabel: "Playing from <name>", the name opening the collection's page.
         if let Some(src) = v.playing_from.as_ref().filter(|_| shell.bar_source) {
-            r = r.child(row().key("playing-from").role("button").label(src.clone()).shrink().max_w(180.0).h(28.0).px(8.0).items_center().cursor(rune::Cursor::Pointer)
-                .child(text(src.clone()).font(t(11.0, 600.0)).color(white(0.6)).truncate().a11y_hidden()));
+            let link = v.source.clone().filter(crate::queue_ui::navigable);
+            let mut b = row().key("playing-from").role("button").label(src.clone()).shrink().max_w(220.0).h(28.0).px(8.0).gap(4.0).radius(6.0).items_center()
+                .child(text("Playing from").font(t(10.0, 500.0)).color(white(0.4)).a11y_hidden())
+                .child(text(src.clone()).font(t(11.0, 600.0)).color(white(0.6)).truncate().shrink().a11y_hidden());
+            if let Some(source) = link {
+                b = theme::focusable(b).hover(white(0.06)).cursor(rune::Cursor::Pointer).on_press(move |s: &mut App| crate::queue_ui::open_source(s, &source));
+            }
+            r = r.child(b);
         }
+        // QualityBadge: opens the signal path panel ("Show signal path").
         if let Some(b) = v.badge.as_ref().filter(|_| shell.bar_badge) {
-            r = r.child(row().key("badge").role("button").label(b.clone()).h(22.0).px(8.0).radius(6.0).items_center().fill(white(0.1))
+            r = r.child(theme::focusable(row().key("badge").role("button").label(b.clone())).h(22.0).px(8.0).radius(6.0).items_center().fill(white(0.1)).hover(white(0.16)).cursor(rune::Cursor::Pointer)
+                .on_press(crate::signal_path::open)
                 .child(text(b.clone()).font(t(10.0, 650.0).tracking(0.6)).color(white(0.8)).a11y_hidden()));
         }
     }
-    r = r.child(icon::<App>("lyrics", "Lyrics", G::Mic).on_press(|s: &mut App| toggle_drawer(s, Drawer::Lyrics)))
-        .child(icon::<App>("queue", "Play queue", G::List).on_press(|s: &mut App| toggle_drawer(s, Drawer::Queue)));
+    // (the open drawer tab's button, and the miniplayer's while it's open, in the accent)
+    let lit = |on: bool| if on { accent() } else { white(0.75) };
+    r = r.child(ui::icon_button::<App>("lyrics", "Lyrics", G::Mic, 18.0, lit(drawer == Some(Drawer::Lyrics))).on_press(|s: &mut App| toggle_drawer(s, Drawer::Lyrics)))
+        .child(ui::icon_button::<App>("queue", "Play queue", G::List, 18.0, lit(drawer == Some(Drawer::Queue))).on_press(|s: &mut App| toggle_drawer(s, Drawer::Queue)));
     if v.current.is_some() {
         r = r            .child(if crate::mini_open() {
-                icon::<App>("mini", "Close miniplayer", G::PopOut).on_press(|_: &mut App| crate::set_mini(false))
+                ui::icon_button::<App>("mini", "Close miniplayer", G::PopOut, 18.0, accent()).on_press(|_: &mut App| crate::set_mini(false))
             } else {
                 icon::<App>("mini", "Open miniplayer", G::PopOut).on_press(|_: &mut App| crate::set_mini(true))
             });
@@ -914,7 +987,10 @@ pub fn bar_extras(v: &View, shell: Shell) -> El {
 /// opens the video player again (PlayerBar "Expand video"); a track's cover opens the
 /// full-screen player, flying up to its place there (full_ui).
 pub fn bar_cover_action(v: &View) -> Option<ui::CoverAction<App>> {
-    if v.video.is_some() {
+    if v.video.is_some() && !v.video_open {
+        // a restored or closed video starts again, and its session opens the player
+        Some(("Play video", |_: &mut App| controller::send(Cmd::TogglePlay)))
+    } else if v.video.is_some() {
         Some(("Expand video", |s: &mut App| s.nav.video.expanded = true))
     } else {
         v.current.as_ref().map(|_| ("Open full-screen player", crate::full_ui::open as fn(&mut App)))
@@ -1614,52 +1690,7 @@ pub fn settings_page(s: &App) -> El {
 
 /// The play queue panel (React QueuePanel).
 pub fn queue_panel(v: &View) -> El {
-    let mut c = col().w_full().gap(6.0);
-    if let Some(cur) = &v.current {
-        c = c.child(heading("NOW PLAYING", 11.0))
-            .child(row().w_full().gap(10.0).items_center().padding(6.0)
-                .child(ui::with_image(ui::tile(ui::hue(Some(cur.id)), 44.0, cur.id, 6.0), crate::art::cover(v.cover.as_deref(), 44.0), 44.0, 6.0))
-                .child(col().grow(1.0).min_w(0.0).child(heading(&cur.title, 14.0).truncate()).child(text(cur.artist.clone()).font(t(12.0, 400.0)).color(white(0.55)).truncate()))
-                .child({
-                    // the drawer's heart toasts briefly (NowPlayingDrawer)
-                    let (on, tid, l) = (crate::interact::is_fav(crate::interact::Fav::Track, &cur.id.to_string()), cur.id.to_string(), cur.title.clone());
-                    ui::icon_button::<App>("qp-love", if on { "Remove from Loved tracks" } else { "Add to Loved tracks" }, if on { G::HeartFilled } else { G::Heart }, 15.0, if on { accent() } else { white(0.75) })
-                        .on_press(move |_: &mut App| crate::interact::toggle_fav(crate::interact::Fav::Track, tid.clone(), l.clone(), crate::interact::Say::LovedShort))
-                }));
-    }
-    if v.queue.is_empty() {
-        c = c.child(ui::empty(if v.current.is_some() { "Nothing up next" } else { "Your queue is empty" }).pt(10.0));
-    } else {
-        c = c.child(row().w_full().items_center().pt(10.0).child(heading("NEXT UP", 11.0)).child(spacer())
-            .child(theme::focusable(row().key("qp-clear").role("button").label("Clear")).h(26.0).px(10.0).radius(13.0).items_center().fill(white(0.08)).cursor(rune::Cursor::Pointer)
-                .on_press(|_: &mut App| controller::send(Cmd::ClearQueue)).child(text("Clear").font(t(11.0, 600.0)).color(white(0.8)).a11y_hidden())));
-        // Built only while in or near view, as track_list's rows are: a queue can hold thousands.
-        let queue = Rc::new(v.queue.clone());
-        let keys = queue.clone();
-        let keys_version = {
-            use std::hash::{BuildHasher, BuildHasherDefault};
-            BuildHasherDefault::<std::collections::hash_map::DefaultHasher>::default().hash_one(queue.iter().map(|q| q.id).collect::<Vec<_>>())
-        };
-        c = c.child(col().key("qp-rows").w_full().gap(6.0).growth(rune::GrowthSpec::default()).instant_changes()
-            .virtual_rows(queue.len(), 44.0, move |_: &App, i| format!("qp-{i}-{}", keys[i].id).into(), move |_: &App, i| {
-                let item = &queue[i];
-                let id = item.id;
-                // Not an accessible node (it has none in React either); Tab still reaches it.
-                theme::focusable_row(row().key(format!("qp-{i}-{id}")).role("presentation")).w_full().h(44.0).px(6.0).gap(10.0).items_center().radius(8.0).hover(white(0.05)).cursor(rune::Cursor::Pointer)
-                    .on_press(move |_: &mut App| controller::send(Cmd::JumpTo(id)))
-                    .child(col().grow(1.0).min_w(0.0).child(text(item.title.clone()).font(t(13.0, 500.0)).color(white(0.9)).truncate()).child(text(item.artist.clone()).font(t(11.0, 400.0)).color(white(0.5)).truncate()))
-                    .child(icon::<App>(&format!("qp-{i}-rm"), "Remove", G::Close).on_press(move |_: &mut App| controller::send(Cmd::RemoveAt(i))))
-            })
-            .virtual_rows_version(keys_version));
-    }
-    if !v.history.is_empty() {
-        c = c.child(row().pt(10.0).child(heading("HISTORY", 11.0)));
-        for (i, item) in v.history.iter().enumerate() {
-            c = c.child(row().key(format!("qh-{i}")).role("presentation").w_full().h(40.0).px(6.0).items_center()
-                .child(text(item.title.clone()).font(t(12.0, 500.0)).color(white(0.6)).truncate()));
-        }
-    }
-    c
+    crate::queue_ui::panel(v)
 }
 
 fn toggle_drawer(s: &mut App, tab: Drawer) {
@@ -1688,9 +1719,28 @@ pub fn drawer(s: &App, v: &View, shell: Shell) -> Option<El> {
         Drawer::Suggested => suggested(v),
         Drawer::Credits => credits(v),
     };
-    let mut head = col().w_full().gap(10.0).child(tabs);
+    // NowPlayingDrawer's corner: the full-screen player (or the video, maximised), and close.
+    let is_video = v.video.is_some();
+    let corner = row().gap(2.0).items_center()
+        .child(icon::<App>("dr-full", if is_video { "Fullscreen video" } else { "Fullscreen player" }, G::Maximize).on_press_tx(move |s: &mut App, tx: &mut Tx| {
+            if is_video {
+                s.nav.video.expanded = true;
+                if !s.nav.video.fullscreen {
+                    s.nav.video.fullscreen = true;
+                    tx.toggle_maximized();
+                }
+            } else if controller::now_playing().0.is_some() {
+                crate::full_ui::open(s);
+            }
+        }))
+        .child(icon::<App>("dr-close", "Close now playing panel", G::Close).on_press(|s: &mut App| *s.nav.drawer = None));
+    let mut head = col().w_full().gap(10.0).child(row().w_full().gap(8.0).items_start().child(tabs.shrink()).child(spacer()).child(corner));
     if let Some(cur) = &v.current {
-        head = head.child(heading(&cur.title, 16.0).truncate());
+        let mut title = row().w_full().gap(8.0).items_center().child(heading(&cur.title, 16.0).truncate().shrink());
+        if let Some(b) = crate::content::badges(cur.explicit, cur.ai) {
+            title = title.child(b);
+        }
+        head = head.child(title);
     }
     // Docked, a column beside the page; in a narrow window (Shell), a sheet over the page's
     // right edge. Either way it starts under the header, which keeps the window controls.
@@ -2170,46 +2220,10 @@ fn mix_page(id: &str, title: &str, sub: &str, v: &View) -> El {
 }
 
 fn suggested(v: &View) -> El {
-    let Some(mix) = &v.track_mix else { return ui::empty("No suggestions for this track.") };
-    let m = match ready_or(Key::Mix(mix.clone())) { Ok(v) => v, Err(e) => return e };
-    let mut c = col().w_full().gap(2.0);
-    for (i, tr) in m["tracks"].as_array().cloned().unwrap_or_default().iter().enumerate() {
-        let id = tr["id"].as_u64().unwrap_or(0);
-        // NowPlayingDrawer: a suggested row's click adds it to the queue
-        let qt = data::name(tr);
-        let (on, l) = (crate::interact::is_fav(crate::interact::Fav::Track, &id.to_string()), qt.clone());
-        c = c.child(row().w_full().items_center()
-            .child(col().grow(1.0).min_w(0.0).child(track_row_with(format!("sg-{i}"), i + 1, tr, false, None, move |_: &mut App| {
-                controller::send(Cmd::QueueIds(vec![id]));
-                crate::interact::toast(format!("Added \"{qt}\" to queue"), crate::interact::Kind::Success);
-            })))
-            .child(ui::icon_button::<App>(&format!("sg-{i}-love"), if on { "Remove from Loved tracks" } else { "Add to Loved tracks" }, if on { G::HeartFilled } else { G::Heart }, 15.0, if on { accent() } else { white(0.75) })
-                .on_press(move |_: &mut App| crate::interact::toggle_fav(crate::interact::Fav::Track, id.to_string(), l.clone(), crate::interact::Say::LovedShort)))
-            .child(icon::<App>(&format!("sg-{i}-queue"), "Add to queue", G::ListPlus).on_press(move |_: &mut App| controller::send(Cmd::QueueIds(vec![id])))));
-    }
-    c
+    crate::drawer_tabs::suggested(v)
 }
 
-/// Credits: the track's contributors by role, then the main artist's bio (React CreditsTab).
+/// Credits: what is playing, the contributors by role, then the main artist's bio (React CreditsTab).
 fn credits(v: &View) -> El {
-    let Some(cur) = &v.current else { return ui::empty("Nothing playing") };
-    let mut c = col().w_full().gap(10.0);
-    match data::ready(Key::Credits(cur.id)) {
-        Some(cr) => {
-            for credit in cr.as_array().cloned().unwrap_or_default() {
-                let role = credit["type"].as_str().or(credit["creditType"].as_str()).unwrap_or("").to_string();
-                let names: Vec<String> = credit["contributors"].as_array().cloned().unwrap_or_default().iter().filter_map(|x| x["name"].as_str().map(str::to_string)).collect();
-                c = c.child(col().gap(2.0).child(caps(&role, 0.5)).child(text(names.join(", ")).font(t(13.0, 500.0)).color(white(0.9)).wrap().max_lines(3)));
-            }
-        }
-        None => c = c.child(loading()),
-    }
-    if let Some(aid) = v.artist_id {
-        c = c.child(heading("Bio", 16.0));
-        if let Some(b) = data::ready(Key::ArtistBio(aid)) {
-            let bio = b["text"].as_str().or(b.as_str()).unwrap_or("");
-            c = c.child(crate::bio::view(bio, 13.0, 0.7));
-        }
-    }
-    c
+    crate::drawer_tabs::credits(v)
 }

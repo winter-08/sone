@@ -323,7 +323,13 @@ fn bar(s: &App, v: &View, cur: &QItem, w: f32, first: bool, shown: bool) -> El {
     // A new track's words fade in over the last one's place.
     let words = col().key(format!("full-words-{}", cur.id)).shrink().min_w(0.0).gap(2.0)
         .transition(if fx::on() { fx::words_change(first) } else { Transition::opacity().springs(SpringPair::new(if first { Spring::NONE } else { Spring::new(0.26, 0.0) }, Spring::NONE)) })
-        .child(text(cur.title.clone()).font(t(13.0, 600.0)).color(white(0.95)).truncate().role("heading").label(cur.title.clone()))
+        .child({
+            let title = text(cur.title.clone()).font(t(13.0, 600.0)).color(white(0.95)).truncate().role("heading").label(cur.title.clone());
+            match crate::content::badges(cur.explicit, cur.ai) {
+                Some(b) => row().gap(6.0).min_w(0.0).items_center().child(title.shrink()).child(b),
+                None => title,
+            }
+        })
         .child(text(cur.artist.clone()).font(t(12.0, 400.0)).color(white(0.6)).truncate());
     let left = row().grow(1.0).min_w(side).gap(12.0).pl(8.0).items_center()
         .child(words)
@@ -340,8 +346,10 @@ fn bar(s: &App, v: &View, cur: &QItem, w: f32, first: bool, shown: bool) -> El {
     let mut right = row().grow(1.0).min_w(side).gap(4.0).items_center().justify_end();
     if let Some(q) = tier(v).filter(|_| w >= 780.0) {
         let detail = v.quality.as_deref().map_or(String::new(), |d| format!(", {d}"));
-        right = right.child(row().h(22.0).px(8.0).mr(6.0).radius(11.0).border(1.0, white(0.2)).items_center()
-            .child(text(q.to_uppercase()).font(t(11.0, 600.0).tracking(1.2)).color(white(0.72)).label(format!("Quality: {q}{detail}"))));
+        // (QualityBadge: a press shows the signal path, as on the player bar)
+        right = right.child(theme::focusable(row().key("full-quality").role("button").label(format!("Quality: {q}{detail}"))).h(22.0).px(8.0).mr(6.0).radius(11.0).border(1.0, white(0.2)).items_center()
+            .hover(white(0.08)).cursor(rune::Cursor::Pointer).on_press(crate::signal_path::open)
+            .child(text(q.to_uppercase()).font(t(11.0, 600.0).tracking(1.2)).color(white(0.72)).a11y_hidden()));
     }
     let mut mic = ui::icon_button::<App>("full-lyrics-btn", "Lyrics", G::Mic, 18.0, if f.lyrics { theme::accent() } else { white(0.45) })
         .checked(f.lyrics)
