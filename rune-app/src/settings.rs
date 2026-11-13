@@ -325,7 +325,7 @@ pub fn on_escape(s: &mut App) -> bool {
     {
         return true;
     }
-    if f.profile_edit.take().is_some() {
+    if f.profile_edit.as_mut().is_some_and(|e| e.close_crop()) || f.profile_edit.take().is_some() {
         return true;
     }
     if !s.nav.settings_open {
