@@ -2001,18 +2001,20 @@ fn toggle_drawer(s: &mut App, tab: Drawer) {
 /// The right-hand drawer (React NowPlayingDrawer): queue, suggestions, lyrics, credits.
 pub fn drawer(s: &App, v: &View, shell: Shell) -> Option<El> {
     let tab = (*s.nav.drawer)?;
-    let t_btn = |key: &str, label: &str, which: Drawer| {
+    // (each with its icon, as React's TABS)
+    let t_btn = |key: &str, label: &str, which: Drawer, g: G| {
         let on = tab == which;
-        theme::focusable(row().key(key.to_string()).role("button").label(label)).focus_selected(on).h(30.0).px(10.0).radius(15.0).items_center()
+        theme::focusable(row().key(key.to_string()).role("button").label(label)).focus_selected(on).h(30.0).px(10.0).gap(6.0).radius(15.0).items_center()
             .fill(if on { white(0.14) } else { white(0.05) }).cursor(rune::Cursor::Pointer)
             .on_press(move |s: &mut App| *s.nav.drawer = Some(which))
+            .child(glyph(g, 12.0, white(if on { 0.85 } else { 0.6 })).a11y_hidden())
             .child(text(label.to_string()).font(t(11.0, 600.0)).color(white(0.85)).a11y_hidden())
     };
     let tabs = row().gap(6.0).flex_wrap().focus_group()
-        .child(t_btn("dr-queue", "Play queue", Drawer::Queue))
-        .child(t_btn("dr-suggested", "Suggested tracks", Drawer::Suggested))
-        .child(t_btn("dr-lyrics", "Lyrics", Drawer::Lyrics))
-        .child(t_btn("dr-credits", "Credits", Drawer::Credits));
+        .child(t_btn("dr-queue", "Play queue", Drawer::Queue, G::List))
+        .child(t_btn("dr-suggested", "Suggested tracks", Drawer::Suggested, G::Sparkles))
+        .child(t_btn("dr-lyrics", "Lyrics", Drawer::Lyrics, G::Mic))
+        .child(t_btn("dr-credits", "Credits", Drawer::Credits, G::Users));
     took_loading();
     let body = match tab {
         Drawer::Queue => queue_panel(v),
