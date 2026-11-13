@@ -36,6 +36,10 @@ DEVICE_SEQ = [0]
 BIG = int(os.environ.get("SPIKE_BENCH_BIG", "0") or 0)
 BIG_BASE = 300000
 BIG_FILE, BIG_SECONDS = "bench/long_44k16.flac", 600
+# Content filter checks only: SPIKE_EXPLICIT_IDS="1006,1007" / SPIKE_AI_IDS="1006" mark those
+# fixture tracks explicit / AI-generated in /v1/tracks/<id>. Unset (the default), none are.
+EXPLICIT_IDS = {int(x) for x in os.environ.get("SPIKE_EXPLICIT_IDS", "").split(",") if x.strip().isdigit()}
+AI_IDS = {int(x) for x in os.environ.get("SPIKE_AI_IDS", "").split(",") if x.strip().isdigit()}
 
 
 def load(loader):
@@ -90,9 +94,11 @@ def track_json(tid: int) -> dict:
         artist, album, number = {"id": 8, "name": "Mock Ensemble", "type": "MAIN"}, {"id": 78, "title": "Queue Suite", "cover": COVER}, tid - 1004
     else:
         artist, album, number = {"id": 7, "name": "Fixture Artist", "type": "MAIN"}, {"id": 77, "title": "Fixture Album", "cover": COVER}, tid - 1000
+    extra = {"ai": True} if tid in AI_IDS else {}
     return {
+        **extra,
         "id": tid, "title": title, "duration": dur, "trackNumber": number,
-        "volumeNumber": 1, "audioQuality": q, "explicit": False, "streamReady": True,
+        "volumeNumber": 1, "audioQuality": q, "explicit": tid in EXPLICIT_IDS, "streamReady": True,
         "allowStreaming": True,
         "artist": artist,
         "artists": [artist],
