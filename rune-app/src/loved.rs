@@ -100,7 +100,7 @@ pub fn page(s: &App, v: &View) -> El {
         let tr = paged::track_of(&tracks[i]);
         let id = tr["id"].as_u64();
         let (k, src) = (k2.clone(), src2.clone());
-        views::track_row(format!("lv-t{i}"), i + 1, &tr, move |_: &mut App| paged::play(k.clone(), src.clone(), false, id, still_loved))
+        views::track_row_look(format!("lv-t{i}"), i + 1, &tr, views::Look { date: true, ..Default::default() }, None, move |_: &mut App| paged::play(k.clone(), src.clone(), false, id, still_loved))
     });
     c = c.child(rows.on_visible_rows(crate::playlist::more_near_end(key.clone(), n)));
     if snap.loading && snap.len > 0 {

@@ -13,6 +13,7 @@ mod coll;
 mod controller;
 mod data;
 mod drawer_tabs;
+mod formats;
 mod full_ui;
 mod fx;
 mod glyph;

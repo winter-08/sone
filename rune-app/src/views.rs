@@ -289,6 +289,64 @@ pub(crate) fn track_row(key: String, n: usize, tr: &Value, on_play: impl Fn(&mut
     track_row_with(key, n, tr, true, None, on_play)
 }
 
+/// What a track row shows besides its title, artists and time (TrackList's showCover,
+/// showDateAdded and onAddToCurrentPlaylist).
+#[derive(Clone)]
+pub(crate) struct Look {
+    /// The 40 pt album cover (a video's picture) before the title; not on an album's own page.
+    pub cover: bool,
+    /// The Date Added column (your own playlists, Loved Tracks).
+    pub date: bool,
+    /// More options, Add to playlist and the heart.
+    pub actions: bool,
+    /// "Add to this playlist" in place of Add to playlist (a playlist's recommended tracks).
+    pub add_here: Option<Rc<dyn Fn(&mut App)>>,
+}
+
+impl Default for Look {
+    fn default() -> Self {
+        Look { cover: true, date: false, actions: true, add_here: None }
+    }
+}
+
+/// A row's artists (TrackList's TrackArtists): each a link to the artist's page, comma
+/// separated; "Unknown Artist" with none.
+pub(crate) fn artist_links(key: &str, d: &Value, color: rune::Color) -> El {
+    let list: Vec<(u64, String)> = match d["artists"].as_array().filter(|a| !a.is_empty()) {
+        Some(a) => a.iter().filter_map(|x| Some((x["id"].as_u64().unwrap_or(0), x["name"].as_str()?.to_string()))).collect(),
+        None => d["artist"]["name"].as_str().map(|n| vec![(d["artist"]["id"].as_u64().unwrap_or(0), n.to_string())]).unwrap_or_default(),
+    };
+    let font = t(12.0, 400.0);
+    if list.is_empty() {
+        return text("Unknown Artist").font(font).color(color).truncate();
+    }
+    let n = list.len();
+    let mut r = row().min_w(0.0).items_center().clip_rounded(0.0);
+    for (i, (aid, name)) in list.into_iter().enumerate() {
+        let shown = if i + 1 < n { format!("{name},") } else { name.clone() };
+        let label = text(shown).font(font).color(color).truncate();
+        let gap = if i + 1 < n { 4.0 } else { 0.0 };
+        r = r.child(if aid == 0 {
+            label.shrink().pr(gap)
+        } else {
+            // the name brightens under the pointer, as React's hover:text-primary
+            theme::focusable(el().key(format!("{key}-ar{i}")).role("link").label(name)).shrink().min_w(0.0).mr(gap).radius(3.0).hover_group().cursor(rune::Cursor::Pointer)
+                .on_press(move |s: &mut App| go(s, Page::Artist(aid)))
+                .child(label.group_color(white(0.95)).a11y_hidden())
+        });
+    }
+    r
+}
+
+/// A row's 40 pt cover: the album's, or a video's picture. Decorative; it fills in place when
+/// the image lands (art.rs), so the list isn't built again for it. (A video says so in its
+/// title's VIDEO badge.)
+fn row_cover(d: &Value) -> El {
+    let video = d["itemType"].as_str() == Some("video");
+    let url = if video { crate::video_ui::image_id(d).and_then(|i| crate::art::cover(Some(i), 40.0)) } else { crate::art::cover(d["album"]["cover"].as_str(), 40.0) };
+    ui::with_image(el().size(40.0, 40.0).radius(4.0).clip_rounded(4.0).fill(white(0.08)), url, 40.0, 4.0).a11y_hidden()
+}
+
 /// A track row (TrackList.tsx). A single click plays it (there's no double-click play in React
 /// either); hovering swaps the number for a play icon; right-click opens the track menu at the
 /// pointer. Its actions, after the time: More options (shown on hover; the same menu, below it),
@@ -296,7 +354,13 @@ pub(crate) fn track_row(key: String, n: usize, tr: &Value, on_play: impl Fn(&mut
 /// in the accent when loved). `pl` places it in the user's own playlist, for "Remove from
 /// playlist".
 pub(crate) fn track_row_with(key: String, n: usize, tr: &Value, actions: bool, pl: Option<crate::interact::InPlaylist>, on_play: impl Fn(&mut App) + 'static) -> El {
+    track_row_look(key, n, tr, Look { actions, ..Look::default() }, pl, on_play)
+}
+
+/// [`track_row_with`] showing what `look` asks for.
+pub(crate) fn track_row_look(key: String, n: usize, tr: &Value, look: Look, pl: Option<crate::interact::InPlaylist>, on_play: impl Fn(&mut App) + 'static) -> El {
     use crate::interact::{self, Anchor, Fav, Say};
+    let actions = look.actions;
     let d = data::data(tr);
     let title = d["title"].as_str().unwrap_or("").to_string();
     let dur = d["duration"].as_u64().unwrap_or(0);
@@ -347,14 +411,17 @@ pub(crate) fn track_row_with(key: String, n: usize, tr: &Value, actions: bool, p
         r.hover(white(0.05)).cursor(rune::Cursor::Pointer).on_press(on_play)
             .on_secondary_press(move |s: &mut App, p, _| interact::open_track(s, menu_tr.clone(), menu_pl.clone(), Anchor::Point(p.x, p.y)))
     };
+    let mut r = r.child(number);
+    if look.cover {
+        r = r.child(row_cover(d));
+    }
     let mut r = r
-        .child(number)
         .child(
             col()
                 .grow(1.0)
                 .min_w(0.0)
                 .child(title_row)
-                .child(text(data::artist_of(tr)).font(t(12.0, 400.0)).color(white(0.55)).truncate()),
+                .child(artist_links(&key, d, white(0.55))),
         );
     // TrackList's album column, a link to the album (not on the album's own page).
     if let (Some(album_id), Some(album)) = (d["album"]["id"].as_u64(), d["album"]["title"].as_str().filter(|a| !a.is_empty()))
@@ -365,6 +432,11 @@ pub(crate) fn track_row_with(key: String, n: usize, tr: &Value, actions: bool, p
             text(album.to_string()).font(t(12.0, 400.0)).color(white(0.55)).truncate()
                 .key(format!("{key}-album")).role("link").label(album).focusable(true).focus_ring(2.0, 2.0, white(0.6))
                 .cursor(rune::Cursor::Pointer).on_press(move |s: &mut App| go(s, Page::Album(album_id)))));
+    }
+    // TrackList's Date Added column
+    if look.date {
+        let added = d["dateAdded"].as_str().map(|s| crate::formats::date_added(s, crate::formats::now())).unwrap_or_default();
+        r = r.child(text(added).font(t(12.0, 400.0)).color(white(0.55)).truncate().w(104.0));
     }
     r = r.child(text(ui::fmt_time(dur as f64)).font(ui::tnum(t(12.0, 400.0))).color(white(0.55)).w(48.0));
     if actions {
@@ -382,7 +454,11 @@ pub(crate) fn track_row_with(key: String, n: usize, tr: &Value, actions: bool, p
                 .press(white(0.14)).cursor(rune::Cursor::Pointer)
                 .on_press(move |s: &mut App| interact::open_track(s, t1.clone(), pl.clone(), Anchor::Below(mk.clone())))
                 .child(glyph(G::More, 18.0, white(0.75)).group_opacity(0.3, 1.0)))
-            .child(icon::<App>(&add_key, "Add to playlist", G::Plus).on_press(move |s: &mut App| interact::open_add_below(s, t2.clone(), ak.clone())))
+            .child(match look.add_here.clone() {
+                // a recommended track: straight into the playlist on show
+                Some(add) => ui::icon_button::<App>(&add_key, "Add to this playlist", G::ListPlus, 18.0, white(0.75)).on_press(move |s: &mut App| add(s)),
+                None => icon::<App>(&add_key, "Add to playlist", G::Plus).on_press(move |s: &mut App| interact::open_add_below(s, t2.clone(), ak.clone())),
+            })
             .child(ui::icon_button::<App>(&format!("{key}-fav"), if loved { "Remove from favorites" } else { "Add to favorites" }, if loved { G::HeartFilled } else { G::Heart }, 18.0, if loved { accent() } else { white(0.75) })
                 .on_press(move |_: &mut App| interact::toggle_fav(fav, id.to_string(), title.clone(), Say::Nothing)));
     }
@@ -2166,21 +2242,6 @@ fn credits(v: &View) -> El {
 }
 
 #[cfg(test)]
-mod feed_tests {
-    use super::{days, feed_bucket, month_index};
-
-    #[test]
-    fn feed_groups_by_calendar_month() {
-        let m = |d: &str| month_index(days(d).unwrap());
-        assert_eq!(m("2024-01-15"), 2024 * 12);
-        assert_eq!(m("2023-12-31"), 2023 * 12 + 11);
-        // A December entry seen in January is last month, not older.
-        assert_eq!(feed_bucket(m("2024-01-02") - m("2023-12-31")), "Last month");
-        assert_eq!(feed_bucket(m("2024-03-01") - m("2024-03-31")), "This month");
-        assert_eq!(feed_bucket(m("2024-03-01") - m("2023-12-01")), "Older");
-    }
-}
-#[cfg(test)]
 mod source_tests {
     use super::same_source;
     use serde_json::json;
@@ -2197,3 +2258,18 @@ mod source_tests {
     }
 }
 
+#[cfg(test)]
+mod feed_tests {
+    use super::{days, feed_bucket, month_index};
+
+    #[test]
+    fn feed_groups_by_calendar_month() {
+        let m = |d: &str| month_index(days(d).unwrap());
+        assert_eq!(m("2024-01-15"), 2024 * 12);
+        assert_eq!(m("2023-12-31"), 2023 * 12 + 11);
+        // A December entry seen in January is last month, not older.
+        assert_eq!(feed_bucket(m("2024-01-02") - m("2023-12-31")), "Last month");
+        assert_eq!(feed_bucket(m("2024-03-01") - m("2024-03-31")), "This month");
+        assert_eq!(feed_bucket(m("2024-03-01") - m("2023-12-01")), "Older");
+    }
+}
