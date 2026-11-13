@@ -53,10 +53,25 @@ impl PKey {
     }
 }
 
+/// What a collection showed as of one catalogue version: its item count and paging state.
+#[derive(Clone, Debug, Default)]
+struct Status {
+    len: usize,
+    total: Option<usize>,
+    more: bool,
+    loading: bool,
+    failed: Option<String>,
+}
+
 struct Entry {
     items: Arc<Vec<Value>>,
-    /// (catalogue version, item count): how many items each landing made visible.
-    marks: Vec<(u64, usize)>,
+    /// (catalogue version, status): each change as of the version it bumped to, so a view build
+    /// sees the collection as of the version it read (`data::freeze`), and a region checked again
+    /// in the same build agrees with itself.
+    marks: Vec<(u64, Status)>,
+    /// The list as it was before a `forget_where` at this version, for builds that read an
+    /// earlier one.
+    prev: Option<(u64, Arc<Vec<Value>>, Vec<(u64, Status)>)>,
     total: Option<usize>,
     /// The raw server offset the next page starts at.
     next: usize,
@@ -68,12 +83,38 @@ struct Entry {
     all: bool,
     /// Which fetch owns this entry (a `forget` makes a running fetch's result stale).
     epoch: u64,
+    /// The first page is still to be asked for (a `forget_where` left it for the next ask).
+    idle: bool,
     /// Library and artist lists drop items they already have (React dedupes those pages).
     seen: HashSet<String>,
 }
 
+impl Entry {
+    fn fresh(epoch: u64) -> Entry {
+        Entry { items: Arc::new(vec![]), marks: vec![], prev: None, total: None, next: 0, cursor: None, more: true, loading: true, failed: None, all: false, epoch, idle: false, seen: HashSet::new() }
+    }
+
+    fn status(&self) -> Status {
+        Status { len: self.items.len(), total: self.total, more: self.more, loading: self.loading, failed: self.failed.clone() }
+    }
+
+    /// Records the entry's state as of a new catalogue version (the panes rebuild for it).
+    fn mark(&mut self) {
+        let v = data::bump_version();
+        let s = self.status();
+        self.marks.push((v, s));
+        if self.marks.len() > 64 {
+            self.marks.drain(..self.marks.len() - 64);
+        }
+    }
+}
+
 static STORE: LazyLock<Mutex<HashMap<PKey, Entry>>> = LazyLock::new(Default::default);
 static GEN: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+fn next_epoch() -> u64 {
+    GEN.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1
+}
 
 /// A collection as a view sees it.
 #[derive(Clone)]
@@ -97,25 +138,45 @@ impl Snap {
     }
 }
 
+/// The status as of version `v` among `marks`; before the first, the first page loading.
+fn as_of(marks: &[(u64, Status)], v: u64) -> Status {
+    marks.iter().rev().find(|(at, _)| *at <= v).map(|m| m.1.clone()).unwrap_or(Status { more: true, loading: true, ..Default::default() })
+}
+
 /// The collection, starting its first page if nobody asked for it yet.
 pub fn get(key: &PKey) -> Snap {
     let mut st = STORE.lock().unwrap();
-    if !st.contains_key(key) {
-        let epoch = GEN.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
-        st.insert(key.clone(), Entry { items: Arc::new(vec![]), marks: vec![], total: None, next: 0, cursor: None, more: true, loading: true, failed: None, all: false, epoch, seen: HashSet::new() });
+    let frozen = data::frozen_version();
+    if let Some(e) = st.get(key)
+        && let Some((at, items, marks)) = &e.prev
+        && frozen.is_some_and(|v| v < *at)
+    {
+        let s = as_of(marks, frozen.unwrap_or(0));
+        return Snap { items: items.clone(), len: s.len.min(items.len()), total: s.total, more: s.more, loading: s.loading, failed: s.failed };
+    }
+    let start = match st.get_mut(key) {
+        None => {
+            let epoch = next_epoch();
+            st.insert(key.clone(), Entry::fresh(epoch));
+            Some(epoch)
+        }
+        Some(e) if e.idle => {
+            e.idle = false;
+            Some(e.epoch)
+        }
+        Some(_) => None,
+    };
+    if let Some(epoch) = start {
         drop(st);
         spawn(key.clone(), epoch);
         st = STORE.lock().unwrap();
     }
     let e = &st[key];
-    let frozen = data::frozen_version();
-    let len = match frozen {
-        Some(v) => e.marks.iter().rev().find(|(at, _)| *at <= v).map(|m| m.1).unwrap_or(0),
-        None => e.items.len(),
+    let s = match frozen {
+        Some(v) => as_of(&e.marks, v),
+        None => e.status(),
     };
-    // A page landing after the view read the version is still "loading" for this build.
-    let late = len < e.items.len();
-    Snap { items: e.items.clone(), len, total: e.total, more: e.more || late, loading: e.loading || late, failed: e.failed.clone() }
+    Snap { items: e.items.clone(), len: s.len.min(e.items.len()), total: s.total, more: s.more, loading: s.loading, failed: s.failed }
 }
 
 /// Starts `key` from a first page fetched elsewhere (the playlist folders the sign-in
@@ -128,22 +189,32 @@ pub fn seed(key: &PKey, first: &Value) {
     let items = first["items"].as_array().cloned().unwrap_or_default();
     let cursor = first["cursor"].as_str().filter(|c| !c.is_empty()).map(str::to_string);
     let more = cursor.is_some() && !items.is_empty();
-    let epoch = GEN.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
     let seen = items.iter().filter_map(|v| ident(key, v)).collect();
     let n = items.len();
+    let mut e = Entry::fresh(next_epoch());
+    e.items = Arc::new(items);
+    e.total = first["totalNumberOfItems"].as_u64().map(|t| t as usize);
+    e.next = n;
+    e.cursor = cursor;
+    e.more = more;
+    e.loading = false;
+    e.seen = seen;
     // Visible to the build that seeds it: it read the version this data landed at.
     let v = data::frozen_version().unwrap_or_else(data::version);
-    st.insert(key.clone(), Entry { items: Arc::new(items), marks: vec![(v, n)], total: first["totalNumberOfItems"].as_u64().map(|t| t as usize), next: n, cursor, more, loading: false, failed: None, all: false, epoch, seen });
+    let s = e.status();
+    e.marks.push((v, s));
+    st.insert(key.clone(), e);
 }
 
 /// Ask for the next page, if there is one and none is on its way.
 pub fn more(key: &PKey) {
     let mut st = STORE.lock().unwrap();
     let Some(e) = st.get_mut(key) else { drop(st); get(key); return };
-    if e.loading || !e.more || e.failed.is_some() {
+    if e.loading || e.idle || !e.more || e.failed.is_some() {
         return;
     }
     e.loading = true;
+    e.mark();
     let epoch = e.epoch;
     drop(st);
     spawn(key.clone(), epoch);
@@ -163,11 +234,19 @@ pub fn all(key: &PKey) {
     more(key);
 }
 
-/// Drop every collection `f` picks (e.g. all library lists after a folder changed).
+/// Start every collection `f` picks again from its first page, on its next ask (e.g. all
+/// library lists after a folder changed). Builds that read an earlier version still see the
+/// old list.
 pub fn forget_where(f: impl Fn(&PKey) -> bool) {
-    STORE.lock().unwrap().retain(|k, _| !f(k));
-    data::bump_version();
+    let mut st = STORE.lock().unwrap();
+    let v = data::bump_version();
+    for (_, e) in st.iter_mut().filter(|(k, _)| f(k)) {
+        let old = std::mem::replace(e, Entry::fresh(next_epoch()));
+        e.idle = true;
+        e.prev = Some((v, old.items, old.marks));
+    }
 }
+
 
 /// Everything loaded so far and where paging stands: (items, next raw offset, more to come),
 /// for a play source that goes on fetching the rest.
@@ -273,14 +352,12 @@ fn spawn(key: PKey, epoch: u64) {
                     }
                     e.more = more && !stalled;
                     e.failed = None;
-                    let v = data::bump_version();
-                    let len = e.items.len();
-                    e.marks.push((v, len));
-                    if e.marks.len() > 64 {
-                        e.marks.drain(..e.marks.len() - 64);
-                    }
-                    if !(e.all && e.more) {
+                    let done = !(e.all && e.more);
+                    if done {
                         e.loading = false;
+                    }
+                    e.mark();
+                    if done {
                         return;
                     }
                 }
@@ -288,7 +365,7 @@ fn spawn(key: PKey, epoch: u64) {
                     log::warn!("[rune] page of {key:?} failed: {err}");
                     e.loading = false;
                     e.failed = Some(err);
-                    data::bump_version();
+                    e.mark();
                     return;
                 }
             }
@@ -302,9 +379,9 @@ pub fn retry(key: &PKey) {
     let Some(e) = st.get_mut(key) else { return };
     if e.failed.take().is_some() {
         e.loading = true;
+        e.mark();
         let epoch = e.epoch;
         drop(st);
-        data::bump_version();
         spawn(key.clone(), epoch);
     }
 }
