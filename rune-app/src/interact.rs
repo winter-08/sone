@@ -251,6 +251,8 @@ pub enum Kind {
 enum ToastAction {
     /// Re-add tracks the server skipped as duplicates ("Add anyway").
     AddAgain { playlist: String, label: String, ids: Vec<u64>, requested: usize },
+    /// Open a web page (the update toast's "View release").
+    OpenUrl(String),
 }
 
 struct Toast {
@@ -266,6 +268,12 @@ static NEXT_TOAST: AtomicU64 = AtomicU64::new(1);
 
 pub fn toast(msg: String, kind: Kind) {
     push_toast(msg, kind, Duration::from_millis(3000), None);
+}
+
+/// A toast that lasts `life`, with a button (label, url) opening a web page if given (the
+/// update toast's "View release").
+pub fn toast_long(msg: String, kind: Kind, life: Duration, link: Option<(&str, String)>) {
+    push_toast(msg, kind, life, link.map(|(label, url)| (label.to_string(), ToastAction::OpenUrl(url))));
 }
 
 fn push_toast(msg: String, kind: Kind, life: Duration, action: Option<(String, ToastAction)>) {
@@ -383,6 +391,7 @@ pub fn toast_layer() -> Option<El> {
 fn run_toast_action(a: ToastAction) {
     match a {
         ToastAction::AddAgain { playlist, label, ids, requested } => add_to_playlist(playlist, label, ids, Some(requested)),
+        ToastAction::OpenUrl(url) => crate::views::open_url(&url),
     }
 }
 

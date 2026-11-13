@@ -27,6 +27,7 @@ mod library;
 mod loved;
 mod mcp_sync;
 mod mini;
+mod notices;
 mod obs;
 mod paged;
 mod perf;
@@ -488,6 +489,8 @@ fn main() {
     shell::on_terminate_signals();
     // The proxy notice bar's status poll (proxy_banner.rs).
     proxy_banner::start();
+    // A newer release (notices.rs).
+    notices::check_for_update();
 
     let spec = AppSpec::<App> {
         min_size: Some((900.0, 600.0)),

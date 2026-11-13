@@ -146,6 +146,9 @@ pub enum Cmd {
     /// Log out (React useAuth.logout): the backend's logout, then every trace of the account
     /// and its playback is dropped and the sign-in screen shows.
     Logout,
+    /// The saved sign-in was refused at launch and a token refresh failed too (AppInitializer):
+    /// the login screen shows; the saved tokens and the queue stay, as in React.
+    SessionExpired,
     /// A collection page's Play, Shuffle or track row (usePlaySource): the loader holds what the
     /// page has loaded and pages in the rest (sources.rs, paged.rs); it plays as the MCP sources
     /// do, from its `start_at` track if it has one, shuffled if `play_shuffle`.
@@ -956,6 +959,8 @@ impl Player {
                 }
                 self.signed_in = true;
                 self.bootstrap_library();
+                // the legacy sign-in nudge, and a sign-in TIDAL refuses (notices.rs)
+                crate::notices::after_saved_sign_in();
             }
             Ok(None) => {}
             Err(e) => log::warn!("[rune] load_saved_auth: {e}"),
@@ -1314,6 +1319,7 @@ impl Player {
                 }
             }
             Cmd::Logout => self.logout().await,
+            Cmd::SessionExpired => self.signed_in = false,
             Cmd::QueueIds(ids) => self.fetch_tracks(ids, "queue", true),
             Cmd::QueueItems { items, next } => {
                 // (the content filter holds here too: addToQueue / playNextInQueue)
