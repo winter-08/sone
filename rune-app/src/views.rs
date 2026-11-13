@@ -1386,7 +1386,7 @@ pub fn page(s: &App, v: &View) -> El {
     took_loading();
     let body = match &*s.nav.page {
         Page::Home => crate::home::home(s),
-        Page::Explore => explore(),
+        Page::Explore => explore(s),
         Page::ExploreSub(path, title) => explore_sub(s, path, title),
         Page::Mix(id, title, sub) => mix_page(id, title, sub, v),
         Page::Loved => crate::loved::page(s, v),
@@ -2363,29 +2363,51 @@ fn lyrics(s: &App, v: &View) -> El {
 }
 
 /// Explore (React ExplorePage): pill rows per category with View all, plus the icon grid.
-fn explore() -> El {
+fn explore(s: &App) -> El {
     let v = match ready_or(Key::Page("pages/explore".into())) { Ok(v) => v, Err(e) => return e };
     let mut c = col().w_full().gap(20.0).child(heading("Explore", theme::PAGE_TITLE));
-    for (si, sec) in v["sections"].as_array().cloned().unwrap_or_default().iter().enumerate() {
-        let title = sec["title"].as_str().unwrap_or("").to_string();
-        let mut head = row().w_full().items_center();
-        // The icon grid (PAGE_LINKS, "Shortcuts") shows no heading in the React page.
-        if !title.is_empty() && sec["sectionType"].as_str() != Some("PAGE_LINKS") {
-            head = head.child(heading(&title, theme::SECTION));
-        }
-        if let Some(path) = sec["apiPath"].as_str().filter(|p| !p.is_empty()) {
-            let (path, t2) = (path.to_string(), title.clone());
-            head = head.child(spacer()).child(theme::focusable(row().key(format!("ex-all-{si}")).role("button").label("View all")).h(26.0).px(8.0).items_center().cursor(rune::Cursor::Pointer)
-                .on_press(move |s: &mut App| go(s, Page::ExploreSub(path.clone(), t2.clone())))
-                .child(caps("View all", 0.6).a11y_hidden()));
-        }
-        let mut pills = row().w_full().gap(8.0).flex_wrap();
-        for (i, it) in sec["items"].as_array().cloned().unwrap_or_default().iter().enumerate() {
-            pills = pills.child(pill_link(format!("ex-{si}-{i}"), it));
-        }
-        c = c.child(col().w_full().gap(10.0).child(head).child(pills));
+    let sections = v["sections"].as_array().cloned().unwrap_or_default();
+    let has_items = |s: &Value| s["items"].as_array().is_some_and(|a| !a.is_empty());
+    let has_icons = |s: &Value| s["items"].as_array().is_some_and(|a| a.iter().any(|i| i.get("icon").is_some_and(|x| !x.is_null())));
+    let titled = |s: &Value| s["title"].as_str().is_some_and(|t| !t.is_empty());
+    if sections.is_empty() {
+        return c.child(ui::empty("No categories found"));
+    }
+    // ExplorePage draws only its link sections: the titled pill rows (PAGE_LINKS_CLOUD), then the
+    // icon grid (the first PAGE_LINKS), then untitled rows without icons as pills.
+    let pills: Vec<(usize, &Value)> = sections.iter().enumerate().filter(|(_, s)| has_items(s) && titled(s) && s["sectionType"].as_str() == Some("PAGE_LINKS_CLOUD")).collect();
+    let icons = sections.iter().enumerate().find(|(_, s)| has_items(s) && s["sectionType"].as_str() == Some("PAGE_LINKS"));
+    let untitled: Vec<(usize, &Value)> = sections.iter().enumerate().filter(|(_, s)| has_items(s) && !titled(s) && !has_icons(s)).collect();
+    for (si, sec) in pills {
+        c = c.child(explore_pills(si, sec));
+    }
+    if let Some((si, sec)) = icons {
+        c = c.child(crate::home::explore_icon_grid(si, sec["items"].as_array().map(Vec::as_slice).unwrap_or(&[]), *s.nav.content_w));
+    }
+    for (si, sec) in untitled {
+        c = c.child(explore_pills(si, sec));
     }
     c
+}
+
+/// One of Explore's pill rows (PillSection): its title, View all, and a pill per link.
+fn explore_pills(si: usize, sec: &Value) -> El {
+    let title = sec["title"].as_str().unwrap_or("").to_string();
+    let mut head = row().w_full().items_center();
+    if !title.is_empty() {
+        head = head.child(heading(&title, theme::SECTION));
+    }
+    if let Some(path) = sec["apiPath"].as_str().filter(|p| !p.is_empty()) {
+        let (path, t2) = (path.to_string(), title.clone());
+        head = head.child(spacer()).child(theme::focusable(row().key(format!("ex-all-{si}")).role("button").label("View all")).h(26.0).px(8.0).items_center().cursor(rune::Cursor::Pointer)
+            .on_press(move |s: &mut App| go(s, Page::ExploreSub(path.clone(), t2.clone())))
+            .child(caps("View all", 0.6).a11y_hidden()));
+    }
+    let mut pills = row().w_full().gap(8.0).flex_wrap();
+    for (i, it) in sec["items"].as_array().cloned().unwrap_or_default().iter().enumerate() {
+        pills = pills.child(pill_link(format!("ex-{si}-{i}"), it));
+    }
+    col().w_full().gap(10.0).child(head).child(pills)
 }
 
 pub(crate) fn pill_link(key: String, it: &Value) -> El {
@@ -2544,7 +2566,11 @@ fn feed_row(i: usize, it: &Value) -> El {
     let id = item["id"].clone();
     let mut r = row().key(format!("feed-{i}")).w_full().h(64.0).px(10.0).gap(12.0).items_center().radius(10.0)
         .child(ui::with_image(ui::tile(ui::hue(Some(i as u64 + 60)), 48.0, i as u64 + 60, 8.0), crate::art::item_url(item, 48.0), 48.0, 8.0))
-        .child(col().grow(1.0).min_w(0.0).child(text(title.clone()).font(t(14.0, 600.0)).color(white(0.95)).truncate()).child(text(sub.clone()).font(t(12.0, 400.0)).color(white(0.55)).truncate()));
+        .child(col().grow(1.0).min_w(0.0)
+            // FeedRow: the AI badge after the title
+            .child(row().min_w(0.0).gap(6.0).items_center().child(text(title.clone()).font(t(14.0, 600.0)).color(white(0.95)).truncate().shrink())
+                .child(crate::content::badges(false, item["ai"].as_bool() == Some(true)).unwrap_or_else(el)))
+            .child(text(sub.clone()).font(t(12.0, 400.0)).color(white(0.55)).truncate()));
     if kind != "album" && kind != "mix" {
         return r;
     }
@@ -2573,9 +2599,13 @@ pub(crate) fn play_feed_item(kind: &str, id: Value, title: &str) {
         match kind.as_str() {
             "album" => {
                 let Some(aid) = id.as_u64() else { return };
-                if let Ok(p) = data::get(Key::Album(aid)).await {
-                    let tracks = p["page"]["tracks"].as_array().cloned().unwrap_or_default();
-                    controller::send(Cmd::PlayCollection { tracks, source: json!({"type": "album", "id": aid, "name": title}), album_mode: true, shuffle: false });
+                match data::get(Key::Album(aid)).await {
+                    Ok(p) => {
+                        let tracks = p["page"]["tracks"].as_array().cloned().unwrap_or_default();
+                        controller::send(Cmd::PlayCollection { tracks, source: json!({"type": "album", "id": aid, "name": title}), album_mode: true, shuffle: false });
+                    }
+                    // useMediaPlay
+                    Err(_) => crate::interact::toast("Failed to play".into(), crate::interact::Kind::Error),
                 }
             }
             "playlist" => {
@@ -2587,10 +2617,13 @@ pub(crate) fn play_feed_item(kind: &str, id: Value, title: &str) {
                 let mid = id.as_str().map(str::to_string).unwrap_or_else(|| id.to_string());
                 use sone_host_shim::Manager;
                 let h = crate::host().clone();
-                if let Ok(m) = tauri_app_lib::commands::pages::get_mix_items(h.state::<tauri_app_lib::AppState>(), mid.clone()).await {
-                    let v = serde_json::to_value(m).unwrap_or(Value::Null);
-                    let tracks = v["tracks"].as_array().or(v["items"].as_array()).cloned().unwrap_or_default();
-                    controller::send(Cmd::PlayCollection { tracks, source: json!({"type": "mix", "id": mid, "name": title}), album_mode: false, shuffle: false });
+                match tauri_app_lib::commands::pages::get_mix_items(h.state::<tauri_app_lib::AppState>(), mid.clone()).await {
+                    Ok(m) => {
+                        let v = serde_json::to_value(m).unwrap_or(Value::Null);
+                        let tracks = v["tracks"].as_array().or(v["items"].as_array()).cloned().unwrap_or_default();
+                        controller::send(Cmd::PlayCollection { tracks, source: json!({"type": "mix", "id": mid, "name": title}), album_mode: false, shuffle: false });
+                    }
+                    Err(_) => crate::interact::toast("Failed to play".into(), crate::interact::Kind::Error),
                 }
             }
         }

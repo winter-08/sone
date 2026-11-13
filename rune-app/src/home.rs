@@ -285,7 +285,9 @@ fn header(si: usize, title: &str, ctx: Option<&Value>, view_all: Option<String>,
             .child(thumb(&it2, 48.0, 4.0))
             .child(col().min_w(0.0).a11y_hidden()
                 .child(text(title.to_string()).font(t(13.0, 400.0)).color(white(0.55)).truncate())
-                .child(text(name).font(t(theme::SECTION, 700.0)).color(white(0.95)).truncate()));
+                .child(row().min_w(0.0).gap(8.0).items_center()
+                    .child(text(name).font(t(theme::SECTION, 700.0)).color(white(0.95)).truncate().shrink())
+                    .child(crate::content::badges(false, d["ai"].as_bool() == Some(true)).unwrap_or_else(el))));
         if let Some(p) = target {
             c = c.on_press(move |s: &mut App| go(s, p.clone()));
         }
@@ -364,17 +366,20 @@ fn shortcuts(items: &[Value], w: f32) -> El {
     let cols = if w >= 1024.0 { 3.0 } else if w >= 640.0 { 2.0 } else { 1.0 };
     let gap = 12.0;
     let tw = ((w - (cols - 1.0) * gap) / cols).floor();
-    let tile = |key: String, label: String, art: El| {
+    // (Home.tsx: an AI item's tile has the AI badge after its title)
+    let tile = |key: String, label: String, art: El, ai: bool| {
         theme::focusable_row(row().key(key).role("presentation")).w(tw).h(56.0).radius(4.0).clip_rounded(4.0).items_center().gap(12.0)
             .fill(white(0.05)).hover(white(0.1)).cursor(rune::Cursor::Pointer)
             .child(art)
             .child(text(label).font(t(13.0, 700.0)).color(white(0.95)).truncate().shrink().min_w(0.0))
+            .child(crate::content::badges(false, ai).unwrap_or_else(el))
     };
     let mut grid = row().w_full().gap(gap).flex_wrap()
-        .child(tile("home-sc-loved".into(), "Loved Tracks".into(), views::loved_art(56.0, 0.0, 22.0)).on_press(|s: &mut App| go(s, Page::Loved)));
+        .child(tile("home-sc-loved".into(), "Loved Tracks".into(), views::loved_art(56.0, 0.0, 22.0), false).on_press(|s: &mut App| go(s, Page::Loved)));
     for (i, it) in items.iter().filter(|it| data::kind(it) != "TASK" && !is_my_tracks(it)).take(7).enumerate() {
         let it2 = it.clone();
-        let mut t = tile(format!("home-sc-{i}"), data::name(it), thumb(it, 56.0, 0.0)).on_press(move |s: &mut App| open_item(s, &it2));
+        let ai = data::data(it)["ai"].as_bool() == Some(true);
+        let mut t = tile(format!("home-sc-{i}"), data::name(it), thumb(it, 56.0, 0.0), ai).on_press(move |s: &mut App| open_item(s, &it2));
         if interact::Media::of(it).is_some() {
             let it3 = it.clone();
             t = t.on_secondary_press(move |s: &mut App, p, _| interact::open_media(s, it3.clone(), Anchor::Point(p.x, p.y)));
@@ -673,4 +678,57 @@ fn promo_card(key: String, it: &Value, cw: f32) -> Option<El> {
         .child(if header.is_empty() { el() } else { text(header).font(t(10.0, 700.0).tracking(0.6)).color(theme::accent()).truncate() })
         .child(views::heading(&title, 13.0).truncate())
         .child(text(sub).font(t(11.0, 400.0)).color(white(0.55)).truncate()))
+}
+
+// ------------------------------------------------------------------ Explore's icon grid
+
+/// The lucide icons ExplorePage gives its shortcuts (lucide-react 0.563.0, drawn as icons.rs's).
+mod shortcut_icons {
+    use rune::Icon;
+    macro_rules! icon {
+        ($name:ident, $id:literal, $($el:literal),+) => {
+            pub static $name: Icon = Icon { name: $id, view: 24.0, body: concat!($($el, r#" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>"#),+) };
+        };
+    }
+    icon!(CALENDAR, "lucide-calendar", r#"<path d="M8 2v4""#, r#"<path d="M16 2v4""#, r#"<rect width="18" height="18" x="3" y="4" rx="2""#, r#"<path d="M3 10h18""#);
+    icon!(TROPHY, "lucide-trophy", r#"<path d="M10 14.66v1.626a2 2 0 0 1-.976 1.696A5 5 0 0 0 7 21.978""#, r#"<path d="M14 14.66v1.626a2 2 0 0 0 .976 1.696A5 5 0 0 1 17 21.978""#, r#"<path d="M18 9h1.5a1 1 0 0 0 0-5H18""#, r#"<path d="M4 22h16""#, r#"<path d="M6 9a6 6 0 0 0 12 0V3a1 1 0 0 0-1-1H7a1 1 0 0 0-1 1z""#, r#"<path d="M6 9H4.5a1 1 0 0 1 0-5H6""#);
+    icon!(SQUARE_PLAY, "lucide-square-play", r#"<rect width="18" height="18" x="3" y="3" rx="2""#, r#"<path d="M9 9.003a1 1 0 0 1 1.517-.859l4.997 2.997a1 1 0 0 1 0 1.718l-4.997 2.997A1 1 0 0 1 9 14.996z""#);
+    icon!(CHART_COLUMN, "lucide-chart-no-axes-column", r#"<path d="M18 20V10""#, r#"<path d="M12 20V4""#, r#"<path d="M6 20v-6""#);
+    icon!(SHIELD_CHECK, "lucide-shield-check", r#"<path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z""#, r#"<path d="m9 12 2 2 4-4""#);
+    icon!(STAR, "lucide-star", r#"<path d="M11.525 2.295a.53.53 0 0 1 .95 0l2.31 4.679a2.123 2.123 0 0 0 1.595 1.16l5.166.756a.53.53 0 0 1 .294.904l-3.736 3.638a2.123 2.123 0 0 0-.611 1.878l.882 5.14a.53.53 0 0 1-.771.56l-4.618-2.428a2.122 2.122 0 0 0-1.973 0L6.396 21.01a.53.53 0 0 1-.77-.56l.881-5.139a2.122 2.122 0 0 0-.611-1.879L2.16 9.795a.53.53 0 0 1 .294-.906l5.165-.755a2.122 2.122 0 0 0 1.597-1.16z""#);
+}
+
+/// Explore's shortcuts (IconGrid): three columns (two under 768 pt), each link with its icon:
+/// ExplorePage's own for New, Top, Videos, HiRes, Clean Content, Staff Picks and Creator Hub,
+/// else the server's picture, else a note.
+pub(crate) fn explore_icon_grid(si: usize, items: &[Value], w: f32) -> El {
+    let cols = if w >= 768.0 { 3.0 } else { 2.0 };
+    let gap = 48.0;
+    let cw = ((w.max(200.0) - (cols - 1.0) * gap) / cols).floor();
+    let mut grid = row().w_full().pt(24.0).gap(gap).flex_wrap();
+    for (i, it) in items.iter().enumerate() {
+        let title = it["title"].as_str().or(it["name"].as_str()).unwrap_or("").to_string();
+        let path = it["apiPath"].as_str().unwrap_or("").to_string();
+        let ink = white(0.6);
+        let lucide = |i: &'static rune::Icon| rune::icon(i, 24.0).color(ink);
+        let icon: El = match title.as_str() {
+            "New" => lucide(&shortcut_icons::CALENDAR),
+            "Top" => lucide(&shortcut_icons::TROPHY),
+            "Videos" => lucide(&shortcut_icons::SQUARE_PLAY),
+            "HiRes" => lucide(&shortcut_icons::CHART_COLUMN),
+            "Clean Content" => lucide(&shortcut_icons::SHIELD_CHECK),
+            "Staff Picks" => lucide(&shortcut_icons::STAR),
+            "Creator Hub" => glyph(G::Users, 24.0, ink),
+            _ => match it["icon"].as_str().filter(|u| !u.is_empty()).and_then(|u| crate::art::pixels(u, 24.0)) {
+                Some(px) => el().size(24.0, 24.0).opacity(0.7).pixels_fit(&px, rune::SurfaceFit::Fill),
+                None => glyph(G::Music, 24.0, ink),
+            },
+        };
+        let t2 = title.clone();
+        grid = grid.child(theme::focusable_row(row().key(format!("ex-{si}-{i}")).role("button").label(title.clone())).w(cw).h(32.0).gap(16.0).items_center().radius(6.0).hover_group().cursor(rune::Cursor::Pointer)
+            .on_press(move |s: &mut App| if !path.is_empty() { go(s, Page::ExploreSub(path.clone(), t2.clone())) })
+            .child(icon.a11y_hidden().group_color(white(0.95)))
+            .child(text(title).font(t(16.0, 500.0)).color(white(0.6)).group_color(white(0.95)).truncate().a11y_hidden()));
+    }
+    grid
 }
