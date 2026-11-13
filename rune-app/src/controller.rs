@@ -1244,6 +1244,8 @@ impl Player {
             Cmd::Logout => self.logout().await,
             Cmd::QueueIds(ids) => self.fetch_tracks(ids, "queue", true),
             Cmd::QueueItems { items, next } => {
+                // (the content filter holds here too: addToQueue / playNextInQueue)
+                let items: Vec<Value> = items.into_iter().filter(|t| !self.is_blocked(t)).collect();
                 let stamped: Vec<Value> = items.into_iter().map(|t| self.stamp(normalize(t))).collect();
                 if next {
                     self.manual.splice(0..0, stamped);
