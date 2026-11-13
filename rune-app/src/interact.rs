@@ -30,13 +30,25 @@ use crate::views::{self, Page};
 
 static VERSION: AtomicU64 = AtomicU64::new(0);
 
-/// Bumps when favourites or toasts change (main::poll redraws).
+/// Bumps when favourites or menus change (main::poll redraws; the panes are keyed by it).
 pub fn version() -> u64 {
     VERSION.load(Ordering::Relaxed)
 }
 
 fn bump() {
     VERSION.fetch_add(1, Ordering::Relaxed);
+}
+
+static TOAST_VERSION: AtomicU64 = AtomicU64::new(0);
+
+/// Bumps when a toast comes or goes. Only the toast layer draws them, so main::poll redraws for
+/// it without any pane rebuilding.
+pub fn toast_version() -> u64 {
+    TOAST_VERSION.load(Ordering::Relaxed)
+}
+
+fn bump_toasts() {
+    TOAST_VERSION.fetch_add(1, Ordering::Relaxed);
 }
 
 fn state() -> sone_host_shim::State<'static, AppState> {
@@ -308,7 +320,7 @@ fn push_toast(msg: String, kind: Kind, life: Duration, action: Option<(String, T
     // A toast raised while the window is away starts its time when the window comes back.
     let from = TOASTS_HELD.lock().unwrap().unwrap_or_else(Instant::now);
     TOASTS.lock().unwrap().push(Toast { id, msg, kind, until: from + life, action });
-    bump();
+    bump_toasts();
 }
 
 /// Since when the main window has been off screen, while it is: the toasts' time stands still
@@ -364,14 +376,14 @@ pub fn toast_tick() -> Option<Duration> {
     let now = Instant::now();
     v.retain(|t| t.until > now);
     if v.len() != before {
-        bump();
+        bump_toasts();
     }
     v.iter().map(|t| t.until - now).min()
 }
 
 fn dismiss_toast(id: u64) {
     TOASTS.lock().unwrap().retain(|t| t.id != id);
-    bump();
+    bump_toasts();
 }
 
 /// The toast stack, bottom-centre above the player bar (ToastContext: newest at the bottom).

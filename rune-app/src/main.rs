@@ -161,7 +161,9 @@ fn poll(s: &mut App, t: f64, tx: &mut Tx) -> bool {
     let (state, ticks) = controller::versions();
     // (Covers don't appear here: art.rs fills their pixels in place, without a rebuild.)
     // (Home's carousel arrows change as a row reaches an end: home::version.)
-    let v = (state, ticks, data::version().wrapping_add(interact::version() << 40).wrapping_add(home::version() << 20));
+    // (Toasts come and go under interact::toast_version, which no pane reads: only the toast layer,
+    // outside the panes, draws them.)
+    let v = (state, ticks, data::version().wrapping_add(interact::version() << 40).wrapping_add(home::version() << 20).wrapping_add(interact::toast_version() << 52));
     let mut changed = v != s.seen;
     if (state, ticks) != (s.seen.0, s.seen.1) {
         s.sync_controller();
