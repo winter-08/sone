@@ -151,3 +151,15 @@ GStreamer's `hlssink2`. The fixture host adds `Access-Control-Allow-Origin: *` t
 segments, as TIDAL's CDN does. The React build's web view still can't play it inside the
 sandbox ("Unable to play this video", without a request), so there's no golden for video;
 `verifier/video_check.py` checks the Rune player on its own.
+
+## Playlist edits
+
+`POST /v1/playlists/{uuid}/items` (built into `fake_tidal.py`) answers `{"addedItemIds": [...]}`
+as TIDAL does: with `onDupes=SKIP` it leaves out ids the playlist's catalog items, or an earlier
+add in the same session, already hold; with `onDupes=ADD` it adds every id asked for. Fixture
+Mixtape holds 1001, 1002, 1005 and 1006, so adding 1003 adds it and adding 1001 adds nothing.
+The playlist pages don't change after an add.
+
+With `SPIKE_PLAYLIST_VIDEO=1` in the environment, Fixture Mixtape's items also end with video
+9001 (wrapper `type` "video"), for a playlist that holds a music video. Unset (the default),
+nothing changes.

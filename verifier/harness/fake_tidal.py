@@ -116,6 +116,38 @@ def big_favorites(flow: http.HTTPFlow) -> dict:
     return {"limit": len(items), "offset": offset, "totalNumberOfItems": BIG, "items": items}
 
 
+P1 = "11111111-2222-3333-4444-555555555555"
+ADDED: dict = {}  # playlist uuid -> ids added through POST .../items in this session
+
+
+def catalog_items(uuid: str) -> list:
+    name = {P1: "playlist_p1_items.json", "66666666-7777-8888-9999-aaaaaaaaaaaa": "playlist_p2_items.json"}.get(uuid)
+    if not name:
+        return []
+    return json.load(open(os.path.join(ctx.options.fixtures, "catalog", name)))["items"]
+
+
+def add_items(uuid: str, form) -> dict:
+    asked = [int(x) for x in form.get("trackIds", "").split(",") if x.strip().isdigit()]
+    held = [it["item"]["id"] for it in catalog_items(uuid)] + ADDED.setdefault(uuid, [])
+    if form.get("onDupes", "FAIL").upper() == "SKIP":
+        added = []
+        for tid in asked:
+            if tid not in held and tid not in added:
+                added.append(tid)
+    else:
+        added = asked
+    ADDED[uuid].extend(added)
+    return {"lastUpdated": int(time.time() * 1000), "addedItemIds": added}
+
+
+def mixtape_with_video() -> dict:
+    items = catalog_items(P1)
+    video = json.load(open(os.path.join(ctx.options.fixtures, "catalog", "video_9001.json")))
+    items = items + [{"item": video, "type": "video", "cut": None}]
+    return {"limit": 50, "offset": 0, "totalNumberOfItems": len(items), "items": items}
+
+
 def page(items):
     return {"limit": 50, "offset": 0, "totalNumberOfItems": len(items), "items": items}
 
@@ -219,6 +251,17 @@ def route(flow: http.HTTPFlow) -> bool:
             return True
         if BIG and re.fullmatch(rf"/v1/users/{USER_ID}/favorites/tracks", path):
             respond(flow, 200, big_favorites(flow))
+            return True
+        # Adding to a playlist (catalog/README.md, "Playlist edits"): TIDAL answers with the ids
+        # it added; under onDupes=SKIP that leaves out what the playlist (or an earlier add)
+        # already holds.
+        if method == "POST" and (m := re.fullmatch(r"/v1/playlists/([0-9a-f-]+)/items", path)):
+            respond(flow, 200, add_items(m.group(1), flow.request.urlencoded_form))
+            return True
+        # SPIKE_PLAYLIST_VIDEO=1: Fixture Mixtape also holds video 9001, after its tracks.
+        if os.environ.get("SPIKE_PLAYLIST_VIDEO") and method == "GET" and re.fullmatch(
+                rf"/v1/playlists/{P1}/(items|tracks)", path):
+            respond(flow, 200, mixtape_with_video())
             return True
         # Catalog before the catch-all empty-page stub, so e.g. /users/{id}/playlists can be served.
         if serve_catalog(flow, host, path, method):
