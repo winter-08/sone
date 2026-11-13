@@ -861,7 +861,8 @@ pub(crate) fn loved_art(size: f32, radius: f32, heart: f32) -> El {
     let c = |h: &str| rune::color::hex(h).unwrap_or(white(0.5));
     el().size(size, size).radius(radius).clip_rounded(radius).items_center().justify_center().a11y_hidden()
         .linear_gradient(std::f32::consts::PI * 0.75, [(0.0, c("#450af5")), (0.5, c("#8e2de2")), (1.0, c("#00d2ff"))])
-        .child(glyph(G::HeartFilled, heart, white(1.0)))
+        // (white on the gradient in every theme)
+        .child(glyph(G::HeartFilled, heart, c("#ffffff")))
 }
 
 pub(crate) fn lib_row(key: &str, label: &str, title: &str, sub: &str, seed: u64, img: Option<String>, menu: Option<Value>, page: Option<Page>) -> El {
