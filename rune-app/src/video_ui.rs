@@ -73,7 +73,7 @@ pub fn video_card_with(key: String, d: &Value, play: impl Fn(&mut App) + Clone +
     let (fid, fl) = (id.to_string(), title.clone());
     let play2 = play.clone();
     art = art
-        .child(el().absolute(10.0, H - 50.0).key(format!("{key}-play")).role("button").label(format!("Play {title}")).size(40.0, 40.0).radius(20.0).fill(theme::accent())
+        .child(el().absolute(10.0, H - 50.0).key(format!("{key}-play")).role("button").label(format!("Play {title}")).help("Play").size(40.0, 40.0).radius(20.0).fill(theme::accent())
             .items_center().justify_center().group_opacity(0.0, 1.0).press_scale(0.94).cursor(rune::Cursor::Pointer)
             .on_press(play2)
             .child(glyph(G::Play, 20.0, theme::ink())))

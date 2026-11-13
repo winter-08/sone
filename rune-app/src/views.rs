@@ -479,7 +479,7 @@ pub(crate) fn track_row_look(key: String, n: usize, tr: &Value, look: Look, pl: 
             // the row is its group): the focus ring stays whole, and the glyph rests faint rather
             // than gone, so Tab never lands on an invisible button. (Rune has no focus-driven
             // opacity to reveal it on focus alone.)
-            .child(theme::focusable(el().key(more_key.clone()).role("button").label("More options")).size(36.0, 36.0).radius(18.0).items_center().justify_center()
+            .child(theme::focusable(el().key(more_key.clone()).role("button").label("More options")).help("More options").size(36.0, 36.0).radius(18.0).items_center().justify_center()
                 .press(white(0.14)).cursor(rune::Cursor::Pointer)
                 .on_press(move |s: &mut App| interact::open_track(s, t1.clone(), pl.clone(), Anchor::Below(mk.clone())))
                 .child(glyph(G::More, 18.0, white(0.75)).group_opacity(0.3, 1.0)))
@@ -949,7 +949,7 @@ fn search_key(s: &mut App, ev: &rune::KeyEvent, tx: &mut Tx) -> bool {
 /// A dropdown row's remove button (SearchBar's X, "Remove").
 fn remove_btn(key: String, q: &str) -> El {
     let q = q.to_string();
-    ui::icon_button::<App>(&key, &format!("Remove {q} from search history"), G::Close, 14.0, white(0.5)).size(28.0, 28.0).preserve_focus_on_press(true)
+    ui::icon_button::<App>(&key, &format!("Remove {q} from search history"), G::Close, 14.0, white(0.5)).help("Remove").size(28.0, 28.0).preserve_focus_on_press(true)
         .on_press(move |s: &mut App| {
             forget_search(s, &q);
             s.nav.search_sel = None;
@@ -1006,7 +1006,7 @@ pub fn dropdown(s: &App) -> Option<El> {
                 let blocked = crate::content::blocked(track);
                 let (t1, t2, t3) = (track.clone(), track.clone(), track.clone());
                 // the picture plays it alone, keeping the queue (playSingle)
-                let thumb = el().key(format!("{tk}-play")).role("button").label(format!("Play {t}")).cursor(rune::Cursor::Pointer).hover_group().preserve_focus_on_press(true)
+                let thumb = el().key(format!("{tk}-play")).role("button").label(format!("Play {t}")).help("Play").cursor(rune::Cursor::Pointer).hover_group().preserve_focus_on_press(true)
                     .on_press(move |s: &mut App| {
                         s.nav.search_open = false;
                         if !crate::content::blocked(&t1) {
