@@ -348,7 +348,41 @@ pub fn artist_of(item: &Value) -> String {
         // getItemSubtitle's fallbacks, for mixes
         .or_else(|| ["subTitle", "shortSubtitle"].iter().find_map(|k| d[*k].as_str().map(str::to_string)))
         .or_else(|| ["subtitleTextInfo", "subTitleTextInfo", "shortSubtitleTextInfo"].iter().find_map(|k| d[*k]["text"].as_str().map(str::to_string)))
+        // and for playlists: who made it and how much is in it, else its description
+        .or_else(|| playlist_subtitle(d, user_id_cached()))
+        .or_else(|| d["description"].as_str().filter(|s| !s.is_empty()).map(str::to_string))
         .unwrap_or_default()
+}
+
+/// [`user_id`] as read at most a second ago: it decrypts the settings file, and a page of cards
+/// asks once per playlist card.
+fn user_id_cached() -> u64 {
+    static AT: Mutex<Option<(Instant, u64)>> = Mutex::new(None);
+    let mut at = AT.lock().unwrap();
+    match *at {
+        Some((t, id)) if t.elapsed() < Duration::from_secs(1) => id,
+        _ => {
+            let id = user_id();
+            *at = Some((Instant::now(), id));
+            id
+        }
+    }
+}
+
+/// getItemSubtitle for a playlist: "By You" (the signed-in user's), "By <creator>" or "By
+/// TIDAL", and its count ("12 Tracks", "3 Videos · 12 Tracks"), joined by " · ".
+fn playlist_subtitle(d: &Value, me: u64) -> Option<String> {
+    let c = d.get("creator").filter(|c| c.is_object())?;
+    let by = if me != 0 && c["id"].as_u64() == Some(me) {
+        Some("By You".to_string())
+    } else if let Some(n) = c["name"].as_str().filter(|n| !n.is_empty()) {
+        Some(format!("By {n}"))
+    } else {
+        (c["id"].as_u64() == Some(0)).then(|| "By TIDAL".to_string())
+    };
+    let count = (!d["numberOfTracks"].is_null() || !d["numberOfVideos"].is_null()).then(|| crate::library::count_label(d));
+    let parts: Vec<String> = [by, count].into_iter().flatten().collect();
+    (!parts.is_empty()).then(|| parts.join(" · "))
 }
 
 /// Whether `text` holds the filter `query` as a reader expects: case folded fully (`ß` as `ss`),
@@ -386,6 +420,17 @@ mod tests {
         // A query with an accent asks for it.
         assert!(!matches("Beyonce", "beyoncé"));
         assert!(!matches("Sigur Rós", "sigur rosa"));
+    }
+
+    #[test]
+    fn playlist_cards_say_who_made_them_and_how_long_they_are() {
+        use serde_json::json;
+        let sub = |v: serde_json::Value| super::playlist_subtitle(&v, 424242);
+        assert_eq!(sub(json!({"creator": {"id": 424242, "name": "fixture"}, "numberOfTracks": 4})).as_deref(), Some("By You · 4 Tracks"));
+        assert_eq!(sub(json!({"creator": {"id": 0}, "numberOfTracks": 3, "numberOfVideos": 1})).as_deref(), Some("By TIDAL · 1 Video · 3 Tracks"));
+        assert_eq!(sub(json!({"creator": {"id": 9, "name": "Ann"}})).as_deref(), Some("By Ann"));
+        assert_eq!(sub(json!({"creator": {"id": 9}})), None);
+        assert_eq!(sub(json!({"title": "No creator"})), None);
     }
 
     #[test]
