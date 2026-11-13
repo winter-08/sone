@@ -569,12 +569,13 @@ pub(crate) fn took_loading() -> bool {
     LOADING.replace(false)
 }
 
-/// A page's data, or what shows until it's there: `loading()`, or, when the fetch failed, a
-/// short error with Retry (which forgets the entry, so the redraw fetches it again).
+/// A page's data, or what shows until it's there: its skeleton (skeleton.rs), or, when the
+/// fetch failed, a short error with Retry (which forgets the entry, so the redraw fetches it
+/// again).
 pub(crate) fn ready_or(key: Key) -> Result<Value, El> {
     match data::want(key.clone()) {
         data::Load::Ready(v) => Ok(v),
-        data::Load::Loading => Err(loading()),
+        data::Load::Loading => Err(crate::skeleton::page(&key)),
         data::Load::Failed(_) => Err(col().gap(10.0).items_start()
             .child(text("Couldn't load this").font(t(13.0, 500.0)).color(white(0.6)))
             .child(button::<App>(&format!("retry-{key:?}"), "Retry", None, false).on_press(move |_: &mut App| data::forget(&key)))),
@@ -588,6 +589,11 @@ pub(crate) fn ready_or(key: Key) -> Result<Value, El> {
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub struct Shell {
     pub sidebar_w: f32,
+/// A loading placeholder of another shape (skeleton.rs) was built: the pane is busy too.
+pub(crate) fn note_loading() {
+    LOADING.set(true);
+}
+
     /// The drawer takes a column of its own; otherwise it slides over the page from the right.
     pub drawer_docked: bool,
     pub drawer_w: f32,

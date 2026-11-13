@@ -67,7 +67,7 @@ pub fn page(s: &App, v: &View) -> El {
         .child(row().h(40.0).px(12.0).radius(10.0).items_center().fill(white(0.06)).child(filter))
         .child(tabs);
     if snap.first_pending() {
-        return c.child(views::loading());
+        return c.child(if videos { views::loading() } else { crate::skeleton::rows(8, true) });
     }
     if snap.failed.is_some() && snap.len == 0 {
         let k = key.clone();
@@ -104,7 +104,7 @@ pub fn page(s: &App, v: &View) -> El {
     });
     c = c.child(rows.on_visible_rows(crate::playlist::more_near_end(key.clone(), n)));
     if snap.loading && snap.len > 0 {
-        c = c.child(views::loading());
+        c = c.child(crate::skeleton::rows(3, true));
     } else if !snap.more {
         c = c.child(row().w_full().justify_center().py(12.0).child(text(coll::count(total, "TRACK", "TRACKS")).font(t(12.0, 500.0)).color(white(0.35))));
     }

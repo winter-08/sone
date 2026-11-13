@@ -130,7 +130,7 @@ pub fn page(s: &App, uuid: &str, v: &View) -> El {
 
     let mut c = col().w_full().gap(16.0).child(hero).child(row().h(40.0).px(12.0).radius(10.0).items_center().fill(white(0.06)).child(filter));
     if snap.first_pending() {
-        return c.child(views::loading());
+        return c.child(crate::skeleton::rows(8, true));
     }
     if let Some(e) = snap.failed.as_ref().filter(|_| snap.len == 0) {
         let k = key.clone();
@@ -163,7 +163,7 @@ pub fn page(s: &App, uuid: &str, v: &View) -> El {
     });
     c = c.child(rows.on_visible_rows(more_near_end(key.clone(), n_shown)));
     if snap.loading && snap.len > 0 {
-        c = c.child(views::loading());
+        c = c.child(crate::skeleton::rows(3, true));
     }
     if !snap.more && !snap.loading {
         c = c.child(recommended(s, uuid, &title));

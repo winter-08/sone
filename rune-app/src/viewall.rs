@@ -95,7 +95,7 @@ pub fn page(s: &App, title: &str, path: &str, artist: Option<u64>) -> El {
             let snap = paged::get(&key);
             let mut c = col().w_full().gap(18.0).child(head);
             if snap.first_pending() {
-                return c.child(views::loading());
+                return c.child(crate::skeleton::page(&crate::data::Key::Page(String::new())));
             }
             if snap.failed.is_some() && snap.len == 0 {
                 let k = key.clone();
@@ -151,7 +151,7 @@ pub fn artist_tracks(s: &App, id: u64, name: &str, v: &View) -> El {
         .child(col().gap(6.0).child(views::heading("Popular tracks", theme::PAGE_TITLE)).child(coll::dim(name)))
         .child(coll::play_pair(v, &source, move |shuffle| paged::play(k1.clone(), src1.clone(), shuffle, None, |_| true)));
     if snap.first_pending() {
-        return c.child(views::loading());
+        return c.child(crate::skeleton::rows(8, true));
     }
     if let Some(e) = snap.failed.as_ref().filter(|_| snap.len == 0) {
         let k = key.clone();
@@ -171,7 +171,7 @@ pub fn artist_tracks(s: &App, id: u64, name: &str, v: &View) -> El {
     });
     c = c.child(rows.on_visible_rows(crate::playlist::more_near_end(key, n)));
     if snap.loading && snap.len > 0 {
-        c = c.child(views::loading());
+        c = c.child(crate::skeleton::rows(3, true));
     }
     let _ = (s, row());
     c

@@ -33,6 +33,7 @@ mod queue_ui;
 mod settings;
 mod shell;
 mod signal_path;
+mod skeleton;
 mod sources;
 mod playlist;
 mod theme;
