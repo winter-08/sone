@@ -163,8 +163,9 @@ pub fn page(s: &App, uuid: &str, v: &View) -> El {
         let tr = paged::track_of(&tracks[i]);
         let id = tr["id"].as_u64();
         let (k, src) = (k2.clone(), src2.clone());
-        // Remove from playlist goes by the item's place in the playlist's own order.
-        let in_pl = (own && !sorted).then(|| interact::InPlaylist { uuid: uuid_s.clone(), index: i });
+        // Remove from playlist goes by the item's place in the playlist's own order (a sorted list
+        // looks it up there).
+        let in_pl = own.then(|| interact::InPlaylist { uuid: uuid_s.clone(), index: i, sorted });
         views::track_row_look(format!("pl-t{i}"), i + 1, &tr, views::Look { date: own, ..Default::default() }, in_pl, move |_: &mut App| paged::play(k.clone(), src.clone(), false, id, |_| true))
     });
     c = c.child(rows.on_visible_rows(more_near_end(key.clone(), n_shown)));

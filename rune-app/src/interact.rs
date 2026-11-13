@@ -451,7 +451,11 @@ impl Media {
 #[derive(Clone, Debug)]
 pub struct InPlaylist {
     pub uuid: String,
+    /// Its place in the list it shows in.
     pub index: usize,
+    /// That list is sorted, so `index` isn't its place in the playlist: removing it looks that
+    /// up first.
+    pub sorted: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -741,7 +745,9 @@ fn track_menu(track: &Value, playlist: Option<&InPlaylist>, c: &Ctx) -> El {
     // queue as the item itself (there's no track to fetch by that id), favourite as videos,
     // have no track radio and share as a video.
     let video = d["itemType"].as_str() == Some("video");
-    let ok = video || (d["streamReady"].as_bool() != Some(false) && d["allowStreaming"].as_bool() != Some(false));
+    // TrackContextMenu: Play next and Add to queue are off for a track that can't stream now
+    // (isTrackUnavailable, a release date to come included) or that the content filter blocks.
+    let ok = !crate::content::unavailable(d) && !crate::content::blocked(d);
     let fav = if video { Fav::Video } else { Fav::Track };
     let loved = is_fav(fav, &id.to_string());
     let t1 = title.clone();
@@ -823,19 +829,10 @@ fn track_menu(track: &Value, playlist: Option<&InPlaylist>, c: &Ctx) -> El {
         close(s);
     }));
     if let Some(p) = playlist {
-        let (uuid, index, t6) = (p.uuid.clone(), p.index, title.clone());
+        let (p, t6) = (p.clone(), title.clone());
         m = m.child(sep()).child(mi_danger("ctx-remove", "Remove from playlist", move |s, _| {
             close(s);
-            let (uuid, t6) = (uuid.clone(), t6.clone());
-            sone_host_shim::async_runtime::spawn(async move {
-                match library::remove_track_from_playlist(state(), uuid.clone(), index as u32).await {
-                    Ok(()) => {
-                        data::forget(&Key::Playlist(uuid));
-                        toast(format!("Removed \"{}\" from playlist", clip(&t6, 28)), Kind::Success);
-                    }
-                    Err(_) => toast("Failed to remove track".into(), Kind::Error),
-                }
-            });
+            remove_from_playlist(p.clone(), id, t6.clone());
         }));
     }
     m
@@ -865,6 +862,45 @@ fn queue_track(t: Value, next: bool) {
                 controller::send(Cmd::QueueTracks { tracks: vec![full], source, next });
             }
             None => toast("Couldn't load tracks".into(), Kind::Error),
+        }
+    });
+}
+
+/// Remove from playlist: the row leaves its list at once (React's optimistic removal), then the
+/// server is told by the item's place in the playlist's own order (in a sorted list, looked up
+/// there first: the first place that holds the track); the playlist's details catch up after.
+/// A failure brings the list back as the server has it.
+fn remove_from_playlist(p: InPlaylist, id: u64, title: String) {
+    use crate::paged::{self, PKey};
+    let uuid = p.uuid.clone();
+    let is = |u: &str| { let u = u.to_string(); move |k: &PKey| matches!(k, PKey::Playlist { uuid, .. } if *uuid == u) };
+    let own_order = |u: &str| { let u = u.to_string(); move |k: &PKey| matches!(k, PKey::Playlist { uuid, order: None, .. } if *uuid == u) };
+    let sorted_lists = |u: &str| { let u = u.to_string(); move |k: &PKey| matches!(k, PKey::Playlist { uuid, order: Some(_), .. } if *uuid == u) };
+    let holds = move |v: &Value| paged::track_of(v)["id"].as_u64() == Some(id);
+    sone_host_shim::async_runtime::spawn(async move {
+        let index = if p.sorted {
+            match paged::fetch_all(&PKey::Playlist { uuid: uuid.clone(), order: None, dir: None }).await.ok().and_then(|all| all.iter().position(holds)) {
+                Some(i) => i,
+                None => {
+                    toast("Failed to remove track".into(), Kind::Error);
+                    return;
+                }
+            }
+        } else {
+            p.index
+        };
+        paged::remove_where(own_order(&uuid), |i, _| i == index);
+        paged::remove_where(sorted_lists(&uuid), |i, v| if p.sorted { i == p.index && holds(v) } else { holds(v) });
+        match library::remove_track_from_playlist(state(), uuid.clone(), index as u32).await {
+            Ok(()) => {
+                data::forget_entry(&Key::Playlist(uuid));
+                toast(format!("Removed \"{}\" from playlist", clip(&title, 28)), Kind::Success);
+            }
+            Err(_) => {
+                paged::forget_where(is(&uuid));
+                data::forget(&Key::Playlist(uuid));
+                toast("Failed to remove track".into(), Kind::Error);
+            }
         }
     });
 }

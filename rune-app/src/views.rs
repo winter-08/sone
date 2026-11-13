@@ -1227,11 +1227,14 @@ pub(crate) fn loved_art(size: f32, radius: f32, heart: f32) -> El {
         .child(glyph(G::HeartFilled, heart, c("#ffffff")))
 }
 
-pub(crate) fn lib_row(key: &str, label: &str, title: &str, sub: &str, seed: u64, img: Option<String>, menu: Option<Value>, page: Option<Page>) -> El {
+pub(crate) fn lib_row(key: &str, label: &str, title: &str, sub: &str, seed: u64, img: Option<String>, menu: Option<Value>, page: Option<Page>, ai: bool) -> El {
     let art = if key == "lib-loved" { loved_art(40.0, 6.0, 15.0) } else { ui::with_image(ui::tile(ui::hue(Some(seed)), 40.0, seed, 6.0), img, 40.0, 6.0) };
     let mut r = theme::focusable_row(row().key(key.to_string()).role("button").label(label)).w_full().h(52.0).px(8.0).gap(10.0).radius(8.0).items_center().hover(white(0.06)).cursor(rune::Cursor::Pointer).help(title)
         .child(art)
-        .child(col().min_w(0.0).a11y_hidden().child(text(title.to_string()).font(t(13.0, 600.0)).color(white(0.92)).truncate()).child(text(sub.to_string()).font(t(11.0, 400.0)).color(white(0.55)).truncate()));
+        .child(col().min_w(0.0).a11y_hidden()
+            // (Sidebar: an AI album has the AI badge after its title)
+            .child(row().min_w(0.0).gap(6.0).items_center().child(text(title.to_string()).font(t(13.0, 600.0)).color(white(0.92)).truncate().shrink()).child(crate::content::badges(false, ai).unwrap_or_else(el)))
+            .child(text(sub.to_string()).font(t(11.0, 400.0)).color(white(0.55)).truncate()));
     if let Some(p) = page {
         r = r.on_press(move |s: &mut App| go(s, p.clone()));
     }

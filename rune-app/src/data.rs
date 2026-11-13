@@ -236,6 +236,13 @@ pub fn forget(key: &Key) {
     VERSION.fetch_add(1, Ordering::Relaxed);
 }
 
+/// [`forget`] this entry alone: a playlist's details without its paged tracks (which a
+/// removal already patched in place).
+pub fn forget_entry(key: &Key) {
+    CACHE.lock().unwrap().remove(key);
+    VERSION.fetch_add(1, Ordering::Relaxed);
+}
+
 /// Forget every cached entry, so everything shown is fetched again (Refresh app data).
 pub fn clear() {
     // The paged collections and the playlist page's local overrides go too (paged.rs,

@@ -256,6 +256,21 @@ pub fn all_hold(f: impl Fn(&PKey) -> bool, id: &str) -> bool {
     st.iter().filter(|(k, e)| f(k) && !e.idle).all(|(_, e)| e.items.iter().any(|v| item_id(v) == id))
 }
 
+/// Takes one item out of every loaded collection `f` picks, the first for which `pick(place,
+/// item)` holds, at once (an optimistic removal; the server is told after). Paging goes on from
+/// one place earlier, and the total is one less.
+pub fn remove_where(f: impl Fn(&PKey) -> bool, pick: impl Fn(usize, &Value) -> bool) {
+    let mut st = STORE.lock().unwrap();
+    for (_, e) in st.iter_mut().filter(|(k, e)| f(k) && !e.idle) {
+        if let Some(i) = e.items.iter().enumerate().position(|(i, v)| pick(i, v)) {
+            Arc::make_mut(&mut e.items).remove(i);
+            e.next = e.next.saturating_sub(1);
+            e.total = e.total.map(|t| t.saturating_sub(1));
+            e.mark();
+        }
+    }
+}
+
 /// A collection item's id as favourites name it: a playlist's uuid, else its id.
 fn item_id(v: &Value) -> String {
     let d = track_of(v);

@@ -262,6 +262,10 @@ def extras_route(flow: http.HTTPFlow, host: str, path: str, method: str) -> bool
         return False
     if COLLECTIONS and method == "GET" and collections_route(flow, path, method):
         return True
+    # Removing a playlist item (Remove from playlist) is answered 204; the playlist isn't changed.
+    if method == "DELETE" and re.fullmatch(r"/v1/playlists/[0-9a-f-]+/items/\d+", path):
+        flow.response = http.Response.make(204, b"", {})
+        return True
     if (HOME_EXTRA or HOME_TABS) and method == "GET" and (m := re.fullmatch(r"/v2/home/feed/([A-Za-z_]+)", path)):
         if m.group(1).upper() == "EDITORIAL" and HOME_TABS:
             respond(flow, 500, {"status": 500, "subStatus": 999, "userMessage": "Fixture tab is down"})

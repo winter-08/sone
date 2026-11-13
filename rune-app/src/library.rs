@@ -155,7 +155,7 @@ pub fn sidebar_list(s: &App) -> El {
     let mut list = col().w_full().gap(2.0);
     if k == Lib::Playlists {
         let on = *s.nav.page == Page::Loved;
-        list = list.child(views::lib_row("lib-loved", "Loved Tracks Collection", "Loved Tracks", "Collection", 9, None, None, Some(Page::Loved)).fill(if on { white(0.08) } else { white(0.0) }));
+        list = list.child(views::lib_row("lib-loved", "Loved Tracks Collection", "Loved Tracks", "Collection", 9, None, None, Some(Page::Loved), false).fill(if on { white(0.08) } else { white(0.0) }));
     }
     if snap.first_pending() {
         return list.child(views::loading().px(8.0).py(8.0));
@@ -219,7 +219,7 @@ fn sidebar_row(s: &App, k: Lib, i: usize, it: &Value) -> El {
             let on = *s.nav.page == Page::Playlist(uuid.clone());
             // The React row's accessible name is its cover's alt text, title and subtitle.
             let label = format!("{title} {title} {sub}");
-            views::lib_row(&format!("lib-pl-{i}"), &label, &title, &sub, i as u64 + 20, crate::art::item_url(it, 40.0), Some(as_item(k, it)), Some(Page::Playlist(uuid)))
+            views::lib_row(&format!("lib-pl-{i}"), &label, &title, &sub, i as u64 + 20, crate::art::item_url(it, 40.0), Some(as_item(k, it)), Some(Page::Playlist(uuid)), false)
                 .fill(if on { white(0.08) } else { white(0.0) })
         }
         _ => {
@@ -234,7 +234,7 @@ fn sidebar_row(s: &App, k: Lib, i: usize, it: &Value) -> El {
             let on = page.as_ref() == Some(&*s.nav.page);
             let img = if k == Lib::Artists { crate::art::artist_picture(data::data(&item), 40.0) } else { crate::art::item_url(&item, 40.0) };
             // Albums have no menu in the React sidebar; artists and mixes do.
-            views::lib_row(&format!("lib-{k:?}-{i}"), &name, &name, &sub, i as u64 + 40, img, (k != Lib::Albums).then(|| item.clone()), page)
+            views::lib_row(&format!("lib-{k:?}-{i}"), &name, &name, &sub, i as u64 + 40, img, (k != Lib::Albums).then(|| item.clone()), page, k == Lib::Albums && data::data(&item)["ai"].as_bool() == Some(true))
                 .fill(if on { white(0.08) } else { white(0.0) })
         }
     }
