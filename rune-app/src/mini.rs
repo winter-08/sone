@@ -198,6 +198,9 @@ fn on_key(s: &mut Mini, e: &KeyEvent, _: &mut Tx) -> bool {
         Key::Escape if s.vol_open => s.vol_open = false,
         Key::Escape => set_mini(false),
         Key::Text(t) if t == " " => send(Cmd::TogglePlay),
+        // MiniPlayer's ArrowRight / ArrowLeft: next and previous track
+        Key::Right => send(Cmd::Next),
+        Key::Left => send(Cmd::Previous),
         Key::Tab => {
             s.keyboard = true;
             return false;
@@ -308,6 +311,9 @@ fn narrow(v: &View, w: f32, h: f32) -> El {
     if w >= 420.0 {
         controls = controls.child(volume(v));
     }
+    if w >= 520.0 {
+        controls = controls.child(share(v, 28.0, 16.0));
+    }
     row()
         .pt(8.0)
         .pb(8.0)
@@ -315,7 +321,7 @@ fn narrow(v: &View, w: f32, h: f32) -> El {
         .pr(10.0)
         .gap(10.0)
         .items_center()
-        .child(cover(v, h - 16.0))
+        .child(cover(v, h - 16.0).on_background_press(|_: &mut Mini| crate::shell::raise()))
         .child(col().grow(1.0).min_w(0.0).gap(2.0).child(title(v, 13.0)).child(artist(v, 12.0)))
         .child(controls)
 }
@@ -333,7 +339,7 @@ fn compact(v: &View, w: f32, h: f32) -> El {
     if let Some(from) = playing_from(v).filter(|_| seek) {
         meta = meta.child(from);
     }
-    let mut top = row().grow(1.0).min_h(0.0).gap(12.0).child(cover(v, top_h.min(96.0)).self_center()).child(meta);
+    let mut top = row().grow(1.0).min_h(0.0).gap(12.0).child(cover(v, top_h.min(96.0)).self_center().on_background_press(|_: &mut Mini| crate::shell::raise())).child(meta);
     if heart_top {
         top = top.child(heart(v).self_end());
     }
@@ -344,7 +350,7 @@ fn compact(v: &View, w: f32, h: f32) -> El {
     }
     middle = middle.child(prev(28.0, 16.0, white(0.7))).child(play(v, play_size).mx(2.0)).child(next(28.0, 16.0, white(0.7)));
     if wide {
-        middle = middle.child(repeat(v));
+        middle = middle.child(repeat(v)).child(share(v, 28.0, 16.0));
     }
     let mut left = row().grow(1.0).items_center();
     if !heart_top {
@@ -374,6 +380,8 @@ fn full(s: &Mini, v: &View, w: f32, h: f32) -> El {
         .radius(6.0)
         .linear_gradient(0.0, [(0.0, theme::black(0.72)), (0.45, theme::black(0.38)), (1.0, theme::black(0.2))])
         .group_opacity(rest, 1.0)
+        // a press on the cover, off its buttons, brings the main window forward (focus-main)
+        .on_background_press(|_: &mut Mini| crate::shell::raise())
         .child(
             // the transport, and under it volume, shuffle and repeat (React's full tier)
             col().absolute(0.0, 0.0).size(sz, sz).gap(if small { 6.0 } else { 12.0 }).items_center().justify_center()
@@ -383,7 +391,8 @@ fn full(s: &Mini, v: &View, w: f32, h: f32) -> El {
                     .child(next(side, side_glyph, white(0.92))))
                 .child(row().gap(if small { 4.0 } else { 12.0 }).items_center().child(volume(v)).child(shuffle(v)).child(repeat(v))),
         )
-        .child(seek);
+        .child(seek)
+        .child(row().pin(None, Some(6.0), Some(6.0), None).child(share(v, 32.0, 18.0)));
     let art = el().key("mini-art").size(sz, sz).hover_group().hover_motion(OVERLAY_FADE, OVERLAY_FADE).child(cover(v, sz)).child(overlay);
     let meta = row()
         .w(sz.max((w - 16.0).min(200.0)))
@@ -543,6 +552,21 @@ fn next(size: f32, glyph_size: f32, c: Color) -> El {
 fn mode(key: &str, label: &str, g: G, on: bool) -> El {
     let b = button(key, label, g, if on { theme::accent() } else { white(0.45) }, 28.0, 16.0, !on).checked(on);
     if on { b.child(el().absolute(12.5, 26.0).size(3.0, 3.0).radius(1.5).fill(theme::accent())) } else { b }
+}
+
+/// Share (useMiniplayerEmitter "share"): the track's link to the clipboard, said in a toast in
+/// the main window.
+fn share(v: &View, size: f32, glyph_size: f32) -> El {
+    let id = v.video.as_ref().map(|vi| ("video", vi.id)).or_else(|| v.current.as_ref().map(|c| ("track", c.id)));
+    let b = button("mini-share", "Share", G::Share, white(0.7), size, glyph_size, true).help("Copy share link");
+    match id {
+        Some((kind, id)) => b.on_press_tx(move |_: &mut Mini, tx: &mut Tx| {
+            let url = if kind == "track" { format!("https://tidal.com/track/{id}/u") } else { format!("https://tidal.com/video/{id}") };
+            tx.copy_rich(rune::ClipboardContent::new(url));
+            crate::interact::toast("Copied share link to clipboard".into(), crate::interact::Kind::Success);
+        }),
+        None => off(b),
+    }
 }
 
 fn shuffle(v: &View) -> El {
