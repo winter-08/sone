@@ -480,6 +480,8 @@ fn main() {
     controller::start(handle.clone());
     // The OBS overlay's now-playing feed, while the overlay server runs (obs.rs).
     obs::start();
+    // SIGTERM and SIGINT quit as Quit does (shell.rs).
+    shell::on_terminate_signals();
 
     let spec = AppSpec::<App> {
         min_size: Some((900.0, 600.0)),

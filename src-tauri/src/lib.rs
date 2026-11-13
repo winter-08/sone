@@ -811,6 +811,16 @@ pub fn setup_core(handle: &tauri::AppHandle) {
     tray::setup(handle);
 }
 
+/// What the app does on its way out (Tauri's RunEvent::Exit; a native UI calls it from its own
+/// exit path): Discord let go, the idle inhibitor released, pending scrobbles and play reports
+/// written.
+pub async fn on_exit(state: &AppState) {
+    state.discord.send(crate::discord::DiscordCommand::Disconnect);
+    state.idle_inhibitor.lock().await.uninhibit().await;
+    state.scrobble_manager.flush().await;
+    state.tidal_reporter.flush().await;
+}
+
 #[cfg(feature = "tauri-ui")]
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -1189,12 +1199,7 @@ pub fn run() {
         .run(|app, event| {
             if let tauri::RunEvent::Exit = event {
                 let state = app.state::<AppState>();
-                state.discord.send(crate::discord::DiscordCommand::Disconnect);
-                tauri::async_runtime::block_on(async {
-                    state.idle_inhibitor.lock().await.uninhibit().await;
-                    state.scrobble_manager.flush().await;
-                    state.tidal_reporter.flush().await;
-                });
+                tauri::async_runtime::block_on(on_exit(&state));
             }
         });
 }

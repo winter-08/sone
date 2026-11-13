@@ -367,21 +367,42 @@ pub fn quit(tx: &mut Tx) {
 }
 
 /// On the way out, from any thread (the loop ended, or the backend's `exit`: tray Quit, MPRIS
-/// Quit): the geometry seen last is written, the idle inhibitor let go, and the single-instance
-/// name freed for a launch waiting on it.
+/// Quit, SIGTERM): the geometry seen last is written, then what Tauri's RunEvent::Exit did
+/// (Discord disconnected, the idle inhibitor let go, pending scrobbles and play reports
+/// flushed), and the single-instance name freed for a launch waiting on it. Runs once.
 pub fn on_exit() {
-    save_geometry(true);
-    if INHIBITED.load(Ordering::Relaxed) {
-        // (On a thread of its own: the backend's exit can come from inside the async runtime,
-        // the tray's Quit among them, where blocking on it would panic.)
-        let _ = std::thread::spawn(|| {
-            sone_host_shim::async_runtime::block_on(async {
-                crate::host().state::<AppState>().idle_inhibitor.lock().await.uninhibit().await;
-            })
-        })
-        .join();
+    static DONE: AtomicBool = AtomicBool::new(false);
+    if DONE.swap(true, Ordering::SeqCst) {
+        return;
     }
+    save_geometry(true);
+    // (On a thread of its own: the backend's exit can come from inside the async runtime,
+    // the tray's Quit among them, where blocking on it would panic.)
+    let _ = std::thread::spawn(|| {
+        sone_host_shim::async_runtime::block_on(async {
+            tauri_app_lib::on_exit(&crate::host().state::<AppState>()).await;
+        })
+    })
+    .join();
     rune::release_instance();
+}
+
+/// SIGTERM and SIGINT (a session logout, `kill`, Ctrl+C in a terminal) end the app the way its
+/// Quit does, so the queue and pending scrobbles are written (Tauri's GTK loop died on them).
+pub fn on_terminate_signals() {
+    use tokio::signal::unix::{SignalKind, signal};
+    sone_host_shim::async_runtime::spawn(async {
+        let (Ok(mut term), Ok(mut int)) = (signal(SignalKind::terminate()), signal(SignalKind::interrupt())) else {
+            log::warn!("[rune] can't listen for SIGTERM/SIGINT");
+            return;
+        };
+        tokio::select! {
+            _ = term.recv() => log::info!("[rune] SIGTERM: quitting"),
+            _ = int.recv() => log::info!("[rune] SIGINT: quitting"),
+        }
+        // (The backend's exit, the tray's Quit path: off the runtime, since it blocks on it.)
+        std::thread::spawn(|| crate::host().exit(0));
+    });
 }
 
 /// A launch of the app while it runs, without a link: bring this window back (rather than
