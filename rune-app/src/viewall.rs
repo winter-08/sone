@@ -49,10 +49,14 @@ pub fn typed(it: &Value, section_kind: Option<&str>) -> Value {
 
 /// Cards, video cards and track rows for a mixed list of typed items, in their order: tracks
 /// play from the clicked one through `play_track` (with its index among the tracks).
-fn items_view(prefix: &str, items: &[Value], source: Value, play_track: impl Fn(usize) + Clone + 'static) -> El {
+/// From an artist's page (`artist`), albums are subtitled with their year and kind.
+fn items_view(prefix: &str, items: &[Value], source: Value, artist: Option<u64>, play_track: impl Fn(usize) + Clone + 'static) -> El {
     let tracks: Vec<Value> = items.iter().filter(|it| data::kind(it) == "TRACK").map(|it| data::data(it).clone()).collect();
     let videos: Vec<Value> = items.iter().filter(|it| data::kind(it) == "VIDEO").cloned().collect();
-    let cards = views::cards_for(prefix, items);
+    let cards = match artist {
+        Some(id) => views::cards_with(prefix, items, move |it| views::artist_card_sub(it, id)),
+        None => views::cards_for(prefix, items),
+    };
     let my_tracks: Vec<&Value> = items.iter().filter(|it| data::kind(it) == "DEEP_LINK" && data::name(it) == "My Tracks").collect();
     let mut c = col().w_full().gap(16.0);
     if !my_tracks.is_empty() || !cards.is_empty() {
@@ -104,7 +108,7 @@ pub fn page(s: &App, title: &str, path: &str, artist: Option<u64>) -> El {
             }
             let (k1, src1) = (key.clone(), source.clone());
             let ids: Vec<Option<u64>> = items.iter().filter(|it| data::kind(it) == "TRACK").map(|it| data::data(it)["id"].as_u64()).collect();
-            c = c.child(items_view("va", &items, source, move |i| paged::play(k1.clone(), src1.clone(), false, ids.get(i).copied().flatten(), |_| true)));
+            c = c.child(items_view("va", &items, source, Some(id), move |i| paged::play(k1.clone(), src1.clone(), false, ids.get(i).copied().flatten(), |_| true)));
             if snap.more {
                 let n = snap.len;
                 c = c.child(el().key(format!("va-more-{n}")).w_full().h(8.0).a11y_hidden().on_visible(move |_: &mut App, on, _| if on { paged::more(&key) }));
@@ -130,7 +134,7 @@ pub fn page(s: &App, title: &str, path: &str, artist: Option<u64>) -> El {
             }
             let tracks: Vec<Value> = items.iter().filter(|it| data::kind(it) == "TRACK").map(|it| data::data(it).clone()).collect();
             let src = source.clone();
-            c = c.child(items_view("va", &items, source, move |i| controller::send(Cmd::PlayFrom { tracks: tracks.clone(), index: i, source: src.clone(), album_mode: false })));
+            c = c.child(items_view("va", &items, source, None, move |i| controller::send(Cmd::PlayFrom { tracks: tracks.clone(), index: i, source: src.clone(), album_mode: false })));
             c
         }
     }

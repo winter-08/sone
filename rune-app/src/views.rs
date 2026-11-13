@@ -518,7 +518,7 @@ pub(crate) fn cards_for(prefix: &str, items: &[Value]) -> Vec<El> {
             let page = item_page(it)?;
             let round = data::kind(it) == "ARTIST";
             let seed = data::data(it)["id"].as_u64().unwrap_or(i as u64 + 1);
-            Some(card(format!("{prefix}-{i}"), &data::name(it), &data::artist_of(it), seed, round, crate::art::item_url(it, 132.0), Some(it.clone()), page))
+            Some(card(format!("{prefix}-{i}"), &data::name(it), &sub(it), seed, round, crate::art::item_url(it, 132.0), Some(it.clone()), page))
         })
         .collect()
 }
@@ -536,6 +536,11 @@ pub(crate) fn loading() -> El {
 /// Whether a `loading()` placeholder was built since the last call: a pane that built its
 /// content between two calls is still loading, and tells assistive technology so (`El::busy`).
 pub(crate) fn took_loading() -> bool {
+    cards_with(prefix, items, data::artist_of)
+}
+
+/// [`cards_for`] with each card's subtitle from `sub`.
+pub(crate) fn cards_with(prefix: &str, items: &[Value], sub: impl Fn(&Value) -> String) -> Vec<El> {
     LOADING.replace(false)
 }
 
@@ -1194,36 +1199,6 @@ pub(crate) fn album_byline(a: &Value) -> El {
     r
 }
 
-pub(crate) fn play_buttons(v: &View, source: &Value, play: Cmd, shuffle: Cmd) -> El {
-    let label = play_label(v, source);
-    let toggle = label != "Play";
-    row().gap(8.0).items_center()
-        .child(button::<App>("hero-play", label, Some(if label == "Pause" { G::Pause } else { G::Play }), true).on_press(move |_: &mut App| {
-            if toggle { controller::send(Cmd::TogglePlay) } else { controller::send(play.clone()) }
-        }))
-        .child(button::<App>("hero-shuffle", "Shuffle", Some(G::Shuffle), false).on_press(move |_: &mut App| controller::send(shuffle.clone())))
-}
-
-fn album(id: u64, v: &View) -> El {
-    let p = match ready_or(Key::Album(id)) { Ok(v) => v, Err(e) => return e };
-    let page = &p["page"];
-    let a = &page["album"];
-    let title = a["title"].as_str().unwrap_or("").to_string();
-    let tracks: Vec<Value> = page["tracks"].as_array().cloned().unwrap_or_default();
-    let source = json!({"type": "album", "id": id, "name": title});
-    let play = Cmd::PlayCollection { tracks: tracks.clone(), source: source.clone(), album_mode: true, shuffle: false };
-    let shuf = Cmd::PlayCollection { tracks: tracks.clone(), source: source.clone(), album_mode: true, shuffle: true };
-    let actions = row().gap(8.0).items_center()
-        .child(play_buttons(v, &source, play, shuf))
-        .child({
-            let (on, aid, l) = (crate::interact::is_fav(crate::interact::Fav::Album, &id.to_string()), id.to_string(), title.clone());
-            header_btn("album-fav", "Favorite album", if on { "Added" } else { "Add" }, if on { G::HeartFilled } else { G::Heart }, on)
-                .on_press(move |_: &mut App| crate::interact::toggle_fav(crate::interact::Fav::Album, aid.clone(), l.clone(), crate::interact::Say::Nothing))
-        })
-        .child(header_btn("album-share", "Share album", "Share", G::Share, false).on_press_tx(move |_: &mut App, tx: &mut Tx| {
-            tx.copy_rich(rune::ClipboardContent::new(format!("https://tidal.com/album/{id}")));
-            crate::interact::toast("Copied share link to clipboard".into(), crate::interact::Kind::Success);
-        }))
 /// Under an album's title (AlbumView's header): the "ALBUM" eyebrow, the main artist's picture
 /// beside the artists, "N TRACKS (h:mm:ss)", and the year with the AI and quality badges.
 fn album_sub(a: &Value, tracks: &[Value]) -> El {
@@ -1304,6 +1279,36 @@ fn album_footer(a: &Value, tracks: &[Value], copyright: Option<&str>) -> El {
         });
         if vol > 0 {
             c = c.child(heading(&format!("Volume {vol}"), 15.0).pt(if vol > 1 { 8.0 } else { 0.0 }));
+pub(crate) fn play_buttons(v: &View, source: &Value, play: Cmd, shuffle: Cmd) -> El {
+    let label = play_label(v, source);
+    let toggle = label != "Play";
+    row().gap(8.0).items_center()
+        .child(button::<App>("hero-play", label, Some(if label == "Pause" { G::Pause } else { G::Play }), true).on_press(move |_: &mut App| {
+            if toggle { controller::send(Cmd::TogglePlay) } else { controller::send(play.clone()) }
+        }))
+        .child(button::<App>("hero-shuffle", "Shuffle", Some(G::Shuffle), false).on_press(move |_: &mut App| controller::send(shuffle.clone())))
+}
+
+fn album(id: u64, v: &View) -> El {
+    let p = match ready_or(Key::Album(id)) { Ok(v) => v, Err(e) => return e };
+    let page = &p["page"];
+    let a = &page["album"];
+    let title = a["title"].as_str().unwrap_or("").to_string();
+    let tracks: Vec<Value> = page["tracks"].as_array().cloned().unwrap_or_default();
+    let source = json!({"type": "album", "id": id, "name": title});
+    let play = Cmd::PlayCollection { tracks: tracks.clone(), source: source.clone(), album_mode: true, shuffle: false };
+    let shuf = Cmd::PlayCollection { tracks: tracks.clone(), source: source.clone(), album_mode: true, shuffle: true };
+    let actions = row().gap(8.0).items_center()
+        .child(play_buttons(v, &source, play, shuf))
+        .child({
+            let (on, aid, l) = (crate::interact::is_fav(crate::interact::Fav::Album, &id.to_string()), id.to_string(), title.clone());
+            header_btn("album-fav", "Favorite album", if on { "Added" } else { "Add" }, if on { G::HeartFilled } else { G::Heart }, on)
+                .on_press(move |_: &mut App| crate::interact::toggle_fav(crate::interact::Fav::Album, aid.clone(), l.clone(), crate::interact::Say::Nothing))
+        })
+        .child(header_btn("album-share", "Share album", "Share", G::Share, false).on_press_tx(move |_: &mut App, tx: &mut Tx| {
+            tx.copy_rich(rune::ClipboardContent::new(format!("https://tidal.com/album/{id}")));
+            crate::interact::toast("Copied share link to clipboard".into(), crate::interact::Kind::Success);
+        }))
         }
         c = c.child(rows);
     }
@@ -1377,8 +1382,9 @@ fn artist(id: u64, v: &View) -> El {
             header_btn("artist-more", "More", "More", G::More, false)
                 .on_press(move |s: &mut App| crate::interact::open_media(s, item.clone(), crate::interact::Anchor::Below("artist-more".into())))
         });
-    let fans = p["header"]["followersAmount"].as_u64().unwrap_or(0);
-    let mut c = col().w_full().gap(18.0).child(hero(&name, true, &format!("{fans} fans"), id, true, crate::art::artist_picture(a, 180.0), actions));
+    // ArtistPage: "48.2K fans", and no line at all for none
+    let fans = crate::formats::fans(p["header"]["followersAmount"].as_u64().unwrap_or(0)).unwrap_or_default();
+    let mut c = col().w_full().gap(18.0).child(hero(&name, true, &fans, id, true, crate::art::artist_picture(a, 180.0), actions));
     // ArtistPage: two clamped lines of the bio without its markup, and "Read more" for the
     // whole of it, links and all, in a dialog.
     if let Some(bio) = p["header"]["biography"]["text"].as_str().filter(|b| !b.trim().is_empty()) {
@@ -1416,6 +1422,7 @@ fn artist(id: u64, v: &View) -> El {
                 let (all, an) = (tracks.clone(), name.clone());
                 let tid = tr["id"].as_u64();
                 rows = rows.child(track_row(format!("ar-s{si}-t{i}"), i + 1, tr, move |_: &mut App| {
+    let mut shown_any = false;
                     if top {
                         // The top tracks: the artist source from the clicked one, the rest of
                         // the artist's top tracks paged in behind it.
@@ -1432,7 +1439,7 @@ fn artist(id: u64, v: &View) -> El {
             let vids: Vec<Value> = items.iter().filter(|it| data::kind(it) == "VIDEO").cloned().collect();
             c = c.child(grid(crate::video_ui::video_cards(&format!("ar-s{si}"), &vids, json!({"type": "artist", "id": id, "name": name}))));
         } else {
-            c = c.child(grid(cards_for(&format!("ar-s{si}"), &items)));
+            c = c.child(grid(cards_with(&format!("ar-s{si}"), &items, move |it| artist_card_sub(it, id))));
         }
     }
     c
@@ -1462,10 +1469,29 @@ fn search_page(s: &App, q: &str) -> El {
         .child(tab("st-tracks", "Tracks", SearchTab::Tracks))
         .child(tab("st-vid", "Videos", SearchTab::Videos))
         .child(tab("st-pl", "Playlists", SearchTab::Playlists))
+        shown_any = true;
+    }
+    if !shown_any {
+        // ArtistPage's empty state
+        c = c.child(col().w_full().gap(6.0).py(40.0).items_center()
+            .child(glyph(G::User, 40.0, white(0.25)))
+            .child(text("No content available").font(t(17.0, 650.0)).color(white(0.9)))
+            .child(ui::empty("This artist doesn't have any tracks or albums yet.")));
         .child(tab("st-al", "Albums", SearchTab::Albums))
         .child(tab("st-ar", "Artists", SearchTab::Artists));
     let tracks: Vec<Value> = v["tracks"].as_array().cloned().unwrap_or_default();
     let typed = |k: &str, arr: &str| -> Vec<Value> { v[arr].as_array().cloned().unwrap_or_default().into_iter().map(|d| json!({"type": k, "data": d})).collect() };
+/// A card's subtitle on an artist's pages: an album's year and kind, or its artists when this
+/// artist only appears on it (getArtistAlbumSubtitle); other items as everywhere.
+pub(crate) fn artist_card_sub(it: &Value, artist: u64) -> String {
+    if data::kind(it) == "ALBUM"
+        && let Some(s) = crate::formats::artist_album_subtitle(data::data(it), artist)
+    {
+        return s;
+    }
+    data::artist_of(it)
+}
+
     let (albums, artists, playlists) = (typed("ALBUM", "albums"), typed("ARTIST", "artists"), typed("PLAYLIST", "playlists"));
     let videos: Vec<Value> = v["videos"]["items"].as_array().or(v["videos"].as_array()).cloned().unwrap_or_default();
     let video_source = json!({"type": "search", "id": q, "name": format!("Search: {q}")});
