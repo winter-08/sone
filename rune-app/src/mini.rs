@@ -277,14 +277,8 @@ fn compact(v: &View, w: f32, h: f32) -> El {
     if h >= 104.0 {
         meta = meta.child(artist(v, 13.0));
     }
-    if let Some(src) = v.playing_from.as_ref().filter(|_| seek) {
-        // show-source opens the collection the context queue came from
-        let page = v.context_source.as_ref().or(v.source.as_ref()).filter(|s| crate::queue_ui::navigable(s)).and_then(crate::queue_ui::source_page);
-        meta = meta.child(
-            row().mt(2.0).gap(4.0).min_w(0.0)
-                .child(text("Playing from").font(t(12.0, 400.0)).color(white(0.4)))
-                .child(col().shrink().min_w(0.0).child(link(text(src.clone()).font(t(12.0, 400.0)).color(white(0.5)).truncate(), "mini-source", src.clone(), page))),
-        );
+    if let Some(from) = playing_from(v).filter(|_| seek) {
+        meta = meta.child(from);
     }
     let mut top = row().grow(1.0).min_h(0.0).gap(12.0).child(cover(v, top_h.min(96.0)).self_center()).child(meta);
     if heart_top {
@@ -312,7 +306,9 @@ fn compact(v: &View, w: f32, h: f32) -> El {
 }
 
 fn full(s: &Mini, v: &View, w: f32, h: f32) -> El {
-    let sz = (w - 16.0).min(h - 76.0);
+    // (React's full tier names the collection under the artist too)
+    let from = playing_from(v);
+    let sz = (w - 16.0).min(h - if from.is_some() { 94.0 } else { 76.0 });
     let small = h < 330.0 || w < 230.0;
     let (play_size, side, side_glyph, gap) = if small { (38.0, 30.0, 18.0, 6.0) } else { (52.0, 40.0, 22.0, 14.0) };
     let mut seek = row().pin(Some(10.0), None, Some(10.0), Some(6.0)).gap(6.0).items_center();
@@ -338,7 +334,7 @@ fn full(s: &Mini, v: &View, w: f32, h: f32) -> El {
         .px(2.0)
         .gap(8.0)
         .items_center()
-        .child(col().grow(1.0).min_w(0.0).gap(2.0).child(title(v, 14.0)).child(artist(v, 12.0)))
+        .child(col().grow(1.0).min_w(0.0).gap(2.0).child(title(v, 14.0)).child(artist(v, 12.0)).children(from))
         .child(heart(v));
     col().padding(8.0).gap(10.0).items_center().justify_center().child(art).child(meta)
 }
@@ -387,6 +383,20 @@ fn link(e: El, key: &str, label: String, page: Option<crate::views::Page>) -> El
             crate::shell::raise();
         })
         .child(e.group_color(white(1.0)).a11y_hidden())
+}
+
+/// "Playing from" and the collection: the one the context queue came from, else the playing
+/// source, for both the name and where it leads (useMiniplayerEmitter's `contextSource ||
+/// playbackSource`). A source with no page (a search, a radio) is plain text.
+fn playing_from(v: &View) -> Option<El> {
+    let src = v.context_source.as_ref().or(v.source.as_ref()).filter(|s| !s.name.is_empty())?;
+    let page = Some(src).filter(|s| crate::queue_ui::navigable(s)).and_then(crate::queue_ui::source_page);
+    let name = src.name.clone();
+    Some(
+        row().mt(2.0).gap(4.0).min_w(0.0)
+            .child(text("Playing from").font(t(12.0, 400.0)).color(white(0.4)))
+            .child(col().shrink().min_w(0.0).child(link(text(name.clone()).font(t(12.0, 400.0)).color(white(0.5)).truncate(), "mini-source", name, page))),
+    )
 }
 
 fn title(v: &View, size: f32) -> El {
