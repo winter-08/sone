@@ -48,8 +48,10 @@ the cover's colour. A drag grip and a close button appear on hover.
 - **Console** (cover + signal path, lyrics and queue at once): the densest and the least
   lean-back; the drawer already does queue and lyrics beside the page.
 
-Not carried over from React: the 3D cover tilt (Rune has no perspective transform) and true OS
-fullscreen (Rune has none; the player fills the window, as the video player does).
+Not carried over from React: the 3D cover tilt (Rune has no perspective transform). True OS
+fullscreen, first left out because Rune had none, came with the pinned Rune's
+`Tx::toggle_full_screen`: the window goes full screen while the player (or a video's Fullscreen)
+is up and returns as it was, maximised or not, when it closes (2026-11-13).
 
 ## Motion spike
 

@@ -12,7 +12,8 @@
 //! fx.rs (off with `SONE_FX=0`) adds the open's overshoot, the pause shrink, the directional
 //! track change, the heart pop and the bar's rise.
 //!
-//! Rune has no OS fullscreen, so "full screen" fills the window, as the video player does.
+//! The window goes OS full screen while it's open (Tx::toggle_full_screen), as React's
+//! MaximizedPlayer calls setFullscreen, and back as it was when it closes.
 
 use crate::controller::{self, Cmd, QItem, View};
 use crate::data::{self, Key};
@@ -60,6 +61,9 @@ pub struct Full {
     pop: Option<(u64, u32)>,
     /// What MPRIS was last told (§8.3: pushed once, then on every change).
     told_mpris: Option<bool>,
+    /// The window is OS full screen for the player (React's setFullscreen on mount and
+    /// unmount); `tick` keeps it in step with `open`.
+    os_full: bool,
 }
 
 /// The bar shows an empty slot where its cover was while the player is up.
@@ -120,7 +124,7 @@ pub fn wake(s: &mut App) {
 /// From the window's poll: MPRIS asks, the player closes when nothing (or a video) plays, and
 /// the controls hide when the pointer has rested. Returns whether anything the view draws
 /// changed, and when to look again.
-pub fn tick(s: &mut App) -> (bool, Option<Duration>) {
+pub fn tick(s: &mut App, tx: &mut Tx) -> (bool, Option<Duration>) {
     let track = controller::now_playing().0;
     let (is_video, _, _) = controller::video_status();
     let mut changed = std::mem::take(&mut s.nav.full.dirty);
@@ -142,6 +146,13 @@ pub fn tick(s: &mut App) -> (bool, Option<Duration>) {
         changed = true;
     }
     let f = &mut s.nav.full;
+    // The window goes OS full screen with the player and comes back with it, however it
+    // opened or closed (the cover, MPRIS, Escape, a video taking over). Leaving full screen
+    // puts the window back as it was, maximised or not.
+    if f.os_full != f.open {
+        f.os_full = f.open;
+        tx.toggle_full_screen();
+    }
     if f.told_mpris != Some(f.open) {
         f.told_mpris = Some(f.open);
         if let Err(e) = tauri_app_lib::commands::playback::update_mpris_fullscreen(crate::host().state::<tauri_app_lib::AppState>(), f.open) {

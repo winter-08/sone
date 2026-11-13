@@ -139,7 +139,7 @@ fn poll(s: &mut App, t: f64, tx: &mut Tx) -> bool {
         tx.wake_after(next + Duration::from_millis(5));
     }
     // The full-screen player: closes with nothing playing, follows MPRIS, fades its controls.
-    let (full_changed, full_next) = full_ui::tick(s);
+    let (full_changed, full_next) = full_ui::tick(s, tx);
     if let Some(next) = full_next.filter(|_| s.shown) {
         tx.wake_after(next + Duration::from_millis(5));
     }
