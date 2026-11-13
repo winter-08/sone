@@ -128,6 +128,16 @@ fn favs_changed() {
 pub fn favorites_loaded() -> bool {
     FAVS_LOADED.load(Ordering::Relaxed)
 }
+
+/// Drop the account's favourite ids and recently used playlists (logging out); the next
+/// sign-in loads its own.
+pub fn reset_favorites() {
+    *FAVS.lock().unwrap() = Favs::default();
+    FAVS_LOADED.store(false, Ordering::Relaxed);
+    FAVS_REQUESTED.store(false, Ordering::Relaxed);
+    RECENT.lock().unwrap().clear();
+    bump();
+}
 static FAVS_LOADED: AtomicBool = AtomicBool::new(false);
 
 pub fn is_fav(k: Fav, id: &str) -> bool {

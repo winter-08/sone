@@ -64,9 +64,49 @@ pub fn load_setting_fields(s: &mut App) {
     }
 }
 
+/// Whether the account was signed in at the last poll: a sign-out (Log out) resets the window.
+static WAS_SIGNED_IN: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// After Log out (React useAuth.logout): back to Home with no history, every menu, dialog and
+/// field of the account closed or emptied, so the next sign-in starts clean.
+fn reset_after_logout(s: &mut App) {
+    use crate::views::{Nav, Page};
+    // Here rather than in the controller: emptying the catalogue while a frame is being built
+    // would change what that frame's regions read under them.
+    crate::data::clear();
+    crate::interact::reset_favorites();
+    let fresh = Nav::default();
+    let n = &mut s.nav;
+    if *rune::Tracked::untracked(&n.page) != Page::Home {
+        *n.page = Page::Home;
+    }
+    if !rune::Tracked::untracked(&n.back).is_empty() {
+        n.back.clear();
+    }
+    if !rune::Tracked::untracked(&n.fwd).is_empty() {
+        n.fwd.clear();
+    }
+    n.search = fresh.search;
+    n.filter = fresh.filter;
+    n.search_open = false;
+    n.search_sel = None;
+    n.menu_open = false;
+    n.settings_open = false;
+    n.dialog = None;
+    n.ctx = None;
+    n.create = None;
+    n.pkce_paste = fresh.pkce_paste;
+    n.lb_token = fresh.lb_token;
+    n.lb_status = None;
+}
+
 /// Run the debounced saves that are due (called from App::poll).
 pub fn flush_settings(s: &mut App) {
     use sone_host_shim::Manager;
+    let signed_in = controller::signed_in();
+    if WAS_SIGNED_IN.swap(signed_in, std::sync::atomic::Ordering::Relaxed) && !signed_in {
+        reset_after_logout(s);
+    }
     let now = std::time::Instant::now();
     if s.nav.discord_due.is_some_and(|t| now >= t) {
         s.nav.discord_due = None;

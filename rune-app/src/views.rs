@@ -1398,7 +1398,7 @@ pub fn account_menu(s: &App, v: &View) -> Option<El> {
         }))
         .child(menu_item("am-shortcuts", "Shortcuts", None, |s: &mut App| s.nav.dialog = Some(Dialog::Shortcuts)))
         .child(menu_item("am-about", "About", None, |s: &mut App| s.nav.dialog = Some(Dialog::About)))
-        .child(menu_item("am-logout", "Log out", None, |_: &mut App| {}));
+        .child(menu_item("am-logout", "Log out", None, |_: &mut App| controller::send(Cmd::Logout)));
     // A modal layer over the window: the page is inert while the menu is open, and a press
     // anywhere outside the menu closes it.
     Some(el().key("am-layer").pin(Some(0.0), Some(0.0), Some(0.0), Some(0.0))

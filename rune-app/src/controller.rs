@@ -129,6 +129,9 @@ pub enum Cmd {
     /// A suggested track's row: append it to the manual queue tagged with its album as the
     /// source it plays from (addToQueue(track, albumSource)).
     QueueTrack(Value),
+    /// Log out (React useAuth.logout): the backend's logout, then every trace of the account
+    /// and its playback is dropped and the sign-in screen shows.
+    Logout,
 }
 
 /// The current item when it is a music video (React currentVideoAtom).
@@ -1156,6 +1159,7 @@ impl Player {
             Cmd::SetMaxQuality(q) => {
                 let _ = utility::set_max_quality(self.state(), q);
             }
+            Cmd::Logout => self.logout().await,
             Cmd::QueueIds(ids) => self.fetch_tracks(ids, "queue", true),
             Cmd::QueueItems { items, next } => {
                 let stamped: Vec<Value> = items.into_iter().map(|t| self.stamp(normalize(t))).collect();
@@ -1948,6 +1952,39 @@ impl Player {
         self.original = None;
         self.playback_source = None;
         self.context_source = None;
+    }
+
+    /// React useAuth.logout: playback intent is cleared first (so an in-flight track event is
+    /// ignored), then the backend logs out (it stops playback, purges scrobblers, MCP and the
+    /// session, and clears the caches), then everything the account left in the UI goes and the
+    /// sign-in screen shows.
+    async fn logout(&mut self) {
+        self.generation += 1;
+        self.playing = false;
+        if self.current_is_video() {
+            crate::video::close();
+        }
+        self.set_current(None);
+        self.clear_queue();
+        if let Err(e) = auth::logout(self.state()).await {
+            log::warn!("[rune] logout: {e}");
+        }
+        self.history.clear();
+        self.stream_info = None;
+        self.user_paused = false;
+        self.pending_next = None;
+        self.gapless_failed = None;
+        self.autoplay_ids.clear();
+        self.fail_count = 0;
+        self.login_seq += 1;
+        self.login = Login::Idle;
+        self.login_creds = None;
+        self.pkce = None;
+        self.signed_in = false;
+        // The saved queue goes too (React removes sone.playback-state.v1).
+        self.save_snapshot();
+        // (The window empties the catalogue and favourites when it sees the sign-out:
+        // settings::flush_settings, on its own thread, between frames.)
     }
 
     // -------------------------------------------------------------- §3 advancing
