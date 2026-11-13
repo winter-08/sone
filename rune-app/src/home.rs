@@ -6,7 +6,10 @@
 //! - `SHORTCUT_LIST`: the quick-access grid, Loved Tracks first, then up to seven shortcuts,
 //!   three columns at 1024 pt and up, two from 640.
 //! - `COMPACT_GRID_CARD` (and "Recently played"): compact rows, three per column, filled down
-//!   then across, as many 288 pt columns as fit, up to three (useGridColumns).
+//!   then across, as many 288 pt columns as fit, up to three (useGridColumns); a row opens its
+//!   item (a track, its album) and its cover's play button plays it.
+//! - `TRACK_LIST` (unless its items are of mixed kinds): the same grid of track rows, which play
+//!   the section from them; the title opens the album, the artists their pages.
 //! - everything else: one row of cards that scrolls sideways, with previous/next arrows and
 //!   "View all" (CardScrollSection), the cards sized so a whole number fit the width.
 //!   `MAGAZINE` items (promotions) open what they point at, or the article in the browser.
@@ -23,6 +26,7 @@ use rune::{El, Tx, col, el, row, spacer, text};
 use serde_json::{Value, json};
 use std::cell::RefCell;
 use std::collections::HashMap;
+use std::rc::Rc;
 
 const CARD_GAP: f32 = 16.0;
 const MIN_CARD: f32 = 170.0;
@@ -190,8 +194,13 @@ pub(crate) fn section(si: usize, sec: &Value, w: f32) -> Option<El> {
         return Some(shortcuts(&items, w));
     }
     let view_all = sec["apiPath"].as_str().filter(|p| !p.is_empty() && sec["hasMore"].as_bool() != Some(false)).map(str::to_string);
-    if kind == "COMPACT_GRID_CARD" || title == "Recently played" {
-        return Some(col().w_full().gap(14.0).child(header(si, &title, sec.get("header").filter(|h| h.is_object()), view_all, false)).child(compact_grid(si, &title, &items, w)));
+    let compact = kind == "COMPACT_GRID_CARD" || title == "Recently played";
+    // HomeSection: the backend types a row from its first item, so a row of mixed kinds can come
+    // as TRACK_LIST; it shows as cards then (a track list would hand albums to the player).
+    let mixed = items.iter().map(data::kind).filter(|k| !k.is_empty()).collect::<std::collections::HashSet<_>>().len() > 1;
+    if compact || (kind == "TRACK_LIST" && !mixed) {
+        let grid = if compact { Grid::Compact } else { Grid::Tracks };
+        return Some(col().w_full().gap(14.0).child(header(si, &title, None, view_all, false)).child(row_grid(si, &title, &items, w, grid)));
     }
     let cards = card_row(si, &title, &items, w)?;
     Some(col().w_full().gap(14.0).child(header(si, &title, sec.get("header").filter(|h| h.is_object()), view_all, true)).child(cards))
@@ -319,64 +328,172 @@ fn play_from(title: &str, tracks: &[Value], id: u64) {
     controller::send(Cmd::PlayFrom { tracks: tracks.to_vec(), index: idx, source: json!({"type": "home-section", "id": title, "name": title}), album_mode: false });
 }
 
-/// Compact rows, three to a column, filled down then across (useGridColumns + fitRows).
-fn compact_grid(si: usize, title: &str, items: &[Value], w: f32) -> El {
+/// Which of HomeSection's row grids a section is.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Grid {
+    /// TRACK_LIST (TrackListSection): a track per row; the row plays the section from it, its
+    /// title opens the album.
+    Tracks,
+    /// COMPACT_GRID_CARD and "Recently played" (CompactGridSection): anything per row; the row
+    /// opens it (a track, its album) and its cover's play button plays it.
+    Compact,
+}
+
+/// Rows three to a column, filled down then across, as many 288 pt columns as fit up to three,
+/// and only as many items as those hold (useGridColumns + fitRows).
+fn row_grid(si: usize, title: &str, items: &[Value], w: f32, grid: Grid) -> El {
     const ROWS: usize = 3;
     const MIN_W: f32 = 288.0;
     const GAP: f32 = 24.0;
     let cols = (((w + GAP) / (MIN_W + GAP)).floor() as usize).clamp(1, 3);
     let cw = ((w - (cols as f32 - 1.0) * GAP) / cols as f32).floor();
-    let tracks = section_tracks(items);
-    let mut grid = row().w_full().gap(GAP).items_start();
+    let shown = &items[..items.len().min(cols * ROWS)];
+    // What a track plays among: TrackListSection plays the section's tracks (every one),
+    // CompactGridSection the tracks it shows.
+    let tracks = section_tracks(if grid == Grid::Tracks { items } else { shown });
+    let mut out = row().w_full().gap(GAP).items_start();
     for c in 0..cols {
         let mut column = col().w(cw).gap(4.0);
-        for (r, it) in items.iter().enumerate().skip(c * ROWS).take(ROWS) {
-            let d = data::data(it);
-            let kind = data::kind(it);
-            let sub = match kind.as_str() {
-                "ARTIST" => "Artist".to_string(),
-                _ if is_my_tracks(it) => "Collection".to_string(),
-                _ => data::artist_of(it),
-            };
-            let name = data::name(it);
-            // HomeSection: a track the content filter blocks (or AI content anything else, with
-            // AI off) dims; a blocked track opens its album, if it has one, instead of playing.
-            let restricted = if kind == "TRACK" { crate::content::blocked(it) } else { !crate::content::prefs().1 && d["ai"].as_bool() == Some(true) };
-            let mut words = row().min_w(0.0).gap(6.0).items_center().child(text(name.clone()).font(t(14.0, 500.0)).color(white(0.95)).truncate().shrink().a11y_hidden());
-            if let Some(b) = crate::content::badges(kind == "TRACK" && d["explicit"].as_bool() == Some(true), !is_my_tracks(it) && d["ai"].as_bool() == Some(true)) {
-                words = words.child(b);
-            }
-            let mut line = theme::focusable_row(row().key(format!("home-{si}-c{r}")).role("button").label(name.clone())).w_full().h(56.0).px(8.0).gap(12.0).radius(6.0).items_center()
-                .hover(white(0.06)).cursor(rune::Cursor::Pointer)
-                .child(thumb(it, 40.0, 4.0))
-                .child(col().shrink().min_w(0.0).gap(2.0)
-                    .child(words)
-                    .child(text(sub).font(t(12.0, 400.0)).color(white(0.55)).truncate().a11y_hidden()));
-            if restricted {
-                line = line.opacity(0.5);
-            }
-            if kind == "TRACK" && restricted {
-                if let Some(album) = d["album"]["id"].as_u64() {
-                    line = line.on_press(move |s: &mut App| views::go(s, views::Page::Album(album)));
-                }
-            } else if kind == "TRACK" {
-                let (id, tr, ttl) = (d["id"].as_u64().unwrap_or(0), tracks.clone(), title.to_string());
-                let track = d.clone();
-                line = line.on_press(move |_: &mut App| play_from(&ttl, &tr, id))
-                    .on_secondary_press(move |s: &mut App, p, _| interact::open_track(s, track.clone(), None, Anchor::Point(p.x, p.y)));
-            } else {
-                let it2 = it.clone();
-                line = line.on_press(move |s: &mut App| open_item(s, &it2));
-                if interact::Media::of(it).is_some() {
-                    let it3 = it.clone();
-                    line = line.on_secondary_press(move |s: &mut App, p, _| interact::open_media(s, it3.clone(), Anchor::Point(p.x, p.y)));
-                }
-            }
-            column = column.child(line);
+        for (r, it) in shown.iter().enumerate().skip(c * ROWS).take(ROWS) {
+            column = column.child(grid_row(format!("home-{si}-c{r}"), it, title, &tracks, grid));
         }
-        grid = grid.child(column);
+        out = out.child(column);
     }
-    grid
+    out
+}
+
+/// One row of a [`row_grid`]: the cover (with a play button on hover), the title and its
+/// badges, the artists or what the item is, and More options.
+///
+/// HomeSection's rows are bare elements with an unnamed More button; here the row is the press
+/// target for the pointer, and its parts are what assistive technology and the keyboard reach:
+/// "Play <title>" on the cover, the title as a link (to the album for a track), each artist as
+/// a link, and "More options".
+fn grid_row(key: String, it: &Value, title: &str, tracks: &[Value], grid: Grid) -> El {
+    let d = data::data(it).clone();
+    let kind = data::kind(it);
+    let my = is_my_tracks(it);
+    let is_track = !my && (kind == "TRACK" || (grid == Grid::Tracks && kind.is_empty()));
+    let name = if my { "Loved Tracks".to_string() } else { data::name(it) };
+    let id = d["id"].as_u64().unwrap_or(0);
+    let album = d["album"]["id"].as_u64().filter(|_| is_track);
+    // A track the content filter blocks (or, with AI content off, anything AI) dims; a blocked
+    // track in a track list does nothing, in a compact grid it still opens its album.
+    let restricted = !my && if is_track { crate::content::blocked(&d) } else { !crate::content::prefs().1 && d["ai"].as_bool() == Some(true) };
+    let media = (!is_track && !my).then(|| interact::Media::of(it)).flatten();
+    let can_play = !my && !restricted && (is_track || media.is_some());
+    let section = title.to_string();
+    let play: Rc<dyn Fn()> = {
+        let (tr, ttl, item) = (tracks.to_vec(), section.clone(), it.clone());
+        Rc::new(move || match media {
+            Some(m) => interact::play_media(&item, m),
+            None => play_from(&ttl, &tr, id),
+        })
+    };
+
+    // the cover, and on hover the play button over it
+    let mut art = el().size(40.0, 40.0).child(thumb(it, 40.0, 4.0));
+    if can_play {
+        let p = play.clone();
+        art = art.child(theme::focusable(el().key(format!("{key}-play")).role("button").label(format!("Play {name}"))).absolute(0.0, 0.0).size(40.0, 40.0).radius(4.0)
+            .fill(theme::black(0.4)).items_center().justify_center().group_opacity(0.0, 1.0).cursor(rune::Cursor::Pointer)
+            .on_press(move |_: &mut App| p())
+            .child(glyph(G::Play, 14.0, white(1.0))));
+    }
+
+    // the title: a link to its album for a track, else to the item (the row's own action)
+    let opens: Option<Page> = if my { Some(Page::Loved) } else if is_track { album.map(Page::Album) } else { views::item_page(it) };
+    let title_text = text(name.clone()).font(t(14.0, 500.0)).color(white(0.95)).truncate();
+    let title_el = match opens.clone() {
+        Some(p) => theme::focusable(el().key(format!("{key}-title")).role("link").label(name.clone())).shrink().min_w(0.0).radius(3.0).hover_group().cursor(rune::Cursor::Pointer)
+            .on_press(move |s: &mut App| go(s, p.clone()))
+            .child(title_text.group_color(white(1.0)).a11y_hidden()),
+        None => title_text.shrink(),
+    };
+    let mut words = row().min_w(0.0).gap(6.0).items_center().child(title_el);
+    if let Some(b) = crate::content::badges(is_track && d["explicit"].as_bool() == Some(true), !my && d["ai"].as_bool() == Some(true)) {
+        words = words.child(b);
+    }
+
+    // under it: the artists (links) for a track, else what the item is
+    let artists: Vec<(String, Option<u64>)> = if is_track {
+        let list = d["artists"].as_array().cloned().filter(|a| !a.is_empty()).unwrap_or_else(|| if d["artist"].is_object() { vec![d["artist"].clone()] } else { vec![] });
+        list.iter().filter_map(|a| a["name"].as_str().map(|n| (n.to_string(), a["id"].as_u64()))).collect()
+    } else {
+        vec![]
+    };
+    let sub: El = if !artists.is_empty() {
+        let mut line = row().min_w(0.0).items_center();
+        let last = artists.len() - 1;
+        for (i, (an, aid)) in artists.into_iter().enumerate() {
+            let label = text(an.clone()).font(t(12.0, 400.0)).color(white(0.55)).truncate();
+            line = line.child(match aid {
+                Some(aid) => theme::focusable(el().key(format!("{key}-ar{i}")).role("link").label(an)).shrink().min_w(0.0).radius(3.0).hover_group().cursor(rune::Cursor::Pointer)
+                    .on_press(move |s: &mut App| go(s, Page::Artist(aid)))
+                    .child(label.group_color(white(0.9)).a11y_hidden()),
+                None => label.shrink(),
+            });
+            if i < last {
+                line = line.child(text(", ").font(t(12.0, 400.0)).color(white(0.55)));
+            }
+        }
+        line
+    } else {
+        let what = match kind.as_str() {
+            _ if my => "Collection".to_string(),
+            "ARTIST" => "Artist".to_string(),
+            _ => data::artist_of(it),
+        };
+        text(what).font(t(12.0, 400.0)).color(white(0.55)).truncate()
+    };
+
+    let mut line = row().key(key.clone()).role("presentation").w_full().h(56.0).px(8.0).gap(12.0).radius(6.0).items_center().hover_group()
+        .child(art)
+        .child(col().grow(1.0).shrink().min_w(0.0).gap(2.0).child(words).child(sub));
+    if !my {
+        let mk = format!("{key}-more");
+        let (track, item) = (d.clone(), it.clone());
+        let more = theme::focusable(el().key(mk.clone()).role("button").label("More options")).size(32.0, 32.0).radius(16.0).items_center().justify_center()
+            .press(white(0.14)).cursor(rune::Cursor::Pointer)
+            .on_press(move |s: &mut App| match media {
+                Some(_) => interact::open_media(s, item.clone(), Anchor::Below(mk.clone())),
+                None => interact::open_track(s, track.clone(), None, Anchor::Below(mk.clone())),
+            })
+            .child(glyph(G::More, 16.0, white(0.75)).group_opacity(0.3, 1.0));
+        // (a track list's blocked row has no menu; a media item without a menu kind neither)
+        if !(is_track && restricted && grid == Grid::Tracks) && (is_track || media.is_some()) {
+            line = line.child(more);
+        }
+    }
+    if restricted {
+        line = line.opacity(0.5);
+    }
+    // the row: a track list plays from it, a compact grid opens it
+    let press: Option<Box<dyn Fn(&mut App)>> = match grid {
+        Grid::Tracks if my => Some(Box::new(|s: &mut App| go(s, Page::Loved))),
+        Grid::Tracks if restricted => None,
+        Grid::Tracks => { let p = play.clone(); Some(Box::new(move |_: &mut App| p())) }
+        Grid::Compact if is_track && restricted && album.is_none() => None,
+        Grid::Compact => {
+            let it2 = it.clone();
+            Some(Box::new(move |s: &mut App| match album {
+                Some(a) => go(s, Page::Album(a)),
+                None => open_item(s, &it2),
+            }))
+        }
+    };
+    if let Some(f) = press {
+        line = line.hover(white(0.06)).cursor(rune::Cursor::Pointer).on_press(move |s: &mut App| f(s));
+    }
+    let menu_ok = !my && !(is_track && restricted);
+    if menu_ok && is_track {
+        let track = d.clone();
+        line = line.on_secondary_press(move |s: &mut App, p, _| interact::open_track(s, track.clone(), None, Anchor::Point(p.x, p.y)));
+    } else if menu_ok && media.is_some() {
+        let item = it.clone();
+        line = line.on_secondary_press(move |s: &mut App, p, _| interact::open_media(s, item.clone(), Anchor::Point(p.x, p.y)));
+    }
+    line
 }
 
 /// One sideways-scrolling row of cards, as many whole cards as fit across the width.
