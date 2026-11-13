@@ -110,27 +110,65 @@ pub struct Player {
     pub hide_at: Option<Instant>,
     pub controls: bool,
     pub quality_menu: bool,
+    /// The window is full screen for the video (the OS's, `Tx::toggle_full_screen`, as React's
+    /// `setFullscreen`). Leaving it puts the window back as it was, maximised or not.
     pub fullscreen: bool,
+    /// Full screen was asked for while the video was still starting: it applies when it opens.
+    pub full_pending: bool,
+}
+
+/// Takes the window full screen for the video, or back. Only ever toggled from here, so the
+/// flag and the window agree.
+pub fn set_fullscreen(p: &mut Player, tx: &mut Tx, on: bool) {
+    if p.fullscreen != on {
+        p.fullscreen = on;
+        tx.toggle_full_screen();
+    }
+}
+
+/// The bar's and the drawer's Fullscreen for a video: the player, full screen. A closed (or
+/// restored) video starts again first, and goes full screen as it opens.
+pub fn open_fullscreen(s: &mut App, tx: &mut Tx, open: bool) {
+    let p = &mut s.nav.video;
+    if open {
+        p.expanded = true;
+        set_fullscreen(p, tx, true);
+    } else {
+        p.full_pending = true;
+        controller::send(Cmd::TogglePlay);
+    }
 }
 
 /// From the window's poll: a newly started video opens the player; the controls hide when the
-/// pointer has rested. Returns whether anything the view draws changed, and when to look again.
-pub fn tick(s: &mut App) -> (bool, Option<Duration>) {
+/// pointer has rested; a video that closed takes full screen with it. Returns whether anything
+/// the view draws changed, and when to look again.
+pub fn tick(s: &mut App, tx: &mut Tx) -> (bool, Option<Duration>) {
     let (is_video, session, open) = controller::video_status();
     let p = &mut s.nav.video;
     let mut changed = false;
-    // No video, or it was closed (it ended with nothing after it, or Escape): no player.
+    // No video, or it was closed (it ended with nothing after it, or Escape): no player, and
+    // the window back as it was.
     if !is_video || !open {
         if p.expanded {
             p.expanded = false;
             p.quality_menu = false;
             changed = true;
         }
+        if p.fullscreen {
+            set_fullscreen(p, tx, false);
+            changed = true;
+        }
+        if !is_video {
+            p.full_pending = false;
+        }
         return (changed, None);
     }
     if session != p.seen_session {
         p.seen_session = session;
         p.expanded = true;
+        if std::mem::take(&mut p.full_pending) {
+            set_fullscreen(p, tx, true);
+        }
         p.controls = true;
         p.hide_at = Some(Instant::now() + CONTROLS_IDLE);
         changed = true;
@@ -169,10 +207,7 @@ pub fn minimize(s: &mut App, tx: &mut Tx) {
     let p = &mut s.nav.video;
     p.expanded = false;
     p.quality_menu = false;
-    if p.fullscreen {
-        p.fullscreen = false;
-        tx.toggle_maximized();
-    }
+    set_fullscreen(p, tx, false);
 }
 
 /// Escape and the close path: stop the video and dismiss the player (React closeVideo).
@@ -192,8 +227,7 @@ pub fn on_escape(s: &mut App, tx: &mut Tx) -> bool {
     if p.quality_menu {
         p.quality_menu = false;
     } else if p.fullscreen {
-        p.fullscreen = false;
-        tx.toggle_maximized();
+        set_fullscreen(p, tx, false);
     } else {
         close(s);
     }
@@ -284,8 +318,8 @@ pub fn overlay(s: &App, v: &View) -> Option<El> {
             .child(quality)
             .child(btn("video-fullscreen", if p.fullscreen { "Exit fullscreen" } else { "Fullscreen" }, if p.fullscreen { G::Minimize } else { G::Maximize }, 16.0, white(0.6))
                 .on_press_tx(|s: &mut App, tx: &mut Tx| {
-                    s.nav.video.fullscreen = !s.nav.video.fullscreen;
-                    tx.toggle_maximized();
+                    let on = !s.nav.video.fullscreen;
+                    set_fullscreen(&mut s.nav.video, tx, on);
                 })));
     let bottom = col().key("video-bottom").pin(Some(0.0), None, Some(0.0), Some(0.0)).px(24.0).pb(20.0).pt(48.0)
         .linear_gradient(0.0, [(0.0, theme::black(0.7)), (1.0, theme::black(0.0))])

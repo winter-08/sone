@@ -134,7 +134,7 @@ fn poll(s: &mut App, t: f64, tx: &mut Tx) -> bool {
     }
     interact::announce_track(tx);
     // The video player: open it for a new video, fade its controls when the pointer rests.
-    let (video_changed, video_next) = video_ui::tick(s);
+    let (video_changed, video_next) = video_ui::tick(s, tx);
     if let Some(next) = video_next.filter(|_| s.shown) {
         tx.wake_after(next + Duration::from_millis(5));
     }

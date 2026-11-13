@@ -1283,16 +1283,7 @@ pub fn bar_extras(v: &View, shell: Shell, drawer: Option<Drawer>) -> El {
     // cover instead (bar_cover_action).
     if v.video.is_some() {
         let open = v.video_open;
-        r = r.child(icon::<App>("full", "Fullscreen player", G::Maximize).on_press_tx(move |s: &mut App, tx: &mut Tx| {
-            if !open {
-                controller::send(Cmd::TogglePlay);
-            }
-            s.nav.video.expanded = true;
-            if !s.nav.video.fullscreen {
-                s.nav.video.fullscreen = true;
-                tx.toggle_maximized();
-            }
-        }));
+        r = r.child(icon::<App>("full", "Fullscreen player", G::Maximize).on_press_tx(move |s: &mut App, tx: &mut Tx| crate::video_ui::open_fullscreen(s, tx, open)));
     }
     r
 }
@@ -1997,15 +1988,11 @@ pub fn drawer(s: &App, v: &View, shell: Shell) -> Option<El> {
         Drawer::Credits => credits(v),
     };
     // NowPlayingDrawer's corner: the full-screen player (or the video, maximised), and close.
-    let is_video = v.video.is_some();
+    let (is_video, video_open) = (v.video.is_some(), v.video_open);
     let corner = row().gap(2.0).items_center()
         .child(icon::<App>("dr-full", if is_video { "Fullscreen video" } else { "Fullscreen player" }, G::Maximize).on_press_tx(move |s: &mut App, tx: &mut Tx| {
             if is_video {
-                s.nav.video.expanded = true;
-                if !s.nav.video.fullscreen {
-                    s.nav.video.fullscreen = true;
-                    tx.toggle_maximized();
-                }
+                crate::video_ui::open_fullscreen(s, tx, video_open);
             } else if controller::now_playing().0.is_some() {
                 crate::full_ui::open(s);
             }
