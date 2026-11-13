@@ -626,6 +626,9 @@ pub struct Shell {
     /// The drawer takes a column of its own; otherwise it slides over the page from the right.
     pub drawer_docked: bool,
     pub drawer_w: f32,
+    /// A wide window's docked drawer also gets NowPlayingDrawer's cover column, this wide, on
+    /// the tabs' left (0: none; the tabs' header then shows a small cover instead).
+    pub drawer_cover: f32,
     /// Room in the player bar for the "playing from" source and the quality badge.
     pub bar_source: bool,
     pub bar_badge: bool,
@@ -638,7 +641,10 @@ impl Shell {
         let sidebar_w = if w >= 860.0 { 280.0 } else { 232.0 };
         let drawer_docked = w >= sidebar_w + 360.0 + 520.0;
         let drawer_w = if drawer_docked { 360.0 } else { (w - sidebar_w - 48.0).clamp(240.0, 360.0) };
-        Shell { sidebar_w, drawer_docked, drawer_w, bar_source: w >= 1300.0, bar_badge: w >= 1150.0 }
+        // (in steps, so a resize re-runs the view only at the bands; the page keeps ~640 pt)
+        let room = w - sidebar_w - 360.0 - 640.0;
+        let drawer_cover = [460.0, 380.0, 300.0].into_iter().find(|c| room >= *c).unwrap_or(0.0);
+        Shell { sidebar_w, drawer_docked, drawer_w, drawer_cover, bar_source: w >= 1300.0, bar_badge: w >= 1150.0 }
     }
 }
 
@@ -2026,24 +2032,55 @@ pub fn drawer(s: &App, v: &View, shell: Shell) -> Option<El> {
         }))
         .child(icon::<App>("dr-close", "Close now playing panel", G::Close).on_press(|s: &mut App| *s.nav.drawer = None));
     let mut head = col().w_full().gap(10.0).child(row().w_full().gap(8.0).items_start().child(tabs.shrink()).child(spacer()).child(corner));
+    let wide = shell.drawer_docked && shell.drawer_cover > 0.0;
+    let mut cover_col = None;
     if let Some(cur) = &v.current {
-        let mut title = row().w_full().gap(8.0).items_center().child(heading(&cur.title, 16.0).truncate().shrink());
+        let mut title = row().gap(8.0).items_center().min_w(0.0).child(heading(&cur.title, if wide { 22.0 } else { 16.0 }).truncate().shrink());
         if let Some(b) = crate::content::badges(cur.explicit, cur.ai) {
             title = title.child(b);
         }
-        head = head.child(title);
+        let artist = text(v.artist.clone()).font(t(if wide { 15.0 } else { 12.0 }, 400.0)).color(white(0.55)).truncate();
+        if wide {
+            // NowPlayingDrawer's left column: the cover as large as the column allows, the
+            // title and artist centred under it.
+            let side = shell.drawer_cover - 48.0;
+            // (the Afterglow tile until the picture is in, as every cover)
+            let art = ui::with_image(ui::tile(ui::hue(Some(cur.id)), side, cur.id, 8.0), crate::art::cover(cur.cover.as_deref(), side), side, 8.0)
+                .key("dr-cover").shadow(0.0, 24.0, theme::black(0.35));
+            cover_col = Some(col().w(shell.drawer_cover).h_full().min_h(0.0).padding(24.0).gap(20.0).items_center().justify_center().clip_rounded(0.0)
+                .child(art)
+                .child(col().w_full().gap(4.0).items_center().child(title.max_w(shell.drawer_cover - 48.0)).child(artist.max_w(shell.drawer_cover - 48.0))));
+        } else {
+            // the narrower panel: a small cover beside the title and artist
+            let cover = ui::with_image(ui::tile(ui::hue(Some(cur.id)), 52.0, cur.id, 6.0), crate::art::cover(cur.cover.as_deref(), 52.0), 52.0, 6.0);
+            head = head.child(row().w_full().gap(12.0).items_center().child(cover)
+                .child(col().grow(1.0).min_w(0.0).gap(3.0).child(title).child(artist)));
+        }
     }
     // Docked, a column beside the page; in a narrow window (Shell), a sheet over the page's
     // right edge. Either way it starts under the header, which keeps the window controls.
-    let d = col().key("drawer").role("complementary").label("Now playing panel").w(shell.drawer_w);
+    // With the cover column, the landmark is the row holding both (below); the tabs are its
+    // right column.
+    let d = if wide { col().w(shell.drawer_w) } else { col().key("drawer").role("complementary").label("Now playing panel").w(shell.drawer_w) };
     let d = if shell.drawer_docked { d.h_full() } else { d.pin(None, Some(0.0), Some(0.0), Some(0.0)).border(1.0, white(0.06)).shadow(0.0, 32.0, theme::black(0.45)) };
+    // The album's colour washing down from the top (React's overlayGradient: vibrantColor at
+    // 0.28, clear by 90%), else the cover's own most vivid colour.
+    let tint = v.current.as_ref().and_then(|c| {
+        c.track["album"]["vibrantColor"].as_str().and_then(theme::hex_oklch).map(|(l, c, h)| rune::oklch(l, c, h))
+            .or_else(|| crate::art::cover_color(c.cover.as_deref()).filter(|k| k.c >= 0.03).map(|k| rune::oklch(k.l, k.c, k.h)))
+    });
+    let wash = move |e: El| match tint {
+        Some(c) => e.linear_gradient(std::f32::consts::PI, [(0.0, c.alpha(0.28)), (0.9, c.alpha(0.0))]),
+        None => e,
+    };
     let mut scroller = col().grow(1.0).min_h(0.0).w_full().scroll(ScrollSpec { stick_bottom: false }).child(body);
     if tab == Drawer::Lyrics {
         scroller = scroller.on_scroll_offset(watch_lyrics_scroll);
     } else {
         LY_SCROLL.with(|c| c.set(None));
     }
-    let mut d = d.padding(16.0).gap(12.0).fill(theme::drawer_bg())
+    let d = if wide { d } else { wash(d.fill(theme::drawer_bg())) };
+    let mut d = d.padding(16.0).gap(12.0)
         .child(head)
         .child(ui::smooth_wheel::<App>(scroller, "drawer-scroll".into())
             .labelled_by(match tab { Drawer::Queue => "dr-queue", Drawer::Suggested => "dr-suggested", Drawer::Lyrics => "dr-lyrics", Drawer::Credits => "dr-credits" })
@@ -2061,6 +2098,15 @@ pub fn drawer(s: &App, v: &View, shell: Shell) -> Option<El> {
             })
             .child(glyph(G::Mic, 14.0, theme::ink()))
             .child(text("Sync lyrics").font(t(12.0, 700.0)).color(theme::ink()).a11y_hidden()));
+    }
+    if wide {
+        let outer = row().key("drawer").role("complementary").label("Now playing panel").w(shell.drawer_cover + shell.drawer_w).h_full().fill(theme::drawer_bg());
+        let outer = match cover_col {
+            Some(cc) => outer.child(cc).child(el().w(1.0).h_full().fill(white(0.06)).a11y_hidden()),
+            // (nothing playing: the tabs alone, at the full width)
+            None => outer,
+        };
+        return Some(wash(outer).child(d.grow(1.0)));
     }
     Some(d)
 }

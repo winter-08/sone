@@ -352,7 +352,7 @@ fn view(s: &App, cx: &mut Cx<App>) -> El {
     } else {
         pane(&views::page_key(s), (stores, &s.nav.filter), || views::page(s, &s.ctl))
     };
-    let shell_in = (shell.sidebar_w.to_bits(), shell.drawer_docked, shell.drawer_w.to_bits(), shell.bar_source, shell.bar_badge);
+    let shell_in = (shell.sidebar_w.to_bits(), shell.drawer_docked, shell.drawer_w.to_bits(), shell.bar_source, shell.bar_badge, shell.drawer_cover.to_bits());
     // The header spans the page and the drawer, so the window controls stay in the top-right
     // corner; the drawer sits beside the page below it, or over the page's right edge.
     let mut content = row().grow(1.0).min_h(0.0).w_full().child(page);
