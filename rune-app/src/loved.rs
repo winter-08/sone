@@ -40,17 +40,17 @@ pub fn page(s: &App, v: &View) -> El {
         paged::all(&key);
     }
     let total = if videos { snap.len } else { snap.total.unwrap_or(snap.len) };
-    let (source, name) = if videos {
-        (json!({"type": "favorites", "id": "favorites-videos", "name": "Loved Videos"}), "Loved Videos")
+    let source = if videos {
+        json!({"type": "favorites", "id": "favorites-videos", "name": "Loved Videos"})
     } else {
-        (json!({"type": "favorites", "id": "favorites", "name": "Loved Tracks"}), "Loved Tracks")
+        json!({"type": "favorites", "id": "favorites", "name": "Loved Tracks"})
     };
     let (k1, src1) = (key.clone(), source.clone());
     let include: fn(&Value) -> bool = if videos { loved_video } else { still_loved };
     let head = row().w_full().gap(24.0).items_end().child(views::loved_art(180.0, 14.0, 64.0))
         .child(col().gap(10.0).min_w(0.0).child(views::heading("Loved Tracks", theme::PAGE_TITLE))
             .child(text(if videos { coll::count(total, "video", "videos") } else { coll::count(total, "track", "tracks") }).font(t(13.0, 500.0)).color(white(0.6)))
-            .child(coll::play_pair(v, name, move |shuffle| paged::play(k1.clone(), src1.clone(), shuffle, None, include))));
+            .child(coll::play_pair(v, &source, move |shuffle| paged::play(k1.clone(), src1.clone(), shuffle, None, include))));
     let filter = text_input(&s.nav.filter, t(13.0, 500.0).lh(18.0))
         .key("loved-filter").label("Filter on title, artist or album").single_line().w(320.0)
         .color(white(0.95)).caret(white(0.95), white(0.25)).placeholder("Filter on title, artist or album", white(0.4))

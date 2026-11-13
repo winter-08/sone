@@ -76,7 +76,7 @@ pub fn page(s: &App, uuid: &str, v: &View) -> El {
 
     // Header
     let (k1, src1) = (key.clone(), source.clone());
-    let mut actions = row().gap(8.0).items_center().child(coll::play_pair(v, &title, move |shuffle| paged::play(k1.clone(), src1.clone(), shuffle, None, |_| true)));
+    let mut actions = row().gap(8.0).items_center().child(coll::play_pair(v, &source, move |shuffle| paged::play(k1.clone(), src1.clone(), shuffle, None, |_| true)));
     if own {
         let public = ACCESS.lock().unwrap().get(uuid).copied().unwrap_or_else(|| is_public(d));
         let (u1, t1, desc1) = (uuid.to_string(), title.clone(), d["description"].as_str().unwrap_or("").to_string());

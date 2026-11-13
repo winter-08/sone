@@ -186,9 +186,9 @@ pub fn sort_menu(k: Lib, cur: &Sort, anchor: &str, pick: fn(&mut App, Sort)) -> 
 }
 
 /// Play and Shuffle for a collection whose tracks page in (usePlaySource over its pager).
-/// `name` is the source's name, for the Pause/Resume state as `views::play_buttons` has it.
-pub fn play_pair(v: &crate::controller::View, name: &str, play: impl Fn(bool) + Clone + 'static) -> El {
-    let label = views::play_label(v, name);
+/// `source` is the play source, for the Pause/Resume state as `views::play_buttons` has it.
+pub fn play_pair(v: &crate::controller::View, source: &serde_json::Value, play: impl Fn(bool) + Clone + 'static) -> El {
+    let label = views::play_label(v, source);
     let toggle = label != "Play";
     let p2 = play.clone();
     row().gap(8.0).items_center()

@@ -145,7 +145,7 @@ pub fn artist_tracks(s: &App, id: u64, name: &str, v: &View) -> El {
     let (k1, src1) = (key.clone(), source.clone());
     let mut c = col().w_full().gap(16.0)
         .child(col().gap(6.0).child(views::heading("Popular tracks", theme::PAGE_TITLE)).child(coll::dim(name)))
-        .child(coll::play_pair(v, name, move |shuffle| paged::play(k1.clone(), src1.clone(), shuffle, None, |_| true)));
+        .child(coll::play_pair(v, &source, move |shuffle| paged::play(k1.clone(), src1.clone(), shuffle, None, |_| true)));
     if snap.first_pending() {
         return c.child(views::loading());
     }

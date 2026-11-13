@@ -1044,8 +1044,25 @@ pub fn page_key(s: &App) -> String {
     format!("page-{:?}", s.nav.page)
 }
 
-pub(crate) fn play_label(v: &View, source_name: &str) -> &'static str {
-    if v.playing_from.as_deref() == Some(source_name) && v.current.is_some() {
+/// Whether what plays came from `source` (a play source's JSON): by its type and id, as
+/// SourcePlayButton matches, not by its name (an artist and its popular tracks, or two
+/// playlists of one title, share a name).
+pub(crate) fn plays_from(v: &View, source: &Value) -> bool {
+    v.current.is_some() && v.source.as_ref().is_some_and(|s| same_source(&s.kind, &s.id, source))
+}
+
+/// A source's kind and id (as text) against a play source's JSON.
+fn same_source(kind: &str, id: &str, source: &Value) -> bool {
+    let sid = match &source["id"] {
+        Value::String(x) => x.clone(),
+        Value::Null => String::new(),
+        x => x.to_string(),
+    };
+    source["type"].as_str() == Some(kind) && sid == id
+}
+
+pub(crate) fn play_label(v: &View, source: &Value) -> &'static str {
+    if plays_from(v, source) {
         if v.playing { "Pause" } else { "Resume" }
     } else {
         "Play"
@@ -1099,8 +1116,8 @@ pub(crate) fn album_byline(a: &Value) -> El {
     r
 }
 
-pub(crate) fn play_buttons(v: &View, src_name: &str, play: Cmd, shuffle: Cmd) -> El {
-    let label = play_label(v, src_name);
+pub(crate) fn play_buttons(v: &View, source: &Value, play: Cmd, shuffle: Cmd) -> El {
+    let label = play_label(v, source);
     let toggle = label != "Play";
     row().gap(8.0).items_center()
         .child(button::<App>("hero-play", label, Some(if label == "Pause" { G::Pause } else { G::Play }), true).on_press(move |_: &mut App| {
@@ -1117,9 +1134,9 @@ fn album(id: u64, v: &View) -> El {
     let tracks: Vec<Value> = page["tracks"].as_array().cloned().unwrap_or_default();
     let source = json!({"type": "album", "id": id, "name": title});
     let play = Cmd::PlayCollection { tracks: tracks.clone(), source: source.clone(), album_mode: true, shuffle: false };
-    let shuf = Cmd::PlayCollection { tracks: tracks.clone(), source, album_mode: true, shuffle: true };
+    let shuf = Cmd::PlayCollection { tracks: tracks.clone(), source: source.clone(), album_mode: true, shuffle: true };
     let actions = row().gap(8.0).items_center()
-        .child(play_buttons(v, &title, play, shuf))
+        .child(play_buttons(v, &source, play, shuf))
         .child({
             let (on, aid, l) = (crate::interact::is_fav(crate::interact::Fav::Album, &id.to_string()), id.to_string(), title.clone());
             header_btn("album-fav", "Favorite album", if on { "Added" } else { "Add" }, if on { G::HeartFilled } else { G::Heart }, on)
@@ -1187,7 +1204,7 @@ fn artist(id: u64, v: &View) -> El {
         .map(|sec| sec["items"].as_array().cloned().unwrap_or_default().into_iter().filter(|it| data::kind(it) == "TRACK").map(|it| data::data(&it).clone()).collect::<Vec<_>>())
         .find(|ts| !ts.is_empty()).unwrap_or_default();
     let actions = row().gap(8.0).items_center()
-        .child(crate::coll::play_pair(v, &name, move |shuffle| crate::paged::play_with(crate::paged::PKey::ArtistTracks(id), preview.clone(), src.clone(), shuffle, None, |_| true)))
+        .child(crate::coll::play_pair(v, &src.clone(), move |shuffle| crate::paged::play_with(crate::paged::PKey::ArtistTracks(id), preview.clone(), src.clone(), shuffle, None, |_| true)))
         .child({
             // ArtistPage: Plus/"Follow", or Check/"Following" in the accent
             let (on, aid, l) = (crate::interact::is_fav(crate::interact::Fav::Artist, &id.to_string()), id.to_string(), name.clone());
@@ -2104,7 +2121,7 @@ fn mix_page(id: &str, title: &str, sub: &str, v: &View) -> El {
     let share_id = id.to_string();
     let item = json!({"type": "MIX", "data": {"id": id, "title": title}});
     let actions = row().gap(8.0).items_center()
-        .child(play_buttons(v, title, play, shuf))
+        .child(play_buttons(v, &source, play, shuf))
         .child(header_btn("mix-fav", if on { "Remove from favorites" } else { "Add to favorites" }, if on { "Added" } else { "Add" }, if on { G::HeartFilled } else { G::Heart }, on)
             .on_press(move |_: &mut App| crate::interact::toggle_fav(crate::interact::Fav::Mix, mid.clone(), l.clone(), crate::interact::Say::Nothing)))
         .child(header_btn("mix-share", "Copy share link", "Share", G::Share, false).on_press_tx(move |_: &mut App, tx: &mut Tx| {
@@ -2163,3 +2180,20 @@ mod feed_tests {
         assert_eq!(feed_bucket(m("2024-03-01") - m("2023-12-01")), "Older");
     }
 }
+#[cfg(test)]
+mod source_tests {
+    use super::same_source;
+    use serde_json::json;
+
+    #[test]
+    fn sources_match_by_type_and_id_not_name() {
+        let artist = json!({"type": "artist", "id": 7, "name": "Band"});
+        let popular = json!({"type": "artist-tracks", "id": 7, "name": "Band"});
+        assert!(same_source("artist", "7", &artist));
+        assert!(!same_source("artist", "7", &popular));
+        // two playlists with one title
+        assert!(!same_source("playlist", "a", &json!({"type": "playlist", "id": "b", "name": "Mix"})));
+        assert!(same_source("playlist", "b", &json!({"type": "playlist", "id": "b", "name": "Other"})));
+    }
+}
+
