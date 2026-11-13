@@ -70,6 +70,18 @@ impl IdleInhibitor {
     /// Inhibit screen blanking + system sleep. Runs every applicable layer for
     /// the detected display server — no short-circuit.
     pub async fn inhibit(&mut self, window: &tauri::WebviewWindow) {
+        self.inhibit_layers(Some(window)).await;
+    }
+
+    /// `inhibit` for a native UI with no webview window (the `host` build): every layer but the
+    /// Wayland one, which needs the webview's GTK surface. The D-Bus and portal layers keep the
+    /// screen on there.
+    #[cfg(not(feature = "tauri-ui"))]
+    pub async fn inhibit_without_window(&mut self) {
+        self.inhibit_layers(None).await;
+    }
+
+    async fn inhibit_layers(&mut self, window: Option<&tauri::WebviewWindow>) {
         if self.active {
             return;
         }
@@ -81,7 +93,7 @@ impl IdleInhibitor {
         // Layer 1: display-server native.
         match server {
             DisplayServer::Wayland => {
-                self.wayland = wayland::WaylandInhibitor::start(window);
+                self.wayland = window.and_then(wayland::WaylandInhibitor::start);
             }
             DisplayServer::X11 => {
                 self.x11 = x11::X11Inhibitor::start();

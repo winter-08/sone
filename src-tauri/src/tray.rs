@@ -44,6 +44,10 @@ fn rgba_to_argb(rgba: &[u8]) -> Vec<u8> {
 }
 
 pub(crate) fn restore_window(app: &tauri::AppHandle) {
+    // Without a webview (the `host` build) there's no window here to show: the native UI
+    // listens for this and raises its own.
+    #[cfg(not(feature = "tauri-ui"))]
+    app.emit("window:raise", ()).ok();
     if let Some(window) = app.get_webview_window("main") {
         let _ = window.show();
         let _ = window.unminimize();
