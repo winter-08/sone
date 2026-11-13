@@ -2038,16 +2038,24 @@ pub fn drawer(s: &App, v: &View, shell: Shell) -> Option<El> {
 fn parse_lrc(lrc: &str) -> Vec<(f64, String)> {
     let mut out = vec![];
     for raw in lrc.lines() {
-        let mut rest = raw.trim();
-        let mut times = vec![];
-        while let Some(r) = rest.strip_prefix('[') {
-            let Some((tag, after)) = r.split_once(']') else { break };
-            let Some((m, sec)) = tag.split_once(':') else { break };
-            let (Ok(m), Ok(sec)) = (m.trim().parse::<f64>(), sec.trim().replace(':', ".").parse::<f64>()) else { break };
-            times.push(m * 60.0 + sec);
-            rest = after.trim_start();
+        // Every time tag anywhere on the line is a time for it, and is cut from its text
+        // (lrc.ts: /\[(\d{1,2}:\d{2}(?:[.:]\d{1,3})?)\]/g); other tags stay as text.
+        let (mut text, mut times, mut rest) = (String::new(), vec![], raw.trim());
+        while let Some(i) = rest.find('[') {
+            text.push_str(&rest[..i]);
+            match lrc_tag(&rest[i + 1..]) {
+                Some((at, len)) => {
+                    times.push(at);
+                    rest = &rest[i + 1 + len..];
+                }
+                None => {
+                    text.push('[');
+                    rest = &rest[i + 1..];
+                }
+            }
         }
-        let text = rest.trim();
+        text.push_str(rest);
+        let text = text.trim();
         if text.is_empty() {
             continue;
         }
@@ -2057,6 +2065,34 @@ fn parse_lrc(lrc: &str) -> Vec<(f64, String)> {
     }
     out.sort_by(|a, b| a.0.total_cmp(&b.0));
     out
+}
+
+/// One LRC time tag at the start of `s` (just after its `[`): `m:ss`, `mm:ss`, with an optional
+/// `.x`/`:x` fraction of 1-3 digits read as lrc.ts's parseTimestamp reads it (one digit is
+/// tenths, two hundredths, three milliseconds). Its time in seconds and its length with `]`.
+fn lrc_tag(s: &str) -> Option<(f64, usize)> {
+    let b = s.as_bytes();
+    let digits = |from: usize, max: usize| b[from..].iter().take(max).take_while(|c| c.is_ascii_digit()).count();
+    let m = digits(0, 2);
+    if m == 0 || b.get(m) != Some(&b':') || digits(m + 1, 2) != 2 {
+        return None;
+    }
+    let mut end = m + 3;
+    let mut ms = 0.0;
+    if matches!(b.get(end), Some(b'.' | b':')) {
+        let f = digits(end + 1, 3);
+        if f > 0 {
+            let v: f64 = s[end + 1..end + 1 + f].parse().ok()?;
+            ms = v * [100.0, 10.0, 1.0][f - 1];
+            end += 1 + f;
+        }
+    }
+    if b.get(end) != Some(&b']') {
+        return None;
+    }
+    let mins: f64 = s[..m].parse().ok()?;
+    let secs: f64 = s[m + 1..m + 3].parse().ok()?;
+    Some((mins * 60.0 + secs + ms / 1000.0, end + 1))
 }
 
 thread_local! {
@@ -2612,5 +2648,23 @@ mod feed_tests {
         assert_eq!(feed_bucket(m("2024-01-02") - m("2023-12-31")), "Last month");
         assert_eq!(feed_bucket(m("2024-03-01") - m("2024-03-31")), "This month");
         assert_eq!(feed_bucket(m("2024-03-01") - m("2023-12-01")), "Older");
+    }
+}
+
+#[cfg(test)]
+mod lrc_tests {
+    use super::parse_lrc;
+
+    #[test]
+    fn time_tags_count_anywhere_on_the_line() {
+        let l = parse_lrc("[ar:Someone]\n[00:01.5]One\nTwo [00:03.25] more\n[00:02][00:04.123]Echo\n[00:05]\n[1:02:03]x [01:02.1234]y");
+        let at: Vec<(f64, &str)> = l.iter().map(|(t, s)| (*t, s.as_str())).collect();
+        assert_eq!(at.len(), 5);
+        assert_eq!(at[0], (1.5, "One"));
+        assert_eq!(at[1], (2.0, "Echo"));
+        assert_eq!(at[2], (3.25, "Two  more"));
+        assert!((at[3].0 - 4.123).abs() < 1e-9 && at[3].1 == "Echo");
+        // a `:` fraction counts; a four-digit fraction is no tag and stays as text
+        assert!((at[4].0 - 62.03).abs() < 1e-9 && at[4].1 == "x [01:02.1234]y");
     }
 }
