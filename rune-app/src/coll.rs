@@ -31,6 +31,8 @@ pub struct Ui {
     pub lib_sort: BTreeMap<String, Sort>,
     /// Folders a playlist was moved to lately, newest first (sone.recent-folders.v1).
     pub recent_folders: Vec<String>,
+    /// Searches run lately, newest first (SearchBar's sone.search-history).
+    pub search_history: Vec<String>,
     /// The sidebar is collapsed to its icons (sidebarCollapsedAtom).
     #[serde(skip)]
     pub collapsed: bool,

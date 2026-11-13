@@ -192,7 +192,8 @@ def folders_route(flow: http.HTTPFlow, path: str) -> bool:
 # Editing a playlist (PATCH openapi.tidal.com/v2/playlists/{id}) is always answered 204, and the
 # playlist's details then carry the new title, description and access.
 #   SPIKE_COLLECTIONS=1: album 78 "Queue Suite" is a two-disc album (its last track on volume
-#     2), and Fixture Mixtape's tracks carry dates added (2, 10 and 20 days ago, then 2023-03-04).
+#     2), Fixture Mixtape's tracks carry dates added (2, 10 and 20 days ago, then 2023-03-04),
+#     and search suggestions start with "fixture history" from the server's search history.
 ARTIST_VIEWALL = bool(os.environ.get("SPIKE_ARTIST_VIEWALL"))
 RECS = bool(os.environ.get("SPIKE_RECS"))
 COLLECTIONS = bool(os.environ.get("SPIKE_COLLECTIONS"))
@@ -220,6 +221,11 @@ def collections_route(flow: http.HTTPFlow, path: str, method: str) -> bool:
         for i, it in enumerate(items):
             it["item"]["dateAdded"] = stamps[i] if i < len(stamps) else "2023-03-04T10:00:00.000+0000"
         respond(flow, 200, page(items))
+        return True
+    if re.fullmatch(r"/v2/suggestions/?", path):
+        d = catalog_json("suggestions.json")
+        d["history"] = [{"query": "fixture history"}]
+        respond(flow, 200, d)
         return True
     return False
 EDITS: dict = {}  # playlist uuid -> {"name", "description", "accessType"}

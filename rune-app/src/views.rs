@@ -632,11 +632,21 @@ pub fn header(s: &App) -> El {
             if !q.is_empty() {
                 s.nav.search_open = false;
                 *s.nav.tab = SearchTab::All;
+                remember_search(s, &q);
                 go(s, Page::Search(q));
             }
         });
     // 360 pt wide when there's room; in a narrow window it gives way before anything else does.
-    let bar = row().key("search-bar").role("search").w(360.0).shrink().min_w(140.0).h(40.0).px(14.0).gap(8.0).radius(20.0).items_center().fill(white(0.08)).child(glyph(G::Search, 16.0, white(0.55))).child(field);
+    let mut bar = row().key("search-bar").role("search").w(360.0).shrink().min_w(140.0).h(40.0).px(14.0).gap(8.0).radius(20.0).items_center().fill(white(0.08)).child(glyph(G::Search, 16.0, white(0.55))).child(field);
+    // SearchBar's X: empties the field and keeps it focused
+    if !s.nav.search.text.is_empty() {
+        bar = bar.child(ui::icon_button::<App>("search-clear", "Clear search", G::Close, 14.0, white(0.5)).size(24.0, 24.0).preserve_focus_on_press(true)
+            .on_press(|s: &mut App| {
+                set_search_text(s, "", true);
+                s.nav.search_open = false;
+                s.nav.search_sel = None;
+            }));
+    }
     // Back and Forward, dimmed and inert with no history that way.
     let step = |key: &str, label: &str, g: G, on: bool, f: fn(&mut App)| {
         let b = ui::icon_button::<App>(key, label, g, 18.0, white(if on { 0.75 } else { 0.25 }));
@@ -674,16 +684,19 @@ pub fn header(s: &App) -> El {
         }))
 }
 
-/// The suggestions dropdown under the search field while typing (React SearchBar).
+/// The suggestions dropdown under the search field (React SearchBar).
 /// One entry of the search dropdown, in display order.
 #[derive(Clone, Debug)]
 enum Entry {
-    /// A text suggestion: fills the search bar and searches.
-    Text(String),
-    /// A direct hit: an album, artist or playlist page.
-    Hit(String, Page, HitLook),
-    /// A direct hit on a track: plays it.
-    Track(String, u64, HitLook),
+    /// A recent search (the field is empty): searches it again; removable.
+    Recent(String),
+    /// A text suggestion: fills the search bar and searches. `true` for one from the server's
+    /// search history (a clock, and removable).
+    Text(String, bool),
+    /// A direct hit: an album, artist or playlist page, with the item its menu acts on.
+    Hit(String, Page, HitLook, Value),
+    /// A direct hit on a track (the full track): its row opens the album, its picture plays it.
+    Track(String, Value, HitLook),
     ViewAll,
 }
 
@@ -695,38 +708,107 @@ struct HitLook {
     img: Option<String>,
     round: bool,
     seed: u64,
+    ai: bool,
 }
 
-fn dropdown_entries(q: &str) -> Vec<Entry> {
+/// How many recent searches are kept, and shown under an empty field (SearchBar MAX_HISTORY).
+const HISTORY_KEEP: usize = 10;
+const HISTORY_SHOWN: usize = 5;
+
+/// `q` first in the recent searches (SearchBar addToHistory: one entry per query, whatever its
+/// case), the oldest past ten dropped.
+pub(crate) fn push_history(h: &mut Vec<String>, q: &str) {
+    let q = q.trim();
+    if q.is_empty() {
+        return;
+    }
+    h.retain(|x| x.to_lowercase() != q.to_lowercase());
+    h.insert(0, q.to_string());
+    h.truncate(HISTORY_KEEP);
+}
+
+/// Records a search the user ran (Enter, a suggestion, a recent search, View all), saved with
+/// the library's other preferences (sone.search-history).
+fn remember_search(s: &mut App, q: &str) {
+    let mut h = s.nav.coll.ui.search_history.clone();
+    push_history(&mut h, q);
+    if h != s.nav.coll.ui.search_history {
+        s.nav.coll.ui.search_history = h;
+        crate::coll::save(&s.nav.coll.ui);
+    }
+}
+
+thread_local! {
+    /// Server history suggestions removed this session: TIDAL keeps them, but the dropdown
+    /// leaves them out from then on (React's Remove only dropped them from its own history).
+    static HIDDEN: std::cell::RefCell<std::collections::HashSet<String>> = Default::default();
+}
+
+fn forget_search(s: &mut App, q: &str) {
+    HIDDEN.with(|h| h.borrow_mut().insert(q.to_lowercase()));
+    if s.nav.coll.ui.search_history.iter().any(|x| x == q) {
+        s.nav.coll.ui.search_history.retain(|x| x != q);
+        crate::coll::save(&s.nav.coll.ui);
+    }
+}
+
+fn dropdown_entries(s: &App, q: &str) -> Vec<Entry> {
+    if q.is_empty() {
+        return s.nav.coll.ui.search_history.iter().take(HISTORY_SHOWN).map(|h| Entry::Recent(h.clone())).collect();
+    }
     let Some(v) = data::peek(&Key::Suggest(q.to_string())) else { return vec![] };
+    let hidden = |t: &str| HIDDEN.with(|h| h.borrow().contains(&t.to_lowercase()));
     let mut out: Vec<Entry> = v["textSuggestions"].as_array().cloned().unwrap_or_default().iter()
-        .filter_map(|x| x["query"].as_str().map(|q| Entry::Text(q.to_string()))).collect();
+        .filter_map(|x| x["query"].as_str().filter(|t| !hidden(t)).map(|t| Entry::Text(t.to_string(), x["source"].as_str() == Some("history"))))
+        .collect();
+    let mut hits = 0;
     for hit in v["directHits"].as_array().cloned().unwrap_or_default() {
         let title = hit["title"].as_str().or(hit["name"].as_str()).unwrap_or("").to_string();
         let kind = hit["hitType"].as_str().unwrap_or("");
         let artist = hit["artistName"].as_str().or(hit["track"]["artists"][0]["name"].as_str()).unwrap_or("");
-        let with_artist = |k: &str| if artist.is_empty() { k.to_string() } else { format!("{k} · {artist}") };
+        let with_artist = |k: &str| format!("{k} · {}", if artist.is_empty() { "Unknown" } else { artist });
         let look = HitLook {
-            sub: match kind { "TRACKS" => with_artist("Track"), "ALBUMS" => with_artist("Album"), "ARTISTS" => "Artist".into(), _ => "Playlist".into() },
-            img: crate::art::item_url(&hit, 36.0).or_else(|| crate::art::cover(hit["albumCover"].as_str(), 36.0)),
+            sub: match kind {
+                "TRACKS" => with_artist("Track"),
+                "ALBUMS" => with_artist("Album"),
+                "ARTISTS" => "Artist".into(),
+                _ => match hit["numberOfTracks"].as_u64().filter(|n| *n > 0) {
+                    Some(n) => format!("Playlist · {n} tracks"),
+                    None => "Playlist".into(),
+                },
+            },
+            img: crate::art::item_url(&hit, 48.0).or_else(|| crate::art::cover(hit["albumCover"].as_str(), 48.0)),
             round: kind == "ARTISTS",
             seed: hit["id"].as_u64().unwrap_or(title.len() as u64 + 1),
+            ai: hit["ai"].as_bool() == Some(true),
         };
-        let page = match kind {
+        let (page, item) = match kind {
             "TRACKS" => {
-                out.push(Entry::Track(title, hit["id"].as_u64().unwrap_or(0), look));
+                let id = hit["id"].as_u64().unwrap_or(0);
+                let mut track = if hit["track"].is_object() { hit["track"].clone() } else { crate::interact::json_of_track(id, &title, artist) };
+                if track["album"]["id"].is_null()
+                    && let Some(a) = hit["albumId"].as_u64()
+                {
+                    track["album"] = json!({"id": a, "title": hit["albumTitle"], "cover": hit["albumCover"]});
+                }
+                out.push(Entry::Track(title, track, look));
+                hits += 1;
                 continue;
             }
-            "ALBUMS" => hit["id"].as_u64().map(Page::Album),
-            "ARTISTS" => hit["id"].as_u64().map(Page::Artist),
-            "PLAYLISTS" => hit["uuid"].as_str().map(|u| Page::Playlist(u.to_string())),
-            _ => None,
+            "ALBUMS" => (hit["id"].as_u64().map(Page::Album), json!({"type": "ALBUM", "data": {"id": hit["id"], "title": title, "cover": hit["cover"], "artist": {"name": artist}}})),
+            "ARTISTS" => (hit["id"].as_u64().map(Page::Artist), json!({"type": "ARTIST", "data": {"id": hit["id"], "name": title, "picture": hit["picture"]}})),
+            "PLAYLISTS" => (hit["uuid"].as_str().map(|u| Page::Playlist(u.to_string())), json!({"type": "PLAYLIST", "data": {"uuid": hit["uuid"], "title": title, "image": hit["image"]}})),
+            _ => (None, Value::Null),
         };
         if let Some(p) = page {
-            out.push(Entry::Hit(title, p, look));
+            out.push(Entry::Hit(title, p, look, item));
+            hits += 1;
         }
     }
-    out.push(Entry::ViewAll);
+    // SearchBar's View all closes the direct hits; with none there's nothing to view.
+    if hits > 0 {
+        out.push(Entry::ViewAll);
+    }
     out
 }
 
@@ -737,21 +819,29 @@ fn set_search_text(s: &mut App, text: &str, focused: bool) {
     s.nav.search = e;
 }
 
+fn search_for(s: &mut App, q: String) {
+    set_search_text(s, &q, false);
+    *s.nav.tab = SearchTab::All;
+    remember_search(s, &q);
+    go(s, Page::Search(q));
+}
+
 fn pick(s: &mut App, e: Entry) {
     s.nav.search_open = false;
     s.nav.search_sel = None;
     match e {
-        Entry::Text(q) => {
-            set_search_text(s, &q, false);
-            *s.nav.tab = SearchTab::All;
-            go(s, Page::Search(q));
+        Entry::Recent(q) | Entry::Text(q, _) => search_for(s, q),
+        Entry::Hit(_, p, ..) => go(s, p),
+        // SearchBar: a track's row opens its album (its picture plays it)
+        Entry::Track(_, track, _) => {
+            if let Some(a) = track["album"]["id"].as_u64() {
+                go(s, Page::Album(a));
+            }
         }
-        Entry::Hit(_, p, _) => go(s, p),
-        // SearchBar's play button: playSingle, which keeps the manual queue.
-        Entry::Track(_, id, _) => controller::send(Cmd::PlaySingleId(id)),
         Entry::ViewAll => {
             let q = s.nav.search.text.trim().to_string();
             *s.nav.tab = SearchTab::All;
+            remember_search(s, &q);
             go(s, Page::Search(q));
         }
     }
@@ -759,15 +849,15 @@ fn pick(s: &mut App, e: Entry) {
 
 /// Keys in the search field: ↑/↓ move through the dropdown, Tab completes the text to the
 /// highlighted (or first) suggestion, Enter opens the highlighted entry (or searches, through
-/// `on_submit`), Escape closes the dropdown (SearchBar.tsx has Enter and Escape; arrows and Tab
-/// go further).
+/// `on_submit`), Escape closes the dropdown and leaves the field (SearchBar.tsx has Enter and
+/// Escape; arrows and Tab go further).
 fn search_key(s: &mut App, ev: &rune::KeyEvent, tx: &mut Tx) -> bool {
     // bound Ctrl and Alt shortcuts run from the search field too (keys.rs)
     if crate::keys::field_key(s, ev, tx) {
         return true;
     }
     let q = s.nav.search.text.trim().to_string();
-    let entries = if s.nav.search_open && !q.is_empty() { dropdown_entries(&q) } else { vec![] };
+    let entries = if q.is_empty() || s.nav.search_open { dropdown_entries(s, &q) } else { vec![] };
     match &ev.key {
         rune::Key::Down | rune::Key::Up if !entries.is_empty() => {
             let n = entries.len();
@@ -781,9 +871,9 @@ fn search_key(s: &mut App, ev: &rune::KeyEvent, tx: &mut Tx) -> bool {
         }
         rune::Key::Tab if !ev.mods.shift => {
             let target = s.nav.search_sel.and_then(|i| entries.get(i)).and_then(|e| match e {
-                Entry::Text(t) | Entry::Hit(t, ..) | Entry::Track(t, ..) => Some(t.clone()),
+                Entry::Recent(t) | Entry::Text(t, _) | Entry::Hit(t, ..) | Entry::Track(t, ..) => Some(t.clone()),
                 Entry::ViewAll => None,
-            }).or_else(|| entries.iter().find_map(|e| if let Entry::Text(t) = e { Some(t.clone()) } else { None }));
+            }).or_else(|| entries.iter().find_map(|e| if let Entry::Text(t, _) = e { Some(t.clone()) } else { None }));
             match target {
                 Some(t) if t != s.nav.search.text => {
                     set_search_text(s, &t, true);
@@ -802,70 +892,136 @@ fn search_key(s: &mut App, ev: &rune::KeyEvent, tx: &mut Tx) -> bool {
             }
             None => false,
         },
-        rune::Key::Escape if s.nav.search_open => {
+        // SearchBar: Escape closes the dropdown and blurs the field
+        rune::Key::Escape if s.nav.search_open || q.is_empty() => {
             s.nav.search_open = false;
             s.nav.search_sel = None;
+            s.nav.search.focused = false;
             true
         }
         _ => false,
     }
 }
 
+/// A dropdown row's remove button (SearchBar's X, "Remove").
+fn remove_btn(key: String, q: &str) -> El {
+    let q = q.to_string();
+    ui::icon_button::<App>(&key, &format!("Remove {q} from search history"), G::Close, 14.0, white(0.5)).size(28.0, 28.0).preserve_focus_on_press(true)
+        .on_press(move |s: &mut App| {
+            forget_search(s, &q);
+            s.nav.search_sel = None;
+        })
+}
+
 pub fn dropdown(s: &App) -> Option<El> {
     let q = s.nav.search.text.trim().to_string();
-    // Open while typing, and while a press on it is landing (its rows keep the field's focus);
-    // closed by a pick, Enter, Escape, or focus leaving the field.
-    if q.is_empty() || !s.nav.search_open || !s.nav.search.focused {
+    // Open while the field has focus: the recent searches while it's empty, the suggestions
+    // while typing (until a pick, Enter or Escape closes them). Rows keep the field's focus.
+    if !s.nav.search.focused || (!q.is_empty() && !s.nav.search_open) {
         return None;
     }
+    let entries = dropdown_entries(s, &q);
     // Peek only: the debounce in App::poll decides when to fetch (rendering mid-typing must not).
-    data::peek(&Key::Suggest(q.clone()))?;
-    let entries = dropdown_entries(&q);
+    let pending = !q.is_empty() && data::peek(&Key::Suggest(q.clone())).is_none();
+    if q.is_empty() && entries.is_empty() {
+        return None;
+    }
     let sel = s.nav.search_sel;
     let mut list = col().w_full().padding(8.0).gap(2.0);
+    if q.is_empty() {
+        list = list.child(row().h(26.0).px(10.0).items_center().child(caps("Recent searches", 0.45)));
+    }
     let mut hit_n = 0;
     let mut sug_n = 0;
+    let mut has_hits = false;
     for (i, e) in entries.iter().enumerate() {
         let on = Some(i) == sel;
         let ec = e.clone();
+        let fill = if on { white(0.1) } else { rune::Color::TRANSPARENT };
         let base = |key: String, label: &str, h: f32| row().key(key).role("button").label(label).h(h).px(10.0).gap(10.0).radius(theme::inset_radius(8.0)).items_center()
-            .fill(if on { white(0.1) } else { rune::Color::TRANSPARENT }).hover(white(0.08)).cursor(rune::Cursor::Pointer)
+            .fill(fill).hover(white(0.08)).cursor(rune::Cursor::Pointer)
             .preserve_focus_on_press(true);
         let el_ = match e {
-            Entry::Text(t) => {
+            Entry::Recent(t) | Entry::Text(t, _) => {
                 sug_n += 1;
-                base(format!("sug-{}", sug_n - 1), t, 34.0)
-                    .on_press(move |s: &mut App| pick(s, ec.clone()))
-                    .child(glyph(G::Search, 14.0, white(0.5)))
-                    .child(text(t.clone()).font(t_(13.0, 500.0)).color(white(0.9)).a11y_hidden())
-            }
-            Entry::Track(t, id, look) => {
-                hit_n += 1;
-                let (tk, mk) = (format!("hit-{}", hit_n - 1), format!("hit-{}-more", hit_n - 1));
-                let track = crate::interact::json_of_track(*id, t, "");
-                row().key(tk).h(48.0).px(10.0).gap(10.0).radius(theme::inset_radius(8.0)).items_center().fill(if on { white(0.1) } else { rune::Color::TRANSPARENT })
-                    .child(row().role("button").label(t.as_str()).grow(1.0).min_w(0.0).gap(10.0).items_center().cursor(rune::Cursor::Pointer).preserve_focus_on_press(true)
+                let recent = matches!(e, Entry::Recent(_)) || matches!(e, Entry::Text(_, true));
+                let k = format!("sug-{}", sug_n - 1);
+                let mut r = row().w_full().gap(4.0).items_center()
+                    .child(base(k.clone(), t, 34.0).grow(1.0).min_w(0.0)
                         .on_press(move |s: &mut App| pick(s, ec.clone()))
-                        .child(hit_thumb(look))
-                        .child(col().min_w(0.0).gap(2.0)
-                            .child(text(t.clone()).font(t_(13.0, 600.0)).color(white(0.95)).truncate().a11y_hidden())
-                            .child(hit_sub(look))))
-                    .child(icon::<App>(&mk, "More options", G::More).preserve_focus_on_press(true)
-                        .on_press(move |s: &mut App| crate::interact::open_track(s, track.clone(), None, crate::interact::Anchor::Below(mk.clone()))))
+                        .child(glyph(if recent { G::Clock } else { G::Search }, 14.0, white(0.5)))
+                        .child(text(t.clone()).font(t_(13.0, 500.0)).color(white(0.9)).truncate().a11y_hidden()));
+                if recent {
+                    r = r.child(remove_btn(format!("{k}-x"), t));
+                }
+                r
             }
-            Entry::Hit(t, _, look) => {
+            Entry::Track(t, track, look) => {
                 hit_n += 1;
-                row().key(format!("hit-{}", hit_n - 1)).role("group").h(48.0).px(10.0).gap(10.0).radius(theme::inset_radius(8.0)).items_center().cursor(rune::Cursor::Pointer)
-                    .fill(if on { white(0.1) } else { rune::Color::TRANSPARENT }).hover(white(0.08)).preserve_focus_on_press(true)
-                    .on_press(move |s: &mut App| pick(s, ec.clone()))
+                has_hits = true;
+                let (tk, mk) = (format!("hit-{}", hit_n - 1), format!("hit-{}-more", hit_n - 1));
+                let blocked = crate::content::blocked(track);
+                let (t1, t2, t3) = (track.clone(), track.clone(), track.clone());
+                // the picture plays it alone, keeping the queue (playSingle)
+                let thumb = el().key(format!("{tk}-play")).role("button").label(format!("Play {t}")).cursor(rune::Cursor::Pointer).hover_group().preserve_focus_on_press(true)
+                    .on_press(move |s: &mut App| {
+                        s.nav.search_open = false;
+                        if !crate::content::blocked(&t1) {
+                            controller::send(Cmd::PlaySingle(t1.clone()));
+                        }
+                    })
                     .child(hit_thumb(look))
-                    .child(col().min_w(0.0).gap(2.0).child(heading(t, 13.0).truncate()).child(hit_sub(look)))
+                    .child(el().absolute(0.0, 0.0).size(48.0, 48.0).radius(4.0).fill(theme::black(0.4)).items_center().justify_center().group_opacity(0.0, 1.0)
+                        .child(glyph(G::Play, 16.0, rune::color::hex("#ffffff").unwrap_or(white(1.0)))));
+                let mut title_row = row().min_w(0.0).gap(6.0).items_center().child(text(t.clone()).font(t_(13.0, 600.0)).color(white(0.95)).truncate().shrink().a11y_hidden());
+                if let Some(b) = crate::content::badges_for(track) {
+                    title_row = title_row.child(b);
+                }
+                // (the title is the row's button, beside the picture's and More's, not around them)
+                let mut body = row().role("button").label(t.as_str()).grow(1.0).min_w(0.0).h_full().items_center().preserve_focus_on_press(true)
+                    .child(col().grow(1.0).min_w(0.0).gap(2.0).child(title_row).child(hit_sub(look)));
+                if track["album"]["id"].as_u64().is_some() {
+                    body = body.cursor(rune::Cursor::Pointer).on_press(move |s: &mut App| pick(s, ec.clone()));
+                }
+                let r = row().key(tk).h(60.0).px(10.0).gap(10.0).radius(theme::inset_radius(8.0)).items_center().fill(fill).hover(white(0.08))
+                    .hover_group()
+                    .on_secondary_press(move |s: &mut App, p, _| crate::interact::open_track(s, t2.clone(), None, crate::interact::Anchor::Point(p.x, p.y)))
+                    .child(thumb)
+                    .child(body)
+                    .child(icon::<App>(&mk, "More options", G::More).preserve_focus_on_press(true)
+                        .on_press(move |s: &mut App| crate::interact::open_track(s, t3.clone(), None, crate::interact::Anchor::Below(mk.clone()))));
+                if blocked { r.opacity(0.5) } else { r }
             }
-            Entry::ViewAll => base("view-all".into(), "View all results", 36.0)
+            Entry::Hit(t, _, look, item) => {
+                hit_n += 1;
+                has_hits = true;
+                let k = format!("hit-{}", hit_n - 1);
+                let mk = format!("{k}-more");
+                let (i1, i2, mk2) = (item.clone(), item.clone(), mk.clone());
+                let mut head = row().min_w(0.0).gap(6.0).items_center().child(heading(t, 13.0).truncate().shrink());
+                if look.ai {
+                    head = head.child(crate::content::ai_badge());
+                }
+                row().key(k).role("group").h(60.0).px(10.0).gap(10.0).radius(theme::inset_radius(8.0)).items_center().cursor(rune::Cursor::Pointer)
+                    .fill(fill).hover(white(0.08)).preserve_focus_on_press(true)
+                    .on_press(move |s: &mut App| pick(s, ec.clone()))
+                    .on_secondary_press(move |s: &mut App, p, _| crate::interact::open_media(s, i1.clone(), crate::interact::Anchor::Point(p.x, p.y)))
+                    .child(hit_thumb(look))
+                    .child(col().grow(1.0).min_w(0.0).gap(2.0).child(head).child(hit_sub(look)))
+                    .child(icon::<App>(&mk, "More options", G::More).preserve_focus_on_press(true)
+                        .on_press(move |s: &mut App| crate::interact::open_media(s, i2.clone(), crate::interact::Anchor::Below(mk2.clone()))))
+            }
+            Entry::ViewAll => base("view-all".into(), "View all results", 36.0).justify_center()
                 .on_press(move |s: &mut App| pick(s, ec.clone()))
-                .child(text("View all results").font(t_(13.0, 600.0)).color(white(0.85)).a11y_hidden()),
+                .child(text("View all results").font(t_(12.0, 650.0)).color(accent()).a11y_hidden()),
         };
         list = list.child(el_);
+    }
+    // While the suggestions load, a spinner; then "No results found" without direct hits.
+    if pending {
+        list = list.child(row().w_full().h(56.0).justify_center().items_center().role("status").label("Searching").child(glyph(G::Loader, 18.0, accent())));
+    } else if !q.is_empty() && !has_hits {
+        list = list.child(row().w_full().h(56.0).justify_center().items_center().child(text("No results found").font(t_(13.0, 500.0)).color(white(0.45))));
     }
     // SearchBar.tsx: 420 px wide, right-aligned 8 px under the search field, at most 70vh tall
     // and scrolling. `anchored_fit` sizes it to the room below (or above) the field.
@@ -876,13 +1032,13 @@ pub fn dropdown(s: &App) -> Option<El> {
     )
 }
 
-/// A direct hit's picture in the dropdown: round for an artist. Decorative.
+/// A direct hit's picture in the dropdown (48 pt): round for an artist. Decorative.
 fn hit_thumb(l: &HitLook) -> El {
     let h = ui::hue(Some(l.seed));
     if l.round {
-        ui::with_image(ui::art(h, 36.0, l.seed, 0.0), l.img.clone(), 36.0, 18.0)
+        ui::with_image(ui::art(h, 48.0, l.seed, 0.0), l.img.clone(), 48.0, 24.0)
     } else {
-        ui::with_image(ui::tile(h, 36.0, l.seed, 4.0), l.img.clone(), 36.0, 4.0)
+        ui::with_image(ui::tile(h, 48.0, l.seed, 4.0), l.img.clone(), 48.0, 4.0)
     }
 }
 
@@ -2379,6 +2535,25 @@ fn suggested(v: &View) -> El {
 /// Credits: what is playing, the contributors by role, then the main artist's bio (React CreditsTab).
 fn credits(v: &View) -> El {
     crate::drawer_tabs::credits(v)
+}
+
+#[cfg(test)]
+mod search_history_tests {
+    use super::push_history;
+
+    #[test]
+    fn recent_searches_dedupe_by_case_and_keep_ten() {
+        let mut h = vec!["Daft Punk".to_string(), "beatles".to_string()];
+        push_history(&mut h, "  daft punk ");
+        assert_eq!(h, ["daft punk", "beatles"]);
+        push_history(&mut h, "");
+        assert_eq!(h.len(), 2);
+        for i in 0..12 {
+            push_history(&mut h, &format!("q{i}"));
+        }
+        assert_eq!(h.len(), 10);
+        assert_eq!(h[0], "q11");
+    }
 }
 
 #[cfg(test)]
