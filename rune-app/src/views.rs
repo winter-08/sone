@@ -1315,7 +1315,7 @@ fn quality_badge(b: &str) -> El {
     if !detail.is_empty() {
         c = c.child(text(detail.to_string()).font(t(9.0, 500.0).tracking(0.4)).color(white(0.45)).a11y_hidden());
     }
-    theme::focusable(c.key("badge").role("button").label(b.to_string())).px(4.0).py(2.0).radius(4.0)
+    theme::focusable(c.key("badge").role("button").label(b.to_string())).help("Show signal path").px(4.0).py(2.0).radius(4.0)
         .hover(white(0.06)).cursor(rune::Cursor::Pointer)
         .on_press(crate::signal_path::open)
         .child(pill.a11y_hidden())
@@ -1830,7 +1830,7 @@ fn top_hits(hits: &Value) -> El {
         let thumb = match kind {
             "TRACKS" => {
                 let id = hit["id"].as_u64().unwrap_or(0);
-                el().key(format!("{key}-play")).role("button").label(format!("Play {title}")).cursor(rune::Cursor::Pointer)
+                el().key(format!("{key}-play")).role("button").label(format!("Play {title}")).help("Play").cursor(rune::Cursor::Pointer)
                     .on_press(move |_: &mut App| controller::send(Cmd::PlaySingleId(id))).child(thumb)
             }
             _ => thumb,
@@ -1979,12 +1979,12 @@ pub fn dialog(s: &App) -> Option<El> {
             let version = concat!("v", env!("CARGO_PKG_VERSION"));
             (None, col().w_full().gap(12.0).items_center()
                 .child(heading(crate::TITLE, theme::PAGE_TITLE))
-                .child(link("ab-version", version, "https://github.com/lullabyX/sone/releases"))
+                .child(link("ab-version", version, "https://github.com/lullabyX/sone/releases").help("View releases"))
                 .child(text("The native desktop client for TIDAL on Linux.").font(t(13.0, 500.0)).color(white(0.6)))
                 .child(row().gap(8.0)
                     .child(link("ab-github", "GitHub", "https://github.com/lullabyX/sone"))
                     .child(link("ab-issues", "Issues", "https://github.com/lullabyX/sone/issues"))
-                    .child(link("ab-license", "GPL-3.0", "https://github.com/lullabyX/sone/blob/master/LICENSE")))
+                    .child(link("ab-license", "GPL-3.0", "https://github.com/lullabyX/sone/blob/master/LICENSE").help("View license")))
                 .child(link("ab-author", "@lullabyX", "https://github.com/lullabyX"))
                 .child(link("ab-patreon", "Support development on Patreon", "https://patreon.com/lullabyX")))
         }

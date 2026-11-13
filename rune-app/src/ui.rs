@@ -424,7 +424,7 @@ pub fn nowbar_with<S: 'static>(v: &View, info: El, track_actions: El, extras: El
             .key("bar-art").matched(crate::full_ui::COVER).motion(crate::full_ui::CLOSE)
     };
     if let Some((label, f)) = on_cover {
-        let mut button = theme::focusable(el().key("bar-cover").role("button").label(label)).radius(8.0).cursor(rune::Cursor::Pointer).press_scale(0.95).hover_group().on_press(f).child(cover);
+        let mut button = theme::focusable(el().key("bar-cover").role("button").label(label)).help(label).radius(8.0).cursor(rune::Cursor::Pointer).press_scale(0.95).hover_group().on_press(f).child(cover);
         // Hovering the cover says what a press does: the expand mark over a scrim. It sits beside
         // the artwork, not inside it, so it stays behind when the cover flies to the player.
         if !crate::full_ui::covers_bar() {

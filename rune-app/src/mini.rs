@@ -321,7 +321,7 @@ fn narrow(v: &View, w: f32, h: f32) -> El {
         .pr(10.0)
         .gap(10.0)
         .items_center()
-        .child(cover(v, h - 16.0).on_background_press(|_: &mut Mini| crate::shell::raise()))
+        .child(cover(v, h - 16.0).on_background_press(|_: &mut Mini| crate::shell::raise()).help(v.title.clone()))
         .child(col().grow(1.0).min_w(0.0).gap(2.0).child(title(v, 13.0)).child(artist(v, 12.0)))
         .child(controls)
 }
@@ -339,7 +339,7 @@ fn compact(v: &View, w: f32, h: f32) -> El {
     if let Some(from) = playing_from(v).filter(|_| seek) {
         meta = meta.child(from);
     }
-    let mut top = row().grow(1.0).min_h(0.0).gap(12.0).child(cover(v, top_h.min(96.0)).self_center().on_background_press(|_: &mut Mini| crate::shell::raise())).child(meta);
+    let mut top = row().grow(1.0).min_h(0.0).gap(12.0).child(cover(v, top_h.min(96.0)).self_center().on_background_press(|_: &mut Mini| crate::shell::raise()).help(v.title.clone())).child(meta);
     if heart_top {
         top = top.child(heart(v).self_end());
     }

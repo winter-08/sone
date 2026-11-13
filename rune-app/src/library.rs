@@ -331,7 +331,7 @@ pub fn page(s: &App, k: Lib, folder: Option<&(String, String)>) -> El {
     let noun = match k { Lib::Playlists => ("playlist", "playlists"), Lib::Albums => ("album", "albums"), Lib::Artists => ("artist", "artists"), Lib::Mixes => ("mix", "mixes") };
     let sort_label = format!("{} {}", coll::sort_label(k, &sort), if sort.1 == "ASC" { "↑" } else { "↓" });
     let meta = row().gap(10.0).items_center().child(coll::dim(&coll::count(n, noun.0, noun.1)))
-        .child(theme::focusable(row().key("lv-sort").role("button").label(format!("Sort by: {}", coll::sort_label(k, &sort)).as_str())).h(28.0).px(10.0).gap(6.0).radius(8.0).items_center().hover(white(0.06)).cursor(rune::Cursor::Pointer)
+        .child(theme::focusable(row().key("lv-sort").role("button").label(format!("Sort by: {}", coll::sort_label(k, &sort)).as_str())).help(format!("Sort by: {}", coll::sort_label(k, &sort))).h(28.0).px(10.0).gap(6.0).radius(8.0).items_center().hover(white(0.06)).cursor(rune::Cursor::Pointer)
             .on_press(|s: &mut App| s.nav.coll.ui.sort_menu = if s.nav.coll.ui.sort_menu == Some(SortMenu::ViewAll) { None } else { Some(SortMenu::ViewAll) })
             .child(glyph(G::Sort, 13.0, white(0.55)))
             .child(text(sort_label).font(t(12.0, 500.0)).color(white(0.6)).a11y_hidden()));

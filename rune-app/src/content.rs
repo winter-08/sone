@@ -128,7 +128,7 @@ pub fn explicit_badge() -> El {
 /// AiBadge: "AI", named "AI-generated" as the React badge is.
 pub fn ai_badge() -> El {
     rune::el().h(15.0).px(4.0).radius(3.0).fill(white(0.12)).items_center().justify_center()
-        .child(text("AI").font(t(9.0, 700.0).tracking(0.6)).color(white(theme::TEXT_MUTED)).label("AI-generated"))
+        .child(text("AI").font(t(9.0, 700.0).tracking(0.6)).color(white(theme::TEXT_MUTED)).label("AI-generated").help("AI-generated"))
 }
 
 /// TrackList's "VIDEO" plate on a music video's row, named for assistive technology.

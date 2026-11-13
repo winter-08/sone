@@ -714,7 +714,7 @@ fn full(v: &View, sp: Option<&Value>, stream: Option<&Value>, track_quality: Opt
     // verdict, with the way back
     let (vs, line) = verdict_line(d, &cables);
     c.child(row().w_full().py(12.0).items_center().border_sides([1.0, 0.0, 0.0, 0.0], white(0.06))
-        .child(theme::focusable(row().key("sp-back").role("button").label("Back to verdict")).h(26.0).px(10.0).gap(6.0).radius(13.0).items_center()
+        .child(theme::focusable(row().key("sp-back").role("button").label("Back to verdict")).help("Back to verdict").h(26.0).px(10.0).gap(6.0).radius(13.0).items_center()
             .fill(white(0.06)).border(1.0, white(0.08)).hover(white(0.12)).cursor(rune::Cursor::Pointer)
             .on_press(|_: &mut App| set_panel(Panel { open: true, expanded: false }))
             .child(rune::icon(&ARROW_LEFT, 11.0).color(white(0.7)).a11y_hidden())
