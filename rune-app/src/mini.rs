@@ -46,6 +46,7 @@ pub fn set_mini(open: bool) {
         // its saved size and place (shell.rs), as React's useMiniplayerWindow keeps them
         if open {
             crate::shell::restore_mini(w);
+            CHECK_PLACE.store(true, Ordering::Relaxed);
             w.open()
         } else {
             crate::shell::save_mini(w);
@@ -53,6 +54,33 @@ pub fn set_mini(open: bool) {
         }
     }
     controller::bump();
+}
+
+/// The window just opened at its saved place: its first poll checks that place is on a screen.
+static CHECK_PLACE: AtomicBool = AtomicBool::new(false);
+
+/// Where to move a window at `pos` and `size` (physical pixels) so that it's on `display`
+/// (its position and size), or None when at least 50 px of it already are: then near the
+/// display's bottom-right corner (useMiniplayerWindow's off-screen clamping).
+fn back_on_screen(pos: (i32, i32), size: (u32, u32), display: ((i32, i32), (u32, u32))) -> Option<(i32, i32)> {
+    let ((mx, my), (mw, mh)) = display;
+    let (right, bottom) = (pos.0 + size.0 as i32, pos.1 + size.1 as i32);
+    let on = pos.0 < mx + mw as i32 - 50 && right > mx + 50 && pos.1 < my + mh as i32 - 50 && bottom > my + 50;
+    (!on).then(|| (mx + mw as i32 - size.0 as i32 - 40, my + mh as i32 - size.1 as i32 - 100))
+}
+
+/// From the poll, once after opening: a saved place on a screen that's gone (a monitor
+/// unplugged) moves back onto the one the window is on. Where the platform hides positions
+/// (Wayland) the compositor places the window and there's nothing to do.
+fn keep_on_screen() {
+    let Some(w) = WINDOW.get().filter(|w| w.is_ready()) else { return };
+    if !CHECK_PLACE.swap(false, Ordering::Relaxed) {
+        return;
+    }
+    let Some(p) = w.placement() else { return };
+    if let Some(at) = p.display.and_then(|d| back_on_screen(p.position, p.content_size, d)) {
+        w.set_position(at);
+    }
 }
 
 /// While the full-screen player is up, an open miniplayer steps out of the way (hidden, still
@@ -119,17 +147,25 @@ pub struct Mini {
     /// Tab moved focus here and the pointer hasn't come back since: the chrome and the cover's
     /// transport stay shown, so a focused control is never invisible.
     keyboard: bool,
-    /// The volume the mute button puts back.
-    unmuted: f32,
+    /// The speaker's volume slider is open.
+    vol_open: bool,
+    /// The playback error the card shows, while it's under four seconds old.
+    error: Option<String>,
 }
 
 impl Mini {
     fn new() -> Mini {
-        Mini { seen: (0, 0, 0), tick_at: 0.0, size: Cell::new(SIZE), grab: None, seek_drag: None, keyboard: false, unmuted: 0.7 }
+        Mini { seen: (0, 0, 0), tick_at: 0.0, size: Cell::new(SIZE), grab: None, seek_drag: None, keyboard: false, vol_open: false, error: None }
     }
 }
 
+/// How long the card shows a playback error (React MiniPlayer's ErrorOverlay).
+const ERROR_FOR: Duration = Duration::from_secs(4);
+
 fn poll(s: &mut Mini, t: f64, tx: &mut Tx) -> bool {
+    if CHECK_PLACE.load(Ordering::Relaxed) {
+        keep_on_screen();
+    }
     let (state, ticks) = controller::versions();
     // (favourites too: a heart toggled in the main window shows here)
     let v = (state, ticks, interact::version());
@@ -140,7 +176,11 @@ fn poll(s: &mut Mini, t: f64, tx: &mut Tx) -> bool {
         s.tick_at = t + 0.15;
         tx.wake_after(Duration::from_millis(150));
     }
-    let changed = v != s.seen;
+    // A playback error shows for four seconds; the tick notices when it's due to go.
+    let error = controller::last_error().filter(|(_, at)| at.elapsed() < ERROR_FOR).map(|(e, _)| e);
+    let error_changed = error != s.error;
+    s.error = error;
+    let changed = v != s.seen || error_changed;
     let dragging = s.seek_drag.is_some_and(|t| t.elapsed() < Duration::from_millis(250));
     if changed && ((v.0, v.2) == (s.seen.0, s.seen.2) || dragging) {
         tx.instant(); // a clock tick lands at once, as in the main window
@@ -154,6 +194,8 @@ fn on_key(s: &mut Mini, e: &KeyEvent, _: &mut Tx) -> bool {
         return false;
     }
     match &e.key {
+        // (the volume slider first, then the window)
+        Key::Escape if s.vol_open => s.vol_open = false,
         Key::Escape => set_mini(false),
         Key::Text(t) if t == " " => send(Cmd::TogglePlay),
         Key::Tab => {
@@ -227,6 +269,17 @@ fn view(s: &Mini, cx: &mut Cx<Mini>) -> El {
         .child(el().absolute(close_at.0, close_at.1).group_opacity(rest, 1.0).child(close()));
     if tier != Tier::Narrow {
         root = root.child(grip().absolute((w - 29.0) / 2.0, 3.0).group_opacity(rest, 1.0));
+    }
+    // A failed play says why for a moment, over the middle of the card (ErrorOverlay).
+    if let Some(e) = s.error.as_ref().filter(|_| v.current.is_some() || v.video.is_some()) {
+        root = root.child(row().pin(Some(0.0), Some(0.0), Some(0.0), Some(0.0)).items_center().justify_center().a11y_hidden()
+            .child(row().max_w((w * 0.9).max(80.0)).px(12.0).py(6.0).radius(6.0).fill(oklch(0.38, 0.13, 25.0).alpha(0.7))
+                .child(text(e.clone()).font(t(11.0, 500.0)).color(white(1.0)).truncate())));
+    }
+    // The speaker's slider, over everything (it's anchored to the speaker, where there's one).
+    let speaker = v.current.is_some() && !volume_locked(&v) && (tier != Tier::Narrow || w >= 420.0);
+    if s.vol_open && speaker {
+        root = root.child(volume_slider(&v, tier == Tier::Full));
     }
     root.child(resize_grip().group_opacity(rest, 1.0))
 }
@@ -322,10 +375,13 @@ fn full(s: &Mini, v: &View, w: f32, h: f32) -> El {
         .linear_gradient(0.0, [(0.0, theme::black(0.72)), (0.45, theme::black(0.38)), (1.0, theme::black(0.2))])
         .group_opacity(rest, 1.0)
         .child(
-            row().absolute(0.0, 0.0).size(sz, sz).gap(gap).items_center().justify_center()
-                .child(prev(side, side_glyph, white(0.92)))
-                .child(play(v, play_size))
-                .child(next(side, side_glyph, white(0.92))),
+            // the transport, and under it volume, shuffle and repeat (React's full tier)
+            col().absolute(0.0, 0.0).size(sz, sz).gap(if small { 6.0 } else { 12.0 }).items_center().justify_center()
+                .child(row().gap(gap).items_center()
+                    .child(prev(side, side_glyph, white(0.92)))
+                    .child(play(v, play_size))
+                    .child(next(side, side_glyph, white(0.92))))
+                .child(row().gap(if small { 4.0 } else { 12.0 }).items_center().child(volume(v)).child(shuffle(v)).child(repeat(v))),
         )
         .child(seek);
     let art = el().key("mini-art").size(sz, sz).hover_group().hover_motion(OVERLAY_FADE, OVERLAY_FADE).child(cover(v, sz)).child(overlay);
@@ -533,22 +589,21 @@ fn heart(v: &View) -> El {
     }
 }
 
-/// Mute and unmute; the wheel over it steps the volume. Locked in bit-perfect mode.
+/// Whether the volume control is locked: bit-perfect audio, though a video's own sound isn't.
+fn volume_locked(v: &View) -> bool {
+    v.bit_perfect && v.video.is_none()
+}
+
+/// The speaker: a press opens the volume slider beside it (React MiniPlayer's VolumeSlider);
+/// the wheel over it steps the volume. Locked in bit-perfect mode.
 fn volume(v: &View) -> El {
-    if v.bit_perfect && v.video.is_none() {
+    if volume_locked(v) {
         return ui::unavailable(button("mini-volume", "Volume disabled in bit-perfect mode", G::Speaker, white(0.35), 28.0, 16.0, false));
     }
     let vol = v.volume;
     let g = if vol <= 0.0 { G::VolumeX } else if vol < 0.5 { G::Volume1 } else { G::Speaker };
-    button("mini-volume", if vol > 0.0 { "Mute" } else { "Unmute" }, g, white(0.7), 28.0, 16.0, true)
-        .on_press(move |s: &mut Mini| {
-            if vol > 0.0 {
-                s.unmuted = vol;
-                send(Cmd::SetVolume(0.0));
-            } else {
-                send(Cmd::SetVolume(s.unmuted));
-            }
-        })
+    button("mini-volume", "Volume", g, white(0.7), 28.0, 16.0, true)
+        .on_press(|s: &mut Mini| s.vol_open = !s.vol_open)
         .on_wheel(move |_: &mut Mini, ev, _| {
             if ev.dy == 0.0 {
                 return false;
@@ -560,6 +615,38 @@ fn volume(v: &View) -> El {
             send(Cmd::SetVolume((vol + step).clamp(0.0, 1.0)));
             true
         })
+}
+
+/// The slider the speaker opens: 80 pt on a dark pill, beside the speaker in a row (`tall`
+/// false) or over it in the large tier, as React's horizontal and vertical VolumeSlider. It
+/// closes when the pointer leaves it, or with another press on the speaker or Escape.
+fn volume_slider(v: &View, tall: bool) -> El {
+    let vol = v.volume.clamp(0.0, 1.0);
+    let knob = el().size(12.0, 12.0).radius(6.0).fill(white(1.0)).shadow(1.0, 3.0, theme::black(0.45));
+    let track = if tall {
+        el().size(6.0, 80.0).radius(3.0).fill(white(0.2))
+            .child(el().pin(Some(0.0), None, Some(0.0), Some(0.0)).h(80.0 * vol).radius(3.0).fill(white(0.7)))
+            .child(knob.absolute(-3.0, 80.0 * (1.0 - vol) - 6.0))
+    } else {
+        el().size(80.0, 6.0).radius(3.0).fill(white(0.2))
+            .child(el().absolute(0.0, 0.0).h(6.0).w(80.0 * vol).radius(3.0).fill(white(0.7)))
+            .child(knob.absolute(80.0 * vol - 6.0, -3.0))
+    };
+    let slider = el().key("mini-volume-slider").role("slider").label("Volume").range_value(vol as f64, 0.0, 1.0).focusable(true)
+        .focus_ring(2.0, 2.0, white(0.6)).items_center().justify_center().cursor(rune::Cursor::Pointer)
+        .on_step(move |_: &mut Mini, dir, _| send(Cmd::SetVolume((vol + dir as f32 * 0.05).clamp(0.0, 1.0))))
+        .on_drag(move |_: &mut Mini, d: &mut Drag, tx: &mut Tx| {
+            tx.instant();
+            let f = if tall { 1.0 - d.y / d.h } else { d.x / d.w };
+            send(Cmd::SetVolume(f.clamp(0.0, 1.0)));
+        })
+        .child(track);
+    let slider = if tall { slider.size(20.0, 80.0) } else { slider.size(80.0, 20.0) };
+    let pill = el().key("mini-volume-pop").radius(8.0).fill(oklch(0.2, 0.0, 0.0).alpha(0.95)).items_center().justify_center()
+        .on_hover_change(|s: &mut Mini, inside, _| if !inside { s.vol_open = false })
+        .child(slider);
+    let pill = if tall { pill.px(8.0).py(10.0) } else { pill.px(12.0).py(6.0) };
+    if tall { pill.anchored("mini-volume", rune::Side::Top, Align::Center, 4.0) } else { pill.anchored("mini-volume", rune::Side::Right, Align::Center, 4.0) }
 }
 
 /// The seek bar: a 4 pt track in a 20 pt hit area, its knob shown under the pointer. The fill
@@ -636,4 +723,23 @@ fn resize_grip() -> El {
             tx.instant();
             tx.resize_window_instant(((w + d.dx).clamp(MIN.0, MAX.0), (h + d.dy).clamp(MIN.1, MAX.1)));
         })
+}
+
+#[cfg(test)]
+mod place_tests {
+    use super::back_on_screen;
+
+    #[test]
+    fn a_saved_place_off_every_screen_comes_back() {
+        let screen = ((0, 0), (1920, 1080));
+        // on screen, or 50 px and more of it: stays
+        assert_eq!(back_on_screen((100, 100), (372, 196), screen), None);
+        assert_eq!(back_on_screen((1800, 900), (372, 196), screen), None);
+        // a monitor to the right that's gone: near this one's bottom-right corner
+        assert_eq!(back_on_screen((2500, 300), (372, 196), screen), Some((1920 - 372 - 40, 1080 - 196 - 100)));
+        // barely peeking in (under 50 px)
+        assert_eq!(back_on_screen((-340, 100), (372, 196), screen), Some((1508, 784)));
+        // a second screen left of the first
+        assert_eq!(back_on_screen((-1500, 200), (372, 196), ((-1920, 0), (1920, 1080))), None);
+    }
 }

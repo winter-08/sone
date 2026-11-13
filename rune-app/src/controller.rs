@@ -728,6 +728,13 @@ fn classify(e: &SoneError) -> Fail {
     }
 }
 
+static LAST_ERROR: Mutex<Option<(String, Instant)>> = Mutex::new(None);
+
+/// The last failed play's message and when it failed (the miniplayer shows it for a while).
+pub fn last_error() -> Option<(String, Instant)> {
+    LAST_ERROR.lock().unwrap().clone()
+}
+
 /// The toast for a failed play: the backend's own message, as React's extractPlaybackError
 /// reads it from the serialized error (`{kind, message}`): a string message as it is, a
 /// blocked proxy's reason, anything else (an API error's status and body) "Playback failed".
@@ -918,6 +925,14 @@ impl Player {
         let s = s.into();
         log::info!("[ui notice] {s}");
         crate::interact::toast(s, crate::interact::Kind::Error);
+    }
+
+    /// A play that failed (React's "playback-error" event): its toast, and the miniplayer's
+    /// error pill.
+    fn playback_error(&self, e: &SoneError) {
+        let m = playback_message(e);
+        *LAST_ERROR.lock().unwrap() = Some((m.clone(), Instant::now()));
+        self.toast_error(m);
     }
 
     async fn startup(&mut self) {
@@ -1721,7 +1736,7 @@ impl Player {
                             self.toast("Track unavailable")
                         }
                     }
-                    Fail::Transient => self.toast_error(playback_message(&e)),
+                    Fail::Transient => self.playback_error(&e),
                     Fail::Filtered => {}
                 }
                 Err(f)
@@ -2202,7 +2217,7 @@ impl Player {
                                 Fail::RateLimited(a) => self.schedule_rate_limit(a, None, false),
                                 Fail::Unplayable => self.toast("Track unavailable"),
                                 Fail::Network => self.toast_error("Network error — check your internet connection"),
-                                _ => self.toast_error(playback_message(&e)),
+                                _ => self.playback_error(&e),
                             }
                         }
                     }
@@ -2490,7 +2505,7 @@ impl Player {
                             Fail::RateLimited(a) => self.toast(format!("Too many requests — try again in {}s", a.unwrap_or(5))),
                             Fail::Unplayable => self.toast("Track unavailable"),
                             Fail::Network => self.toast_error("Network error — check your internet connection"),
-                            _ => self.toast_error(playback_message(&e)),
+                            _ => self.playback_error(&e),
                         }
                     }
                 }
@@ -2535,7 +2550,7 @@ impl Player {
                                 (self.queue, self.original, self.manual) = (q, o, m);
                                 self.playing = false;
                                 self.mark_loading(false);
-                                self.toast_error(playback_message(&e));
+                                self.playback_error(&e);
                             }
                         }
                         return;
@@ -2626,7 +2641,7 @@ impl Player {
                     Fail::RateLimited(a) => self.toast(format!("Too many requests — try again in {}s", a.unwrap_or(5))),
                     Fail::Unplayable => self.toast("Track unavailable"),
                     Fail::Network => self.toast_error("Network error — check your internet connection"),
-                    _ => self.toast_error(playback_message(&e)),
+                    _ => self.playback_error(&e),
                 }
             }
         }
