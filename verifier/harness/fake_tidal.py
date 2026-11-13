@@ -59,6 +59,7 @@ BIG_FILE, BIG_SECONDS = "bench/long_44k16.flac", 600
 # Content filter checks only: SPIKE_EXPLICIT_IDS="1006,1007" / SPIKE_AI_IDS="1006" mark those
 # fixture tracks explicit / AI-generated in /v1/tracks/<id>. Unset (the default), none are.
 EXPLICIT_IDS = {int(x) for x in os.environ.get("SPIKE_EXPLICIT_IDS", "").split(",") if x.strip().isdigit()}
+DUET_ID = 1909  # a two-artist track (track_json)
 AI_IDS = {int(x) for x in os.environ.get("SPIKE_AI_IDS", "").split(",") if x.strip().isdigit()}
 
 
@@ -115,6 +116,14 @@ def track_json(tid: int) -> dict:
     else:
         artist, album, number = {"id": 7, "name": "Fixture Artist", "type": "MAIN"}, {"id": 77, "title": "Fixture Album", "cover": COVER}, tid - 1000
     extra = {"ai": True} if tid in AI_IDS else {}
+    # DUET_ID: Mock Ensemble with Fixture Artist, for the player bar's and the queue's
+    # per-artist links (it plays 1001's audio; nothing in the catalog lists it).
+    if tid == DUET_ID:
+        guest = {"id": 7, "name": "Fixture Artist", "type": "FEATURED"}
+        return {"id": tid, "title": "Duet Fixture", "duration": dur, "trackNumber": 9, "volumeNumber": 1,
+                "audioQuality": q, "explicit": False, "streamReady": True, "allowStreaming": True,
+                "artist": artist, "artists": [artist, guest], "album": album,
+                "mediaMetadata": {"tags": ["LOSSLESS"]}, "mixes": {"TRACK_MIX": f"000fixture0track0mix00{tid}"}}
     return {
         **extra,
         "id": tid, "title": title, "duration": dur, "trackNumber": number,
