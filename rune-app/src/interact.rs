@@ -138,6 +138,11 @@ pub fn reset_favorites() {
     RECENT.lock().unwrap().clear();
     bump();
 }
+/// Fetch the favourite ids again at the next poll (Refresh: React reloads the app, which loads
+/// them again). The hearts keep what they show until the new ids land.
+pub fn reload_favorites() {
+    FAVS_REQUESTED.store(false, Ordering::Relaxed);
+}
 static FAVS_LOADED: AtomicBool = AtomicBool::new(false);
 
 pub fn is_fav(k: Fav, id: &str) -> bool {

@@ -489,6 +489,7 @@ pub fn refresh_app(_: &mut App) {
     sone_host_shim::async_runtime::spawn(async {
         let _ = tauri_app_lib::commands::utility::clear_disk_cache(crate::host().state::<AppState>()).await;
         crate::data::clear();
+        crate::interact::reload_favorites();
     });
 }
 
