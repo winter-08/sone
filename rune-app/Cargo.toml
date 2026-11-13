@@ -14,7 +14,7 @@ path = "src/main.rs"
 # The SONE backend, built without Tauri/WebKit; `tauri::` resolves to host-shim.
 sone = { path = "../src-tauri", default-features = false, features = ["host"] }
 sone-host-shim = { path = "../src-tauri/host-shim" }
-rune = { git = "https://github.com/anomalyco/rune", rev = "6c3cb8abf150e1c43b2f276a14568b2f2f504d72", features = ["accessibility"] }
+rune = { git = "https://github.com/anomalyco/rune", rev = "6c3cb8abf150e1c43b2f276a14568b2f2f504d72", features = ["accessibility", "native-file-dialog"] }
 # Search folding for the filters (rune_kit::search): case, accents and widths as a reader expects.
 rune-kit = { git = "https://github.com/anomalyco/rune", rev = "6c3cb8abf150e1c43b2f276a14568b2f2f504d72" }
 serde = { version = "1", features = ["derive"] }

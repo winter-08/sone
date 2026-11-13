@@ -159,6 +159,10 @@ pub struct Form {
     pending_off: Option<Content>,
     /// "Copied" on a copy button, until this instant (the React 1.5 s flag), by button key.
     copied: Option<(&'static str, Instant)>,
+    /// The account menu's output device list is open.
+    device_open: bool,
+    /// The profile editor (profile.rs), while open.
+    pub profile_edit: Option<crate::profile::Edit>,
 }
 
 type Apply = Box<dyn FnOnce(&mut Form) + Send>;
@@ -310,6 +314,7 @@ pub fn flush_settings(s: &mut App) {
     for r in results {
         r(&mut s.nav.set);
     }
+    crate::profile::apply_results(s);
     let f = &mut s.nav.set;
     let now = Instant::now();
     if f.copied.is_some_and(|(_, until)| now >= until) {
@@ -344,6 +349,87 @@ fn should_submit_proxy(p: &tauri_app_lib::ProxySettings) -> bool {
 fn describe(e: &str, fallback: &str) -> String {
     let e = e.trim();
     if e.is_empty() { fallback.to_string() } else { e.to_string() }
+}
+
+// ------------------------------------------------------------------ the account menu's audio rows
+
+/// The output devices exclusive mode can use (list_audio_devices), once listed.
+static DEVICES: Mutex<Option<Vec<(String, String)>>> = Mutex::new(None);
+static DEVICES_ASKED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// UserMenu's device effect: list the devices, and with none chosen yet, choose the first.
+fn load_devices() {
+    if DEVICES_ASKED.swap(true, std::sync::atomic::Ordering::Relaxed) {
+        return;
+    }
+    sone_host_shim::async_runtime::spawn_blocking(|| {
+        let list: Vec<(String, String)> = utility::list_audio_devices(st()).ok().and_then(|d| serde_json::to_value(d).ok())
+            .and_then(|v| v.as_array().cloned()).unwrap_or_default().iter()
+            .filter_map(|d| Some((d["id"].as_str()?.to_string(), d["name"].as_str().unwrap_or("").to_string()))).collect();
+        if utility::get_exclusive_device(st()).is_none()
+            && let Some((id, _)) = list.first()
+        {
+            let _ = utility::set_exclusive_device(st(), id.clone());
+        }
+        *DEVICES.lock().unwrap() = Some(list);
+        controller::bump();
+    });
+}
+
+/// Exclusive output on or off, from the account menu (turning it off also turns bit-perfect
+/// off, through the controller), with UserMenu's toast.
+pub fn set_exclusive(s: &mut App, on: bool) {
+    controller::send(Cmd::SetExclusive(on));
+    s.nav.set.device_open = false;
+    if on {
+        DEVICES_ASKED.store(false, std::sync::atomic::Ordering::Relaxed);
+        load_devices();
+    }
+    crate::interact::toast(if on { "Exclusive output on — takes effect next track" } else { "Exclusive output off — takes effect next track" }.into(), crate::interact::Kind::Info);
+}
+
+pub fn set_bit_perfect(on: bool) {
+    controller::send(Cmd::SetBitPerfect(on));
+    crate::interact::toast(if on { "Bit-perfect on — takes effect next track" } else { "Bit-perfect off — takes effect next track" }.into(), crate::interact::Kind::Info);
+}
+
+/// The output device picker under Exclusive output (UserMenu): the chosen device, opening to
+/// the list. Nothing while the list is loading or empty.
+pub fn device_picker(s: &App) -> Option<El> {
+    let list = DEVICES.lock().unwrap().clone();
+    let Some(list) = list else {
+        load_devices();
+        return None;
+    };
+    if list.is_empty() {
+        return None;
+    }
+    let chosen = utility::get_exclusive_device(st());
+    let name = list.iter().find(|(id, _)| Some(id) == chosen.as_ref()).map(|(_, n)| n.clone()).unwrap_or_else(|| "Select device".into());
+    let open = s.nav.set.device_open;
+    let mut c = col().w_full().pl(28.0).pr(4.0).py(2.0).gap(2.0)
+        .child(theme::focusable_row(row().key("am-device").role("button").label(format!("Output device: {name}"))).w_full().h(30.0).px(10.0).gap(8.0).radius(7.0).items_center()
+            .fill(white(0.05)).border(1.0, white(0.08)).hover(white(0.09)).cursor(rune::Cursor::Pointer)
+            .on_press(move |s: &mut App| s.nav.set.device_open = !open)
+            .child(text(name).font(t(12.0, 500.0)).color(white(0.8)).truncate().grow(1.0).min_w(0.0).a11y_hidden())
+            .child(crate::glyph::glyph(if open { G::ChevronUp } else { G::ChevronDown }, 12.0, white(0.6))));
+    if open {
+        let mut items = col().w_full().padding(4.0).gap(1.0).radius(8.0).fill(white(0.04)).max_h(160.0).scroll(rune::ScrollSpec { stick_bottom: false });
+        for (i, (id, label)) in list.into_iter().enumerate() {
+            let on = Some(&id) == chosen.as_ref();
+            items = items.child(theme::focusable_row(row().key(format!("am-device-{i}")).role("button").label(label.clone())).w_full().h(28.0).px(8.0).radius(6.0).items_center()
+                .fill(if on { theme::accent().alpha(0.1) } else { white(0.0) }).hover(white(0.07)).cursor(rune::Cursor::Pointer)
+                .on_press(move |s: &mut App| {
+                    s.nav.set.device_open = false;
+                    if let Err(e) = utility::set_exclusive_device(st(), id.clone()) {
+                        crate::interact::toast(format!("Couldn't switch device: {e}"), crate::interact::Kind::Error);
+                    }
+                })
+                .child(text(label).font(t(12.0, 500.0)).color(if on { theme::accent() } else { white(0.8) }).truncate().a11y_hidden()));
+        }
+        c = c.child(items);
+    }
+    Some(c)
 }
 
 // ------------------------------------------------------------------ building blocks

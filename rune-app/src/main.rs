@@ -22,6 +22,7 @@ mod interact;
 mod keys;
 mod mini;
 mod perf;
+mod profile;
 mod queue_ui;
 mod settings;
 mod shell;
@@ -308,7 +309,7 @@ fn view(s: &App, cx: &mut Cx<App>) -> El {
     let (data_version, _frozen) = data::freeze();
     let now_playing = controller::now_playing();
     views::set_now_playing(now_playing);
-    let stores = (data_version, interact::version(), home::version(), now_playing);
+    let stores = (data_version, interact::version(), home::version(), now_playing, art::failures());
     theme::set_ambient(ui::hue(now_playing.0));
     // The root fills the window, so its width is the window's.
     let shell = cx.layout_with("root", |r| views::Shell::for_width(r[2])).unwrap_or_else(|| views::Shell::for_width(initial_size().0));
@@ -357,6 +358,9 @@ fn view(s: &App, cx: &mut Cx<App>) -> El {
     }
     if let Some(m) = views::settings_modal(s) {
         root = root.child(m);
+    }
+    if let Some(d) = profile::edit_dialog(s) {
+        root = root.child(d);
     }
     if let Some(d) = views::dialog(s) {
         root = root.child(d);

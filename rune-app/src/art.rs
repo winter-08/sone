@@ -189,6 +189,15 @@ fn disk_path(url: &str) -> PathBuf {
     cache_dir().join(name)
 }
 
+static FAILURES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// Counts images that failed to load. A failed URL's [`pixels`] answers `None` from then on, so
+/// a region that drew its slot has to build again: main::view gives this to the panes as an
+/// input.
+pub fn failures() -> u64 {
+    FAILURES.load(std::sync::atomic::Ordering::Relaxed)
+}
+
 /// The slot for `url` drawn `pt` points square: empty until the image is in, then filled in
 /// place (the windows showing it redraw; the view doesn't re-run). None with `SONE_ART=0` or
 /// for a URL that failed (see `Held::failed`).
@@ -409,6 +418,9 @@ fn download(url: String, path: PathBuf) {
                     held.failed.insert(url.clone(), None);
                 }
                 Ok(_) => {}
+            }
+            if bytes.is_err() {
+                FAILURES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             }
             w
         };

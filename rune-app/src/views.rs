@@ -32,6 +32,9 @@ pub enum Page {
     Mix(String, String, String),
     /// Loved tracks (React FavoritesView).
     Loved,
+    /// The signed-in user's profile (React ProfilePage), and all its public playlists.
+    Profile,
+    ProfilePlaylists,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -1008,6 +1011,8 @@ pub fn page(s: &App, v: &View) -> El {
         Page::Artist(id) => artist(*id, v),
         Page::Playlist(u) => playlist(s, u, v),
         Page::Settings => col().w_full().gap(18.0).child(heading("Settings", theme::PAGE_TITLE)).child(settings_page(s)),
+        Page::Profile => crate::profile::page(s),
+        Page::ProfilePlaylists => crate::profile::playlists_page(s),
     };
     // `.cache()`: without it Rune culls content outside the viewport, from paint and from the
     // accessibility tree, so screen readers (and the verifier) would miss everything below the fold.
@@ -1361,12 +1366,18 @@ fn menu_item(key: &str, label: &str, checked: Option<bool>, on: impl Fn(&mut App
     r
 }
 
-/// The account menu's first row: who is signed in. It reads as the menu's header (no hover, no
-/// pointer, not a Tab stop), though it keeps the button role and name it has always had.
+/// The account menu's first row: who is signed in, with their picture. It opens the profile
+/// (UserMenu's navigateToProfile).
 fn menu_profile(name: &str) -> El {
-    row().key("am-profile").role("button").label(name).w_full().h(48.0).px(12.0).gap(10.0).items_center()
-        .on_press(|s: &mut App| s.nav.menu_open = false)
-        .child(el().size(30.0, 30.0).radius(15.0).fill(white(0.1)).items_center().justify_center().child(glyph(G::User, 16.0, white(0.8))))
+    let avatar = ui::with_image(el().size(30.0, 30.0).radius(15.0).fill(white(0.1)).clip_rounded(15.0).items_center().justify_center().child(glyph(G::User, 16.0, white(0.8))),
+        crate::profile::avatar(), 30.0, 15.0);
+    theme::focusable_row(row().key("am-profile").role("button").label(name)).w_full().h(48.0).px(12.0).gap(10.0).items_center()
+        .radius(theme::inset_radius(8.0)).hover(white(0.08)).cursor(rune::Cursor::Pointer)
+        .on_press(|s: &mut App| {
+            s.nav.menu_open = false;
+            go(s, Page::Profile);
+        })
+        .child(avatar)
         .child(text(name.to_string()).font(t(14.0, 650.0)).color(white(theme::TEXT)).truncate().grow(1.0).min_w(0.0).a11y_hidden())
 }
 
@@ -1381,9 +1392,15 @@ pub fn account_menu(s: &App, v: &View) -> Option<El> {
     if !name.is_empty() {
         m = m.child(menu_profile(&name)).child(el().w_full().h(1.0).my(4.0).fill(white(0.08)));
     }
+    m = m.child(menu_item("am-exclusive", "Exclusive output", Some(ex), move |s: &mut App| crate::settings::set_exclusive(s, !ex)));
+    // With exclusive output on: the output device, and bit-perfect (UserMenu).
+    if ex {
+        if let Some(d) = crate::settings::device_picker(s) {
+            m = m.child(d);
+        }
+        m = m.child(menu_item("am-bitperfect", "Bit-perfect", Some(bp), move |_: &mut App| crate::settings::set_bit_perfect(!bp)));
+    }
     m = m
-        .child(menu_item("am-exclusive", "Exclusive output", Some(ex), move |_: &mut App| controller::send(Cmd::SetExclusive(!ex))))
-        .child(menu_item("am-bitperfect", "Bit-perfect", Some(bp), move |_: &mut App| controller::send(Cmd::SetBitPerfect(!bp))))
         .child(menu_item("am-settings", "Settings", None, |s: &mut App| {
             s.nav.settings_tab = SettingsTab::Playback;
             s.nav.settings_open = true;

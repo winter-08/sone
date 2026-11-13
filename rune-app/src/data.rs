@@ -41,6 +41,8 @@ pub enum Key {
     AllPlaylists,
     /// Loved tracks, first page (FavoritesView: 100, newest first).
     LovedTracks,
+    /// The signed-in user's full profile (React getProfile): ProfilePage and the account avatar.
+    UserProfile,
 }
 
 #[derive(Clone)]
@@ -242,6 +244,7 @@ async fn fetch(key: &Key) -> Result<Value, String> {
         Key::Credits(id) => v!(metadata::get_track_credits(st(), *id)),
         Key::ArtistBio(id) => v!(pages::get_artist_bio(st(), h.clone(), *id)),
         Key::Mix(id) => v!(pages::get_mix_items(st(), id.clone())),
+        Key::UserProfile => v!(tauri_app_lib::commands::profile::get_profile(st(), user_id())),
         Key::LovedTracks => v!(library::get_favorite_tracks(st(), h.clone(), user_id(), 0, 100, "DATE".into(), "DESC".into())),
         Key::AllPlaylists => v!(library::get_all_playlists(st(), h.clone(), user_id(), 0, 500, "DATE_UPDATED".into(), "DESC".into())),
     })
