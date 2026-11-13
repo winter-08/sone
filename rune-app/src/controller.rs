@@ -81,6 +81,10 @@ pub enum Cmd {
     PlayNextIds(Vec<u64>),
     /// Append these track ids to the manual queue ("Add to queue").
     QueueIds(Vec<u64>),
+    /// Put these items in the manual queue as they are, at the front (`next`, "Play next") or
+    /// at the end (TrackContextMenu passes the row's item: a video in a playlist can't be
+    /// fetched as a track).
+    QueueItems { items: Vec<Value>, next: bool },
     /// Remove the item at this index of the upcoming list (queue panel).
     RemoveAt(usize),
     /// Clear the upcoming list (does not stop the current track).
@@ -495,6 +499,10 @@ fn normalize(mut t: Value) -> Value {
     t
 }
 fn unavailable(t: &Value) -> bool {
+    // videos aren't audio-stream-gated (isTrackUnavailable)
+    if is_video(t) {
+        return false;
+    }
     if t["streamReady"].as_bool() == Some(false) || t["allowStreaming"].as_bool() == Some(false) {
         return true;
     }
@@ -987,6 +995,14 @@ impl Player {
                 let _ = utility::set_max_quality(self.state(), q);
             }
             Cmd::QueueIds(ids) => self.fetch_tracks(ids, "queue", true),
+            Cmd::QueueItems { items, next } => {
+                let stamped: Vec<Value> = items.into_iter().map(|t| self.stamp(normalize(t))).collect();
+                if next {
+                    self.manual.splice(0..0, stamped);
+                } else {
+                    self.manual.extend(stamped);
+                }
+            }
             Cmd::PlayNextIds(ids) => self.fetch_tracks(ids, "play_next", true),
             Cmd::JumpTo(id) => {
                 if let Some(i) = self.upcoming().iter().position(|t| tid(t) == id) {
@@ -2492,5 +2508,17 @@ mod play_from_tests {
         assert_eq!(ids(artist_rest(&all, 0, true, false)), [2, 3, 4, 5]);
         assert_eq!(ids(artist_rest(&all, 2, true, true)), [4, 5, 1, 2]);
         assert_eq!(ids(artist_rest(&all, 2, false, false)), [4, 5, 1, 2]);
+    }
+}
+
+#[cfg(test)]
+mod video_item_tests {
+    use super::unavailable;
+    use serde_json::json;
+
+    #[test]
+    fn a_video_in_a_playlist_is_never_stream_gated() {
+        assert!(!unavailable(&json!({"id": 9, "itemType": "video", "streamReady": false, "allowStreaming": false})));
+        assert!(unavailable(&json!({"id": 9, "itemType": "track", "streamReady": false})));
     }
 }

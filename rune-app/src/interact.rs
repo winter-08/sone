@@ -136,6 +136,9 @@ pub enum Say {
     Loved,
     /// The drawer's hearts: `Added to Loved tracks`.
     LovedShort,
+    /// TrackContextMenu on a video in a playlist: `Added "<t>" to Loved videos`. (React's menu
+    /// favourites a track with the video's id there; this port favourites the video.)
+    LovedVideo,
     /// MediaContextMenu: `Added "<l>" to library`, or `Following "<l>"` for artists.
     Library,
 }
@@ -181,6 +184,8 @@ pub fn toggle_fav(k: Fav, id: String, label: String, say: Say) {
                     (Say::Loved, _, false) => toast(format!("Removed \"{l}\" from Loved tracks"), Kind::Success),
                     (Say::LovedShort, _, true) => toast("Added to Loved tracks".into(), Kind::Success),
                     (Say::LovedShort, _, false) => toast("Removed from Loved tracks".into(), Kind::Success),
+                    (Say::LovedVideo, _, true) => toast(format!("Added \"{l}\" to Loved videos"), Kind::Success),
+                    (Say::LovedVideo, _, false) => toast(format!("Removed \"{l}\" from Loved videos"), Kind::Success),
                     (Say::Library, Fav::Artist, true) => toast(format!("Following \"{l}\""), Kind::Success),
                     (Say::Library, Fav::Artist, false) => toast(format!("Unfollowed \"{l}\""), Kind::Success),
                     (Say::Library, _, true) => toast(format!("Added \"{l}\" to library"), Kind::Success),
@@ -197,6 +202,7 @@ pub fn toggle_fav(k: Fav, id: String, label: String, say: Say) {
                 bump();
                 match say {
                     Say::Loved | Say::LovedShort => toast("Failed to update Loved tracks".into(), Kind::Error),
+                    Say::LovedVideo => toast("Failed to update Loved videos".into(), Kind::Error),
                     Say::Library => toast("Failed to update library".into(), Kind::Error),
                     Say::Nothing => {}
                 }
@@ -644,32 +650,45 @@ fn track_menu(track: &Value, playlist: Option<&InPlaylist>, c: &Ctx) -> El {
     let id = track_id(track);
     let title = title_of(track);
     let d = data::data(track);
-    let ok = d["streamReady"].as_bool() != Some(false) && d["allowStreaming"].as_bool() != Some(false);
-    let loved = is_fav(Fav::Track, &id.to_string());
+    // A playlist can hold music videos (`itemType: "video"`): they're never stream-gated, they
+    // queue as the item itself (there's no track to fetch by that id), favourite as videos,
+    // have no track radio and share as a video.
+    let video = d["itemType"].as_str() == Some("video");
+    let ok = video || (d["streamReady"].as_bool() != Some(false) && d["allowStreaming"].as_bool() != Some(false));
+    let fav = if video { Fav::Video } else { Fav::Track };
+    let loved = is_fav(fav, &id.to_string());
     let t1 = title.clone();
     let t2 = title.clone();
     let t3 = title.clone();
+    let (item1, item2) = (d.clone(), d.clone());
+    let love_label = match (video, loved) {
+        (false, true) => "Remove from Loved tracks",
+        (false, false) => "Add to Loved tracks",
+        (true, true) => "Remove from Loved videos",
+        (true, false) => "Add to Loved videos",
+    };
     let mut m = panel("ctx-menu", 240.0)
         .child(mi("ctx-next", "Play next", G::ListEnd, false, ok, move |s, _| {
-            controller::send(Cmd::PlayNextIds(vec![id]));
+            controller::send(if video { Cmd::QueueItems { items: vec![item1.clone()], next: true } } else { Cmd::PlayNextIds(vec![id]) });
             toast(format!("\"{}\" will play next", clip(&t1, 28)), Kind::Success);
             close(s);
         }))
         .child(mi("ctx-queue", "Add to play queue", G::ListPlus, false, ok, move |s, _| {
-            controller::send(Cmd::QueueIds(vec![id]));
+            controller::send(if video { Cmd::QueueItems { items: vec![item2.clone()], next: false } } else { Cmd::QueueIds(vec![id]) });
             toast(format!("Added \"{}\" to queue", clip(&t2, 28)), Kind::Success);
             close(s);
         }))
         .child(sep())
         .child(mi_sub("ctx-add", "Add to playlist", G::List, matches!(c.sub, Some(Sub::AddToPlaylist { .. })), Which::Add))
-        .child(mi("ctx-love", if loved { "Remove from Loved tracks" } else { "Add to Loved tracks" }, if loved { G::HeartFilled } else { G::Heart }, loved, true, move |s, _| {
-            toggle_fav(Fav::Track, id.to_string(), t3.clone(), Say::Loved);
+        .child(mi("ctx-love", love_label, if loved { G::HeartFilled } else { G::Heart }, loved, true, move |s, _| {
+            toggle_fav(fav, id.to_string(), t3.clone(), if video { Say::LovedVideo } else { Say::Loved });
             close(s);
         }));
-    // Track radio: hidden when the track says it has none (React: `mixes` without TRACK_MIX).
+    // Track radio: hidden when the track says it has none (React: `mixes` without TRACK_MIX),
+    // and for videos.
     let mix = d["mixes"]["TRACK_MIX"].as_str().map(str::to_string);
     let has_mixes = d["mixes"].is_object();
-    if mix.is_some() || !has_mixes {
+    if !video && (mix.is_some() || !has_mixes) {
         let (t4, artist) = (title.clone(), data::artist_of(track));
         m = m.child(sep()).child(mi("ctx-radio", "Go to track radio", G::Radio, false, true, move |s, _| {
             close(s);
@@ -694,7 +713,7 @@ fn track_menu(track: &Value, playlist: Option<&InPlaylist>, c: &Ctx) -> El {
         }));
     }
     m = m.child(sep()).child(mi("ctx-share", "Share", G::Link, false, true, move |s, tx| {
-        share(tx, share_url("track", &id.to_string()));
+        share(tx, share_url(if video { "video" } else { "track" }, &id.to_string()));
         close(s);
     }));
     if let Some(p) = playlist {

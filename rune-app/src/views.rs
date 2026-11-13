@@ -316,7 +316,9 @@ fn track_row_with(key: String, n: usize, tr: &Value, actions: bool, pl: Option<c
         )
         .child(text(ui::fmt_time(dur as f64)).font(ui::tnum(t(12.0, 400.0))).color(white(0.55)).w(48.0));
     if actions {
-        let loved = interact::is_fav(Fav::Track, &id.to_string());
+        // TrackList: a video's heart (a playlist can hold videos) favourites the video.
+        let fav = if d["itemType"].as_str() == Some("video") { Fav::Video } else { Fav::Track };
+        let loved = interact::is_fav(fav, &id.to_string());
         let (more_key, add_key) = (format!("{key}-more"), format!("{key}-add"));
         let (t1, t2, mk, ak) = (tr.clone(), tr.clone(), more_key.clone(), add_key.clone());
         r = r
@@ -330,7 +332,7 @@ fn track_row_with(key: String, n: usize, tr: &Value, actions: bool, pl: Option<c
                 .child(glyph(G::More, 18.0, white(0.75)).group_opacity(0.3, 1.0)))
             .child(icon::<App>(&add_key, "Add to playlist", G::Plus).on_press(move |s: &mut App| interact::open_add_below(s, t2.clone(), ak.clone())))
             .child(ui::icon_button::<App>(&format!("{key}-fav"), if loved { "Remove from favorites" } else { "Add to favorites" }, if loved { G::HeartFilled } else { G::Heart }, 18.0, if loved { accent() } else { white(0.75) })
-                .on_press(move |_: &mut App| interact::toggle_fav(Fav::Track, id.to_string(), title.clone(), Say::Nothing)));
+                .on_press(move |_: &mut App| interact::toggle_fav(fav, id.to_string(), title.clone(), Say::Nothing)));
     }
     r
 }
