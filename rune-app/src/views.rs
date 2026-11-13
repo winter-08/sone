@@ -2063,7 +2063,8 @@ pub fn drawer(s: &App, v: &View, shell: Shell) -> Option<El> {
     // right edge. Either way it starts under the header, which keeps the window controls.
     // With the cover column, the landmark is the row holding both (below); the tabs are its
     // right column.
-    let d = if wide { col().w(shell.drawer_w) } else { col().key("drawer").role("complementary").label("Now playing panel").w(shell.drawer_w) };
+    // (the region's root carries its key, "drawer": a sheet's root is the layer holding it)
+    let d = if wide { col().w(shell.drawer_w) } else { col().key(if shell.drawer_docked { "drawer" } else { "drawer-panel" }).role("complementary").label("Now playing panel").w(shell.drawer_w) };
     let d = if shell.drawer_docked { d.h_full() } else { d.pin(None, Some(0.0), Some(0.0), Some(0.0)).border(1.0, white(0.06)).shadow(0.0, 32.0, theme::black(0.45)) };
     // The album's colour washing down from the top (React's overlayGradient: vibrantColor at
     // 0.28, clear by 90%), else the cover's own most vivid colour.
@@ -2101,6 +2102,10 @@ pub fn drawer(s: &App, v: &View, shell: Shell) -> Option<El> {
             .child(glyph(G::Mic, 14.0, theme::ink()))
             .child(text("Sync lyrics").font(t(12.0, 700.0)).color(theme::ink()).a11y_hidden()));
     }
+    // It slides in from the right as it opens (React's sheet slides up, 250 ms on
+    // cubic-bezier(0.32, 0.72, 0, 1)): a one-shot transition, nothing at rest.
+    let slide = || rune::Transition::offset(48.0, 0.0).combined(rune::Transition::opacity())
+        .springs(rune::SpringPair::new(rune::Spring::new(0.25, 0.0), rune::Spring::new(0.18, 0.0)));
     if wide {
         let outer = row().key("drawer").role("complementary").label("Now playing panel").w(shell.drawer_cover + shell.drawer_w).h_full().fill(theme::drawer_bg());
         let outer = match cover_col {
@@ -2108,7 +2113,15 @@ pub fn drawer(s: &App, v: &View, shell: Shell) -> Option<El> {
             // (nothing playing: the tabs alone, at the full width)
             None => outer,
         };
-        return Some(wash(outer).child(d.grow(1.0)));
+        return Some(wash(outer).child(d.grow(1.0)).transition(slide()));
+    }
+    let d = d.transition(slide());
+    if !shell.drawer_docked {
+        // Over the page, a press beside the sheet closes it (React's backdrop).
+        let scrim = el().key("drawer-scrim").pin(Some(0.0), Some(0.0), Some(0.0), Some(0.0)).fill(theme::black(0.35)).a11y_hidden()
+            .transition(rune::Transition::opacity().springs(rune::SpringPair::new(rune::Spring::new(0.2, 0.0), rune::Spring::new(0.2, 0.0))))
+            .on_press(|s: &mut App| *s.nav.drawer = None);
+        return Some(el().key("drawer").pin(Some(0.0), Some(0.0), Some(0.0), Some(0.0)).child(scrim).child(d));
     }
     Some(d)
 }
