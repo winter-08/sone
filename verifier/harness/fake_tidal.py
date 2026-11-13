@@ -184,6 +184,71 @@ def folders_route(flow: http.HTTPFlow, path: str) -> bool:
     return False
 
 
+# Fixtures for collection pages, for exercising them by hand (all off by default):
+#   SPIKE_ARTIST_VIEWALL=1: artist 7's Top tracks and Albums modules get a viewAll path, answered
+#     by /v2/artist/ARTIST_TOP_TRACKS/view-all (the fixture tracks) and ARTIST_ALBUMS (its albums).
+#   SPIKE_RECS=1: Fixture Mixtape's recommended tracks are 1005-1007, then 1001-1003 at offset
+#     50, then none (so Refresh walks the batches and wraps).
+# Editing a playlist (PATCH openapi.tidal.com/v2/playlists/{id}) is always answered 204, and the
+# playlist's details then carry the new title, description and access.
+ARTIST_VIEWALL = bool(os.environ.get("SPIKE_ARTIST_VIEWALL"))
+RECS = bool(os.environ.get("SPIKE_RECS"))
+EDITS: dict = {}  # playlist uuid -> {"name", "description", "accessType"}
+
+
+def catalog_json(name: str):
+    return json.load(open(os.path.join(ctx.options.fixtures, "catalog", name)))
+
+
+def extras_route(flow: http.HTTPFlow, host: str, path: str, method: str) -> bool:
+    q = flow.request.query
+    if host == "openapi.tidal.com" and method == "PATCH" and (m := re.fullmatch(r"/v2/playlists/([0-9a-f-]+)", path)):
+        attrs = json.loads(flow.request.get_text() or "{}").get("data", {}).get("attributes", {})
+        EDITS[m.group(1)] = attrs
+        flow.response = http.Response.make(204, b"", {})
+        return True
+    if host != "api.tidal.com":
+        return False
+    if method == "GET" and (m := re.fullmatch(r"/v1/playlists/([0-9a-f-]+)", path)) and m.group(1) in EDITS:
+        name = {P1: "playlist_p1.json", "66666666-7777-8888-9999-aaaaaaaaaaaa": "playlist_p2.json"}.get(m.group(1))
+        if name:
+            d = catalog_json(name)
+            e = EDITS[m.group(1)]
+            d["title"] = e.get("name", d.get("title"))
+            d["description"] = e.get("description", d.get("description"))
+            if "accessType" in e:
+                d["publicPlaylist"] = e["accessType"] == "PUBLIC"
+            respond(flow, 200, d)
+            return True
+    if RECS and method == "GET" and path == f"/v1/playlists/{P1}/recommendations/items":
+        off = int(q.get("offset", "0") or 0)
+        ids = {0: [1005, 1006, 1007], 50: [1001, 1002, 1003]}.get(off, [])
+        items = [{"item": track_json(t), "type": "track"} for t in ids]
+        respond(flow, 200, {"limit": 50, "offset": off, "totalNumberOfItems": len(items), "items": items})
+        return True
+    if ARTIST_VIEWALL and method == "GET":
+        if path == "/v2/artist/7":
+            d = catalog_json("artist_page_7.json")
+            for mod in d.get("items", []):
+                if mod.get("moduleId") == "ARTIST_TOP_TRACKS":
+                    mod["viewAll"] = "artist/ARTIST_TOP_TRACKS/view-all"
+                elif mod.get("moduleId") == "ARTIST_ALBUMS":
+                    mod["viewAll"] = "artist/ARTIST_ALBUMS/view-all"
+            respond(flow, 200, d)
+            return True
+        if path == "/v2/artist/ARTIST_TOP_TRACKS/view-all":
+            off = int(q.get("offset", "0") or 0)
+            ids = list(range(1001, 1008))[off:]
+            respond(flow, 200, {"items": [{"type": "TRACK", "data": track_json(t)} for t in ids]})
+            return True
+        if path == "/v2/artist/ARTIST_ALBUMS/view-all":
+            off = int(q.get("offset", "0") or 0)
+            albums = [catalog_json(f)["album"] if "album" in catalog_json(f) else catalog_json(f) for f in ("album_77.json", "album_78.json")]
+            respond(flow, 200, {"items": [{"type": "ALBUM", "data": a} for a in albums][off:]})
+            return True
+    return False
+
+
 def is_big(tid: int) -> bool:
     return BIG > 0 and BIG_BASE < tid <= BIG_BASE + BIG
 
@@ -254,6 +319,8 @@ def serve_file(flow: http.HTTPFlow, p: str, ctype: str):
 
 def route(flow: http.HTTPFlow) -> bool:
     host, path, method = flow.request.pretty_host, flow.request.path.split("?")[0], flow.request.method
+    if extras_route(flow, host, path, method):
+        return True
 
     if host == "auth.tidal.com":
         # Device code sign-in (catalog/README.md, "Sign-in"): every /device_authorization issues
