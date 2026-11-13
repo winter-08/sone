@@ -474,6 +474,8 @@ pub enum Sub {
     AddToPlaylist { ids: Vec<u64>, all: bool, query: TextEdit, anchor: String, below: bool },
     /// Move to folder (library.rs): `all` shows every folder, found by `query`.
     MoveToFolder { uuid: String, label: String, all: bool, query: TextEdit },
+    /// Go to artist's list of the track's artists (beside the menu's "Go to artist").
+    Artists,
 }
 
 #[derive(Clone, Debug)]
@@ -493,6 +495,8 @@ pub struct Ctx {
 pub enum Which {
     Add,
     Move,
+    /// Go to artist, on a track with several artists.
+    Artist,
 }
 
 /// Hover intent, as desktop menus have it (React SONE opens submenus on click only; this port
@@ -627,7 +631,7 @@ fn mi_sub(key: &str, label: &str, g: G, open: bool, which: Which) -> El {
             if inside {
                 tx.wake_after(OPEN_DELAY);
             }
-            let showing = matches!((&c.sub, which), (Some(Sub::AddToPlaylist { .. }), Which::Add) | (Some(Sub::MoveToFolder { .. }), Which::Move));
+            let showing = matches!((&c.sub, which), (Some(Sub::AddToPlaylist { .. }), Which::Add) | (Some(Sub::MoveToFolder { .. }), Which::Move) | (Some(Sub::Artists), Which::Artist));
             c.intent = match (inside, showing, c.intent) {
                 (true, true, _) => None,
                 (true, false, _) => Some(Intent::Open(which, Instant::now() + OPEN_DELAY)),
@@ -771,9 +775,16 @@ fn track_menu(track: &Value, playlist: Option<&InPlaylist>, c: &Ctx) -> El {
     // and for videos.
     let mix = d["mixes"]["TRACK_MIX"].as_str().map(str::to_string);
     let has_mixes = d["mixes"].is_object();
-    if !video && (mix.is_some() || !has_mixes) {
+    let radio = !video && (mix.is_some() || !has_mixes);
+    // Go to artist (TIDAL's menu has it; React SONE's doesn't): with the track radio, or in a
+    // group of its own. One artist: their page; several: a submenu of them.
+    let artists = track_artists(d);
+    if radio || !artists.is_empty() {
+        m = m.child(sep());
+    }
+    if radio {
         let (t4, artist) = (title.clone(), data::artist_of(track));
-        m = m.child(sep()).child(mi("ctx-radio", "Go to track radio", G::Radio, false, true, move |s, _| {
+        m = m.child(mi("ctx-radio", "Go to track radio", G::Radio, false, true, move |s, _| {
             close(s);
             match &mix {
                 Some(mid) => go_radio(s, mid.clone(), &t4, &artist),
@@ -794,6 +805,18 @@ fn track_menu(track: &Value, playlist: Option<&InPlaylist>, c: &Ctx) -> El {
                 }
             }
         }));
+    }
+    match artists.as_slice() {
+        [] => {}
+        // (on that artist's own page it closes the menu, as the track radio does on its own)
+        [(_, aid)] => {
+            let aid = *aid;
+            m = m.child(mi("ctx-artist", "Go to artist", G::User, false, true, move |s, _| {
+                close(s);
+                views::go(s, Page::Artist(aid));
+            }));
+        }
+        _ => m = m.child(mi_sub("ctx-artist", "Go to artist", G::User, matches!(c.sub, Some(Sub::Artists)), Which::Artist)),
     }
     m = m.child(sep()).child(mi("ctx-share", "Share", G::Link, false, true, move |s, tx| {
         share(tx, share_url(if video { "video" } else { "track" }, &id.to_string()));
@@ -844,6 +867,38 @@ fn queue_track(t: Value, next: bool) {
             None => toast("Couldn't load tracks".into(), Kind::Error),
         }
     });
+}
+
+/// A track's (or video's) artists that have a page: (name, id), in credit order, each once.
+fn track_artists(d: &Value) -> Vec<(String, u64)> {
+    let list = d["artists"].as_array().filter(|a| !a.is_empty()).cloned().unwrap_or_else(|| vec![d["artist"].clone()]);
+    let mut out: Vec<(String, u64)> = vec![];
+    for a in &list {
+        if let (Some(name), Some(id)) = (a["name"].as_str(), a["id"].as_u64().filter(|i| *i != 0))
+            && !out.iter().any(|(_, x)| *x == id)
+        {
+            out.push((name.to_string(), id));
+        }
+    }
+    out
+}
+
+/// Go to artist's submenu: each artist by name, opening their page.
+fn artists_menu(artists: &[(String, u64)]) -> El {
+    let mut m = panel("ctx-sub", 240.0).anchored("ctx-artist", Side::Right, rune::Align::Start, 6.0);
+    for (i, (name, aid)) in artists.iter().enumerate() {
+        let aid = *aid;
+        // a menu row, as `mi` draws them (but hovering it keeps its submenu open)
+        m = m.child(theme::focusable_row(row().key(format!("ctx-artist-{i}")).role("button").label(name.as_str())).w_full().radius(MENU_ROW_R).px(16.0).h(40.0).gap(12.0).items_center()
+            .hover(white(0.06)).cursor(rune::Cursor::Pointer)
+            .on_press(move |s: &mut App| {
+                close(s);
+                views::go(s, Page::Artist(aid));
+            })
+            .child(glyph(G::User, 18.0, white(0.5)))
+            .child(text(name.clone()).font(t(14.0, 500.0)).color(white(0.78)).truncate().a11y_hidden()));
+    }
+    m
 }
 
 static PENDING_NAV: LazyLock<Mutex<Option<Page>>> = LazyLock::new(Default::default);
@@ -1082,6 +1137,10 @@ fn track_sub(s: &App, c: &Ctx) -> Option<El> {
     let sub = match c.sub.as_ref()? {
         Sub::AddToPlaylist { ids, all, query, anchor, below } => add_menu(ids, *all, query, anchor, *below),
         Sub::MoveToFolder { uuid, label, all, query } => crate::library::move_menu(s, uuid, label, *all, query, "ctx-move"),
+        Sub::Artists => match &c.target {
+            Target::Track { track, .. } => artists_menu(&track_artists(data::data(track))),
+            Target::Media { .. } => return None,
+        },
     };
     // reaching the submenu keeps it open
     Some(sub.on_hover_change(|s: &mut App, inside, _| {
@@ -1133,6 +1192,7 @@ fn open_sub(s: &mut App, which: Which) {
         (Which::Move, Target::Media { item, kind: Media::Playlist }) => {
             c.sub = Some(Sub::MoveToFolder { uuid: data::data(&item)["uuid"].as_str().unwrap_or("").to_string(), label: data::name(&item), all: false, query: TextEdit::new("") });
         }
+        (Which::Artist, Target::Track { .. }) => c.sub = Some(Sub::Artists),
         _ => {}
     }
 }
@@ -1498,6 +1558,17 @@ mod add_to_playlist_tests {
         assert_eq!(add_result_toast(3, 2, 1, "Mix"), ("Added 2 tracks to \"Mix\" · 1 already there".into(), Some("Add them too")));
         assert_eq!(add_again_toast(1, 1, "Mix"), "Added to \"Mix\" again");
         assert_eq!(add_again_toast(3, 1, "Mix"), "Added 1 track again to \"Mix\"");
+    }
+
+    #[test]
+    fn go_to_artist_lists_artists_with_a_page() {
+        let a = |v: Value| track_artists(&v);
+        assert_eq!(a(json!({"artists": [{"id": 8, "name": "Mock Ensemble"}, {"id": 7, "name": "Fixture Artist"}]})),
+            vec![("Mock Ensemble".to_string(), 8), ("Fixture Artist".to_string(), 7)]);
+        // no id, a repeat, or only the singular artist
+        assert_eq!(a(json!({"artists": [{"name": "Nobody"}, {"id": 7, "name": "A"}, {"id": 7, "name": "A"}]})), vec![("A".to_string(), 7)]);
+        assert_eq!(a(json!({"artist": {"id": 9, "name": "Solo"}})), vec![("Solo".to_string(), 9)]);
+        assert_eq!(a(json!({"artist": {"name": "No id"}})), vec![]);
     }
 
     #[test]

@@ -204,7 +204,8 @@ def folders_route(flow: http.HTTPFlow, path: str) -> bool:
 #     2), Fixture Mixtape's tracks carry dates added (2, 10 and 20 days ago, then 2023-03-04),
 #     and search suggestions start with "fixture history" from the server's search history.
 #   SPIKE_HOME_EXTRA=1: the Home feed (For You) also has a "Recently played" compact grid (album
-#     77, Fixture Mixtape, track 1005, artist 7) and a "Fresh Tracks" track list (1006, 1007).
+#     77, Fixture Mixtape, track 1005, artist 7) and a "Fresh Tracks" track list (1006, and 1007
+#     credited to Mock Ensemble and Fixture Artist).
 #     A profile whose cached Home predates it shows them only once Home is refreshed.
 #   SPIKE_HOME_TABS=1: Home has a second tab, "Staff Picks" (EDITORIAL), whose feed fails (500).
 ARTIST_VIEWALL = bool(os.environ.get("SPIKE_ARTIST_VIEWALL"))
@@ -275,8 +276,11 @@ def extras_route(flow: http.HTTPFlow, host: str, path: str, method: str) -> bool
             d["items"].insert(1, {"type": "COMPACT_GRID_CARD", "moduleId": "RECENTLY_PLAYED", "title": "Recently played", "items": [
                 {"type": "ALBUM", "data": album}, {"type": "PLAYLIST", "data": pl},
                 {"type": "TRACK", "data": track_json(1005)}, {"type": "ARTIST", "data": catalog_json("artist_7.json")}]})
+            # (1007 here is credited to both fixture artists, for menus that list a track's artists)
+            duo = track_json(1007)
+            duo["artists"] = [duo["artist"], {"id": 7, "name": "Fixture Artist", "type": "FEATURED"}]
             d["items"].append({"type": "TRACK_LIST", "moduleId": "FRESH_TRACKS", "title": "Fresh Tracks",
-                               "items": [{"type": "TRACK", "data": track_json(t)} for t in (1006, 1007)]})
+                               "items": [{"type": "TRACK", "data": track_json(1006)}, {"type": "TRACK", "data": duo}]})
         respond(flow, 200, d)
         return True
     if method == "GET" and (m := re.fullmatch(r"/v1/playlists/([0-9a-f-]+)", path)) and m.group(1) in EDITS:

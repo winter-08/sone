@@ -328,7 +328,7 @@ fn bar(s: &App, v: &View, cur: &QItem, w: f32, first: bool, shown: bool) -> El {
             interact::toggle_fav(Fav::Track, fid.clone(), fl.clone(), Say::Nothing)
         })
         .child(mark);
-    let track = interact::json_of_track(cur.id, &cur.title, &cur.artist);
+    let track = (*cur.track).clone();
     let more = ui::icon_button::<App>("full-more", "More options", G::More, 16.0, white(0.45))
         .on_press(move |s: &mut App| interact::open_track(s, track.clone(), None, Anchor::Below("full-more".into())));
     // A new track's words fade in over the last one's place.
