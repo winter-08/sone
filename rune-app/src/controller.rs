@@ -3044,7 +3044,7 @@ impl Player {
             track_mix: self.current.as_ref().and_then(|t| t["mixes"]["TRACK_MIX"].as_str()).map(str::to_string),
             artist_id: self.current.as_ref().and_then(|t| t["artist"]["id"].as_u64().or(t["artists"][0]["id"].as_u64())),
             // With the stream gone (track ended), the React badge shows the track's tier.
-            badge: badge_text(&self.stream_info).or_else(|| self.current.as_ref().and_then(|t| tier(t["audioQuality"].as_str()).map(str::to_string))),
+            badge: badge_text(&self.stream_info, self.current.as_ref().and_then(|t| t["audioQuality"].as_str())).or_else(|| self.current.as_ref().and_then(|t| tier(t["audioQuality"].as_str()).map(str::to_string))),
             cover: self.current.as_ref().and_then(|t| if is_video(t) { t["imageId"].as_str() } else { t["album"]["cover"].as_str() }).filter(|c| !c.is_empty()).map(str::to_string),
             video: self.current.as_ref().filter(|t| is_video(t)).map(|t| VideoInfo {
                 id: tid(t),
@@ -3144,7 +3144,7 @@ async fn join_all<F: std::future::Future>(futs: impl IntoIterator<Item = F>) -> 
 
 /// The player bar's quality badge, e.g. "16-BIT 44.1kHz FLAC LOSSLESS" (bit depth, rate with
 /// one decimal when fractional, codec, then the TIDAL tier as the React badge shows it).
-fn badge_text(info: &Option<Value>) -> Option<String> {
+fn badge_text(info: &Option<Value>, track_tier: Option<&str>) -> Option<String> {
     let i = info.as_ref()?;
     let mut parts = vec![];
     if let Some(b) = i["bitDepth"].as_u64() {
@@ -3157,7 +3157,8 @@ fn badge_text(info: &Option<Value>) -> Option<String> {
     if let Some(c) = i["codec"].as_str() {
         parts.push(c.to_uppercase());
     }
-    if let Some(t) = tier(i["audioQuality"].as_str()) {
+    // (the stream's tier, else the track's: `streamInfo?.audioQuality || track.audioQuality`)
+    if let Some(t) = tier(i["audioQuality"].as_str().filter(|q| !q.is_empty()).or(track_tier)) {
         parts.push(t.to_string());
     }
     (!parts.is_empty()).then(|| parts.join(" "))
@@ -3167,9 +3168,9 @@ fn tier(q: Option<&str>) -> Option<&str> {
     match q? {
         "HI_RES_LOSSLESS" | "HI_RES" => Some("HI-RES LOSSLESS"),
         "LOSSLESS" => Some("LOSSLESS"),
-        "HIGH" => Some("HIGH"),
         "" => None,
-        other => Some(other),
+        // QualityBadge: anything else (HIGH, LOW, a tier it doesn't know) reads "HIGH"
+        _ => Some("HIGH"),
     }
 }
 

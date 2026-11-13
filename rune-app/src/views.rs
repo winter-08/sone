@@ -1262,9 +1262,7 @@ pub fn bar_extras(v: &View, shell: Shell, drawer: Option<Drawer>) -> El {
         }
         // QualityBadge: opens the signal path panel ("Show signal path").
         if let Some(b) = v.badge.as_ref().filter(|_| shell.bar_badge) {
-            r = r.child(theme::focusable(row().key("badge").role("button").label(b.clone())).h(22.0).px(8.0).radius(6.0).items_center().fill(white(0.1)).hover(white(0.16)).cursor(rune::Cursor::Pointer)
-                .on_press(crate::signal_path::open)
-                .child(text(b.clone()).font(t(10.0, 650.0).tracking(0.6)).color(white(0.8)).a11y_hidden()));
+            r = r.child(quality_badge(b));
         }
     }
     // (the open drawer tab's button, and the miniplayer's while it's open, in the accent)
@@ -1286,6 +1284,30 @@ pub fn bar_extras(v: &View, shell: Shell, drawer: Option<Drawer>) -> El {
         r = r.child(icon::<App>("full", "Fullscreen player", G::Maximize).on_press_tx(move |s: &mut App, tx: &mut Tx| crate::video_ui::open_fullscreen(s, tx, open)));
     }
     r
+}
+
+/// QualityBadge: the stream's detail ("24-BIT 96kHz FLAC") small over the tier's pill, which is
+/// the accent for Max, the accent at 70% for Lossless and a neutral fill otherwise. Its name is
+/// the whole text; a press opens the signal path panel ("Show signal path").
+fn quality_badge(b: &str) -> El {
+    let (detail, tier) = ["HI-RES LOSSLESS", "LOSSLESS", "HIGH"].into_iter()
+        .find_map(|t| b.strip_suffix(t).map(|d| (d.trim_end(), t)))
+        .unwrap_or(("", b));
+    let (fill, ink) = match tier {
+        "HI-RES LOSSLESS" => (accent(), theme::ink()),
+        "LOSSLESS" => (accent().alpha(0.7), theme::ink()),
+        _ => (white(0.14), white(0.95)),
+    };
+    let pill = row().h(15.0).px(7.0).radius(4.0).items_center().fill(fill)
+        .child(text(tier).font(t(9.0, 900.0).tracking(0.9)).color(ink));
+    let mut c = col().items_end().gap(2.0);
+    if !detail.is_empty() {
+        c = c.child(text(detail.to_string()).font(t(9.0, 500.0).tracking(0.4)).color(white(0.45)).a11y_hidden());
+    }
+    theme::focusable(c.key("badge").role("button").label(b.to_string())).px(4.0).py(2.0).radius(4.0)
+        .hover(white(0.06)).cursor(rune::Cursor::Pointer)
+        .on_press(crate::signal_path::open)
+        .child(pill.a11y_hidden())
 }
 
 /// What pressing the bar's cover does, with its accessible name: a minimised video's picture
