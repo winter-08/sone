@@ -50,9 +50,67 @@ pub fn version() -> u64 {
     ARROWS.with(|a| a.get())
 }
 
+/// The feed's tabs as the last Home page that listed them had them (React's `cachedTabs`): a tab
+/// still loading, or one that failed, keeps the tab bar, so there's always a way back.
+static TABS: std::sync::Mutex<Vec<Value>> = std::sync::Mutex::new(Vec::new());
+
+/// How many further pages of each tab were shown, so a tab switched back to shows as much as it
+/// did (React keeps each tab's sections, with the pages it loaded, in its tab cache).
+static PAGES: std::sync::LazyLock<std::sync::Mutex<HashMap<String, usize>>> = std::sync::LazyLock::new(Default::default);
+
+/// Switch Home to the tab `slug`, keeping the page count of the one it leaves.
+fn switch_tab(s: &mut App, slug: &str) {
+    if *s.nav.home_tab == slug {
+        return;
+    }
+    let mut pages = PAGES.lock().unwrap();
+    pages.insert((*s.nav.home_tab).clone(), *s.nav.home_pages);
+    let n = pages.get(slug).copied().unwrap_or(0);
+    drop(pages);
+    *s.nav.home_tab = slug.to_string();
+    if *s.nav.home_pages != n {
+        *s.nav.home_pages = n;
+    }
+}
+
+fn tab_bar(tabs: &[Value], slug: &str) -> El {
+    let mut bar = row().gap(8.0).flex_wrap().role("tablist").focus_group();
+    for tab in tabs {
+        let name = tab["name"].as_str().unwrap_or("").to_string();
+        let tslug = tab["tabType"].as_str().unwrap_or("").to_lowercase();
+        let on = tslug == slug;
+        bar = bar.child(theme::focusable(row().key(format!("home-tab-{tslug}")).role("tab").label(name.clone())).focus_selected(on).h(36.0).px(16.0).radius(18.0).items_center()
+            .fill(if on { white(0.95) } else { white(0.08) }).hover(if on { white(0.95) } else { white(0.14) }).cursor(rune::Cursor::Pointer)
+            .on_press(move |s: &mut App| switch_tab(s, &tslug))
+            .child(text(name).font(t(14.0, 700.0)).color(if on { theme::ink() } else { white(0.92) }).a11y_hidden()));
+    }
+    bar
+}
+
 pub fn home(s: &App) -> El {
     let slug = (*s.nav.home_tab).clone();
-    let first = match views::ready_or(Key::Home(slug.clone())) { Ok(v) => v, Err(e) => return e };
+    let load = data::want(Key::Home(slug.clone()));
+    if let data::Load::Ready(first) = &load {
+        let tabs = first["home"]["tabs"].as_array().cloned().unwrap_or_default();
+        if !tabs.is_empty() {
+            *TABS.lock().unwrap() = tabs.clone();
+            // Home.tsx: once the first tab is in, the others load behind it.
+            for t in &tabs {
+                let other = t["tabType"].as_str().unwrap_or("").to_lowercase();
+                if !other.is_empty() && other != slug {
+                    data::want(Key::Home(other));
+                }
+            }
+        }
+    }
+    let tabs = TABS.lock().unwrap().clone();
+    let first = match load {
+        data::Load::Ready(v) => v,
+        // A tab still loading or that failed keeps the bar above it.
+        data::Load::Loading if !tabs.is_empty() => return col().w_full().gap(32.0).child(tab_bar(&tabs, &slug)).child(views::loading()),
+        data::Load::Loading => return views::loading(),
+        data::Load::Failed(e) => return failed(&tabs, &slug, &e),
+    };
     let home = &first["home"];
     let w = *s.nav.content_w;
     // Rows and grids are sized to the measured width; until the first layout measures it, drawing
@@ -61,25 +119,8 @@ pub fn home(s: &App) -> El {
         return col().w_full();
     }
     let mut c = col().w_full().gap(32.0);
-
-    let tabs = home["tabs"].as_array().cloned().unwrap_or_default();
     if !tabs.is_empty() {
-        let mut bar = row().gap(8.0).flex_wrap().role("tablist").focus_group();
-        for tab in &tabs {
-            let name = tab["name"].as_str().unwrap_or("").to_string();
-            let tslug = tab["tabType"].as_str().unwrap_or("").to_lowercase();
-            let on = tslug == slug;
-            bar = bar.child(theme::focusable(row().key(format!("home-tab-{tslug}")).role("tab").label(name.clone())).focus_selected(on).h(36.0).px(16.0).radius(18.0).items_center()
-                .fill(if on { white(0.95) } else { white(0.08) }).hover(if on { white(0.95) } else { white(0.14) }).cursor(rune::Cursor::Pointer)
-                .on_press(move |s: &mut App| {
-                    if *s.nav.home_tab != tslug {
-                        *s.nav.home_tab = tslug.clone();
-                        *s.nav.home_pages = 0;
-                    }
-                })
-                .child(text(name).font(t(14.0, 700.0)).color(if on { theme::ink() } else { white(0.92) }).a11y_hidden()));
-        }
-        c = c.child(bar);
+        c = c.child(tab_bar(&tabs, &slug));
     }
 
     // The first page's sections, then each further page asked for so far.
@@ -122,6 +163,21 @@ pub fn home(s: &App) -> El {
     }
     c
 }
+
+/// A tab that couldn't load (Home.tsx): the tab bar, "Couldn't load Home", why, and Retry.
+fn failed(tabs: &[Value], slug: &str, why: &str) -> El {
+    let mut c = col().w_full().gap(32.0);
+    if !tabs.is_empty() {
+        c = c.child(tab_bar(tabs, slug));
+    }
+    let key = Key::Home(slug.to_string());
+    c.child(col().w_full().gap(6.0).py(60.0).items_center()
+        .child(text("Couldn't load Home").font(t(14.0, 600.0)).color(white(0.92)))
+        .child(text(why.to_string()).font(t(12.0, 400.0)).color(white(0.45)).wrap())
+        .child(el().h(10.0))
+        .child(views::button::<App>("home-retry", "Retry", None, false).on_press(move |_: &mut App| data::forget(&key))))
+}
+
 
 pub(crate) fn section(si: usize, sec: &Value, w: f32) -> Option<El> {
     let items = sec["items"].as_array().cloned().unwrap_or_default();
