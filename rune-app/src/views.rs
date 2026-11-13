@@ -505,12 +505,42 @@ pub(crate) fn item_page(item: &Value) -> Option<Page> {
         "ARTIST" => d["id"].as_u64().map(Page::Artist),
         "PLAYLIST" => d["uuid"].as_str().map(|u| Page::Playlist(u.to_string())),
         // MixPage, titled and subtitled as the card is
-        "MIX" => d["id"].as_str().or(d["mixId"].as_str()).map(|id| Page::Mix(id.to_string(), data::name(item), data::artist_of(item))),
+        "MIX" => d["id"].as_str().or(d["mixId"].as_str()).map(|id| {
+            if let Some(url) = crate::art::item_url(item, 180.0) {
+                hint_mix_image(id, url);
+            }
+            Page::Mix(id.to_string(), data::name(item), data::artist_of(item))
+        }),
         _ => None,
     }
 }
 
+thread_local! {
+    /// The picture a mix was opened under (its card's, or the artist's for Artist radio), as
+    /// MixPage's mixInfo.image: the mix's own response often has none.
+    static MIX_IMAGES: std::cell::RefCell<std::collections::HashMap<String, String>> = Default::default();
+}
+
+pub(crate) fn hint_mix_image(id: &str, url: String) {
+    MIX_IMAGES.with(|m| {
+        let mut m = m.borrow_mut();
+        if m.len() > 500 {
+            m.clear();
+        }
+        m.insert(id.to_string(), url);
+    });
+}
+
+fn mix_image(id: &str) -> Option<String> {
+    MIX_IMAGES.with(|m| m.borrow().get(id).cloned())
+}
+
 pub(crate) fn cards_for(prefix: &str, items: &[Value]) -> Vec<El> {
+    cards_with(prefix, items, data::artist_of)
+}
+
+/// [`cards_for`] with each card's subtitle from `sub`.
+pub(crate) fn cards_with(prefix: &str, items: &[Value], sub: impl Fn(&Value) -> String) -> Vec<El> {
     items
         .iter()
         .enumerate()
@@ -536,11 +566,6 @@ pub(crate) fn loading() -> El {
 /// Whether a `loading()` placeholder was built since the last call: a pane that built its
 /// content between two calls is still loading, and tells assistive technology so (`El::busy`).
 pub(crate) fn took_loading() -> bool {
-    cards_with(prefix, items, data::artist_of)
-}
-
-/// [`cards_for`] with each card's subtitle from `sub`.
-pub(crate) fn cards_with(prefix: &str, items: &[Value], sub: impl Fn(&Value) -> String) -> Vec<El> {
     LOADING.replace(false)
 }
 
@@ -1254,31 +1279,6 @@ fn album_footer(a: &Value, tracks: &[Value], copyright: Option<&str>) -> El {
     c
 }
 
-        .child({
-            let item = json!({"type": "ALBUM", "data": a.clone()});
-            header_btn("album-more", "More options", "More", G::More, false)
-                .on_press(move |s: &mut App| crate::interact::open_media(s, item.clone(), crate::interact::Anchor::Below("album-more".into())))
-        });
-    let mut c = col().w_full().gap(18.0).child(hero_with(&title, true, album_sub(a, &tracks), id, false, crate::art::item_url(a, 180.0), actions));
-    let footer = (!tracks.is_empty()).then(|| album_footer(a, &tracks, page["copyright"].as_str()));
-    let src = json!({"type": "album", "id": id, "name": title});
-    // A multi-disc album lists each volume under "Volume N" (AlbumView volumeGroups); a click
-    // plays from that track in the whole album either way.
-    let groups = crate::formats::volumes(&tracks).unwrap_or_else(|| vec![(0, (0..tracks.len()).collect())]);
-    let tracks = Rc::new(tracks);
-    for (vol, shown) in groups {
-        let src = src.clone();
-        let list_key = if vol == 0 { "al-trows".to_string() } else { format!("al-trows{vol}") };
-        let rows = track_list_keyed(list_key, "al-t", tracks.clone(), shown, move |tracks, i| {
-            let (all, src) = (tracks.clone(), src.clone());
-            // TrackList numbers an album's rows by their track number
-            let n = data::data(&tracks[i])["trackNumber"].as_u64().map(|n| n as usize).unwrap_or(i + 1);
-            track_row_look(format!("al-t{i}"), n, &tracks[i], Look { cover: false, ..Look::default() }, None, move |_: &mut App| {
-                controller::send(Cmd::PlayFrom { tracks: all.to_vec(), index: i, source: src.clone(), album_mode: true });
-            })
-        });
-        if vol > 0 {
-            c = c.child(heading(&format!("Volume {vol}"), 15.0).pt(if vol > 1 { 8.0 } else { 0.0 }));
 pub(crate) fn play_buttons(v: &View, source: &Value, play: Cmd, shuffle: Cmd) -> El {
     let label = play_label(v, source);
     let toggle = label != "Play";
@@ -1309,6 +1309,31 @@ fn album(id: u64, v: &View) -> El {
             tx.copy_rich(rune::ClipboardContent::new(format!("https://tidal.com/album/{id}")));
             crate::interact::toast("Copied share link to clipboard".into(), crate::interact::Kind::Success);
         }))
+        .child({
+            let item = json!({"type": "ALBUM", "data": a.clone()});
+            header_btn("album-more", "More options", "More", G::More, false)
+                .on_press(move |s: &mut App| crate::interact::open_media(s, item.clone(), crate::interact::Anchor::Below("album-more".into())))
+        });
+    let mut c = col().w_full().gap(18.0).child(hero_with(&title, true, album_sub(a, &tracks), id, false, crate::art::item_url(a, 180.0), actions));
+    let footer = (!tracks.is_empty()).then(|| album_footer(a, &tracks, page["copyright"].as_str()));
+    let src = json!({"type": "album", "id": id, "name": title});
+    // A multi-disc album lists each volume under "Volume N" (AlbumView volumeGroups); a click
+    // plays from that track in the whole album either way.
+    let groups = crate::formats::volumes(&tracks).unwrap_or_else(|| vec![(0, (0..tracks.len()).collect())]);
+    let tracks = Rc::new(tracks);
+    for (vol, shown) in groups {
+        let src = src.clone();
+        let list_key = if vol == 0 { "al-trows".to_string() } else { format!("al-trows{vol}") };
+        let rows = track_list_keyed(list_key, "al-t", tracks.clone(), shown, move |tracks, i| {
+            let (all, src) = (tracks.clone(), src.clone());
+            // TrackList numbers an album's rows by their track number
+            let n = data::data(&tracks[i])["trackNumber"].as_u64().map(|n| n as usize).unwrap_or(i + 1);
+            track_row_look(format!("al-t{i}"), n, &tracks[i], Look { cover: false, ..Look::default() }, None, move |_: &mut App| {
+                controller::send(Cmd::PlayFrom { tracks: all.to_vec(), index: i, source: src.clone(), album_mode: true });
+            })
+        });
+        if vol > 0 {
+            c = c.child(heading(&format!("Volume {vol}"), 15.0).pt(if vol > 1 { 8.0 } else { 0.0 }));
         }
         c = c.child(rows);
     }
@@ -1368,6 +1393,9 @@ fn artist(id: u64, v: &View) -> El {
         .child(match a["mixes"]["ARTIST_MIX"].as_str() {
             // ArtistPage's "Artist radio", when the artist has one.
             Some(mix) => {
+                if let Some(url) = crate::art::artist_picture(a, 180.0) {
+                    hint_mix_image(mix, url);
+                }
                 let to = Page::Mix(mix.to_string(), format!("{name} Radio"), name.clone());
                 header_btn("artist-radio", "Artist radio", "Radio", G::Radio, false).on_press(move |s: &mut App| go(s, to.clone()))
             }
@@ -1394,6 +1422,7 @@ fn artist(id: u64, v: &View) -> El {
                 .child(text("Read more").font(t(12.0, 650.0)).color(white(0.85)).a11y_hidden())));
     }
     let mut top_seen = false;
+    let mut shown_any = false;
     for (si, sec) in p["items"].as_array().cloned().unwrap_or_default().iter().enumerate() {
         let title = sec["title"].as_str().unwrap_or("");
         let items = sec["items"].as_array().cloned().unwrap_or_default();
@@ -1422,7 +1451,6 @@ fn artist(id: u64, v: &View) -> El {
                 let (all, an) = (tracks.clone(), name.clone());
                 let tid = tr["id"].as_u64();
                 rows = rows.child(track_row(format!("ar-s{si}-t{i}"), i + 1, tr, move |_: &mut App| {
-    let mut shown_any = false;
                     if top {
                         // The top tracks: the artist source from the clicked one, the rest of
                         // the artist's top tracks paged in behind it.
@@ -1441,8 +1469,27 @@ fn artist(id: u64, v: &View) -> El {
         } else {
             c = c.child(grid(cards_with(&format!("ar-s{si}"), &items, move |it| artist_card_sub(it, id))));
         }
+        shown_any = true;
+    }
+    if !shown_any {
+        // ArtistPage's empty state
+        c = c.child(col().w_full().gap(6.0).py(40.0).items_center()
+            .child(glyph(G::User, 40.0, white(0.25)))
+            .child(text("No content available").font(t(17.0, 650.0)).color(white(0.9)))
+            .child(ui::empty("This artist doesn't have any tracks or albums yet.")));
     }
     c
+}
+
+/// A card's subtitle on an artist's pages: an album's year and kind, or its artists when this
+/// artist only appears on it (getArtistAlbumSubtitle); other items as everywhere.
+pub(crate) fn artist_card_sub(it: &Value, artist: u64) -> String {
+    if data::kind(it) == "ALBUM"
+        && let Some(s) = crate::formats::artist_album_subtitle(data::data(it), artist)
+    {
+        return s;
+    }
+    data::artist_of(it)
 }
 
 /// What a track list shows with nothing in it: `none` when it has no tracks at all, or that
@@ -1469,29 +1516,10 @@ fn search_page(s: &App, q: &str) -> El {
         .child(tab("st-tracks", "Tracks", SearchTab::Tracks))
         .child(tab("st-vid", "Videos", SearchTab::Videos))
         .child(tab("st-pl", "Playlists", SearchTab::Playlists))
-        shown_any = true;
-    }
-    if !shown_any {
-        // ArtistPage's empty state
-        c = c.child(col().w_full().gap(6.0).py(40.0).items_center()
-            .child(glyph(G::User, 40.0, white(0.25)))
-            .child(text("No content available").font(t(17.0, 650.0)).color(white(0.9)))
-            .child(ui::empty("This artist doesn't have any tracks or albums yet.")));
         .child(tab("st-al", "Albums", SearchTab::Albums))
         .child(tab("st-ar", "Artists", SearchTab::Artists));
     let tracks: Vec<Value> = v["tracks"].as_array().cloned().unwrap_or_default();
     let typed = |k: &str, arr: &str| -> Vec<Value> { v[arr].as_array().cloned().unwrap_or_default().into_iter().map(|d| json!({"type": k, "data": d})).collect() };
-/// A card's subtitle on an artist's pages: an album's year and kind, or its artists when this
-/// artist only appears on it (getArtistAlbumSubtitle); other items as everywhere.
-pub(crate) fn artist_card_sub(it: &Value, artist: u64) -> String {
-    if data::kind(it) == "ALBUM"
-        && let Some(s) = crate::formats::artist_album_subtitle(data::data(it), artist)
-    {
-        return s;
-    }
-    data::artist_of(it)
-}
-
     let (albums, artists, playlists) = (typed("ALBUM", "albums"), typed("ARTIST", "artists"), typed("PLAYLIST", "playlists"));
     let videos: Vec<Value> = v["videos"]["items"].as_array().or(v["videos"].as_array()).cloned().unwrap_or_default();
     let video_source = json!({"type": "search", "id": q, "name": format!("Search: {q}")});
@@ -2306,14 +2334,27 @@ fn mix_page(id: &str, title: &str, sub: &str, v: &View) -> El {
         .child(header_btn("mix-more", "More options", "More", G::More, false)
             .on_press(move |s: &mut App| crate::interact::open_media(s, item.clone(), crate::interact::Anchor::Below("mix-more".into()))));
     let seed = id.bytes().fold(7u64, |h, b| h.wrapping_mul(31).wrapping_add(b as u64));
-    let art = m["image"].as_str().filter(|u| u.starts_with("http")).map(str::to_string).or_else(|| tracks.first().and_then(|t| crate::art::item_url(t, 180.0)));
+    // MixPage: the picture it was opened under, else the mix's own, else its first track's.
+    let art = mix_image(id).or_else(|| m["image"].as_str().filter(|u| u.starts_with("http")).map(str::to_string)).or_else(|| tracks.first().and_then(|t| crate::art::item_url(t, 180.0)));
     // "MIX" / "TRACK RADIO" over the title; "N TRACKS (m:ss)" under the subtitle.
     let secs: u64 = tracks.iter().filter_map(|t| data::data(t)["duration"].as_u64()).sum();
-    let (m_, s_) = (secs / 60, secs % 60);
-    let count = format!("{} TRACK{}{}", tracks.len(), if tracks.len() == 1 { "" } else { "S" }, if secs > 0 { if secs >= 3600 { format!(" ({}:{:02}:{s_:02})", secs / 3600, m_ % 60) } else { format!(" ({m_}:{s_:02})") } } else { String::new() });
+    let count = crate::formats::track_count(tracks.len(), secs);
+    // A track radio names its seed artist (the first track's), with their picture, linked;
+    // a mix shows its subtitle.
+    let seed_artist = tracks.first().map(data::data).map(|d| if d["artists"][0].is_object() { &d["artists"][0] } else { &d["artist"] }).filter(|a| a["id"].as_u64().is_some());
+    let line = match seed_artist.filter(|_| radio) {
+        Some(a) => {
+            let mut r = row().gap(8.0).items_center().min_w(0.0);
+            if let Some(url) = crate::art::artist_picture(a, 24.0) {
+                r = r.child(ui::with_image(el().size(24.0, 24.0).radius(12.0).clip_rounded(12.0).fill(white(0.08)), Some(url), 24.0, 12.0).a11y_hidden());
+            }
+            r.child(artist_links("mx-seed", &json!({"artist": a}), white(0.9)))
+        }
+        None => text(sub.to_string()).font(t(13.0, 500.0)).color(white(0.6)).truncate(),
+    };
     let sub_el = col().gap(4.0).min_w(0.0)
         .child(text(if radio { "TRACK RADIO" } else { "MIX" }).font(t(11.0, 700.0).tracking(1.2)).color(white(0.55)))
-        .child(text(sub.to_string()).font(t(13.0, 500.0)).color(white(0.6)).truncate())
+        .child(line)
         .child(text(count).font(t(11.0, 500.0).tracking(0.6)).color(white(0.45)));
     if tracks.is_empty() {
         return col().w_full().gap(16.0).child(hero_with(title, true, sub_el, seed, false, art, actions))
