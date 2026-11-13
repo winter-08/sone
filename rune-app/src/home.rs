@@ -154,7 +154,7 @@ pub fn home(s: &App) -> El {
         return c.child(ui::empty("Nothing to show here yet"));
     }
     for (si, sec) in sections.iter().enumerate() {
-        if let Some(e) = section(si, sec, w) {
+        if let Some(e) = section(&format!("home-{slug}"), si, sec, w) {
             c = c.child(e);
         }
     }
@@ -249,7 +249,9 @@ fn failed(tabs: &[Value], slug: &str, why: &str) -> El {
 }
 
 
-pub(crate) fn section(si: usize, sec: &Value, w: f32) -> Option<El> {
+pub(crate) fn section(scope: &str, si: usize, sec: &Value, w: f32) -> Option<El> {
+    // (each page's card rows keep their own scroll places: a Home tab's, an Explore page's)
+    let row_key = format!("{scope}-row-{si}");
     let items = sec["items"].as_array().cloned().unwrap_or_default();
     if items.is_empty() {
         return None;
@@ -266,13 +268,13 @@ pub(crate) fn section(si: usize, sec: &Value, w: f32) -> Option<El> {
     let mixed = items.iter().map(data::kind).filter(|k| !k.is_empty()).collect::<std::collections::HashSet<_>>().len() > 1;
     if compact || (kind == "TRACK_LIST" && !mixed) {
         let grid = if compact { Grid::Compact } else { Grid::Tracks };
-        return Some(col().w_full().gap(14.0).child(header(si, &title, None, view_all, false)).child(row_grid(si, &title, &items, w, grid)));
+        return Some(col().w_full().gap(14.0).child(header(si, &row_key, &title, None, view_all, false)).child(row_grid(si, &title, &items, w, grid)));
     }
-    let cards = card_row(si, &title, &items, w)?;
-    Some(col().w_full().gap(14.0).child(header(si, &title, sec.get("header").filter(|h| h.is_object()), view_all, true)).child(cards))
+    let cards = card_row(si, &row_key, &title, &items, w, kind == "MULTIPLE_TOP_PROMOTIONS")?;
+    Some(col().w_full().gap(14.0).child(header(si, &row_key, &title, sec.get("header").filter(|h| h.is_object()), view_all, true)).child(cards))
 }
 
-fn header(si: usize, title: &str, ctx: Option<&Value>, view_all: Option<String>, arrows: bool) -> El {
+fn header(si: usize, row_key: &str, title: &str, ctx: Option<&Value>, view_all: Option<String>, arrows: bool) -> El {
     let mut r = row().w_full().items_center().gap(8.0);
     if let Some(it) = ctx {
         // A row based on an item ("Because you liked …"): its picture, the section's title small,
@@ -297,7 +299,7 @@ fn header(si: usize, title: &str, ctx: Option<&Value>, view_all: Option<String>,
     }
     r = r.child(spacer());
     if arrows {
-        let key = format!("home-row-{si}");
+        let key = row_key.to_string();
         // Shown only while the row overflows, and inert (dimmed) at the end it can't move
         // toward, as React's are. A row that fits keeps them in the accessibility tree,
         // undrawn and disabled, so the inventory doesn't change with the window's width.
@@ -333,8 +335,20 @@ fn header(si: usize, title: &str, ctx: Option<&Value>, view_all: Option<String>,
     r
 }
 
-fn is_my_tracks(it: &Value) -> bool {
-    data::kind(it) == "DEEP_LINK" && data::name(it) == "My Tracks"
+/// isMyTracksItem: the deep link to the user's collection of tracks, by its URI (whatever the
+/// language of its title), else by the English title on an item that is nothing else.
+pub(crate) fn is_my_tracks(it: &Value) -> bool {
+    const URI: &str = "tidal://my-collection/tracks";
+    let d = data::data(it);
+    if d["id"].as_str() == Some(URI) || it["id"].as_str() == Some(URI) {
+        return true;
+    }
+    let kind = data::kind(it);
+    if kind == "DEEP_LINK" {
+        return d["url"].as_str().or(d["id"].as_str()) == Some(URI);
+    }
+    // (React's fallback also takes a track named "My Tracks"; a known kind is never it here)
+    !matches!(kind.as_str(), "TRACK" | "ALBUM" | "ARTIST" | "PLAYLIST" | "MIX" | "VIDEO") && data::name(it) == "My Tracks" && d.get("uuid").is_none() && d.get("mixId").is_none() && d.get("cover").is_none_or(Value::is_null)
 }
 
 fn open_item(s: &mut App, it: &Value) {
@@ -568,10 +582,10 @@ fn grid_row(key: String, it: &Value, title: &str, tracks: &[Value], grid: Grid) 
 }
 
 /// One sideways-scrolling row of cards, as many whole cards as fit across the width.
-fn card_row(si: usize, title: &str, items: &[Value], w: f32) -> Option<El> {
+fn card_row(si: usize, row_key: &str, title: &str, items: &[Value], w: f32, promos: bool) -> Option<El> {
     let cols = ((w + CARD_GAP) / (MIN_CARD + CARD_GAP)).floor().clamp(2.0, 8.0);
     let cw = ((w - (cols - 1.0) * CARD_GAP) / cols).floor();
-    let key = format!("home-row-{si}");
+    let key = row_key.to_string();
     let k = key.clone();
     let mut r = row().key(key.clone()).w_full().gap(CARD_GAP).items_start().scroll_x()
         .on_scroll_offset(move |p| ROWS.with(|m| {
@@ -585,7 +599,8 @@ fn card_row(si: usize, title: &str, items: &[Value], w: f32) -> Option<El> {
     for (i, it) in items.iter().enumerate() {
         let ck = format!("home-{si}-{i}");
         let kind = data::kind(it);
-        let card = if kind == "MAGAZINE" {
+        // (HomeSection: a MULTIPLE_TOP_PROMOTIONS row draws every item as a promotion)
+        let card = if promos || kind == "MAGAZINE" {
             promo_card(ck, it, cw)
         } else if kind == "TRACK" {
             Some(track_card(ck, it, cw, title, &tracks))
@@ -731,4 +746,21 @@ pub(crate) fn explore_icon_grid(si: usize, items: &[Value], w: f32) -> El {
             .child(text(title).font(t(16.0, 500.0)).color(white(0.6)).group_color(white(0.95)).truncate().a11y_hidden()));
     }
     grid
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_my_tracks;
+    use serde_json::json;
+
+    #[test]
+    fn my_tracks_is_known_by_its_link_in_any_language() {
+        assert!(is_my_tracks(&json!({"type": "DEEP_LINK", "data": {"title": "Meine Titel", "url": "tidal://my-collection/tracks"}})));
+        assert!(is_my_tracks(&json!({"type": "DEEP_LINK", "data": {"title": "x", "id": "tidal://my-collection/tracks"}})));
+        assert!(!is_my_tracks(&json!({"type": "DEEP_LINK", "data": {"title": "My Tracks", "url": "tidal://my-collection/albums"}})));
+        // the English title, on an item that is nothing else
+        assert!(is_my_tracks(&json!({"data": {"title": "My Tracks"}})));
+        assert!(!is_my_tracks(&json!({"type": "TRACK", "data": {"title": "My Tracks", "id": 5}})));
+        assert!(!is_my_tracks(&json!({"data": {"title": "My Tracks", "uuid": "u"}})));
+    }
 }

@@ -57,7 +57,7 @@ fn items_view(prefix: &str, items: &[Value], source: Value, artist: Option<u64>,
         Some(id) => views::cards_with(prefix, items, move |it| views::artist_card_sub(it, id)),
         None => views::cards_for(prefix, items),
     };
-    let my_tracks: Vec<&Value> = items.iter().filter(|it| data::kind(it) == "DEEP_LINK" && data::name(it) == "My Tracks").collect();
+    let my_tracks: Vec<&Value> = items.iter().filter(|it| crate::home::is_my_tracks(it)).collect();
     let mut c = col().w_full().gap(16.0);
     if !my_tracks.is_empty() || !cards.is_empty() {
         let mut all = vec![];

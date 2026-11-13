@@ -2483,24 +2483,17 @@ fn explore_sub(s: &App, path: &str, title: &str) -> El {
             }
         }).collect();
         let shown = json!({"title": if st == title { String::new() } else { st }, "sectionType": st_kind, "items": typed, "apiPath": sec["apiPath"], "hasMore": sec["hasMore"]});
-        if let Some(e) = crate::home::section(si, &shown, w) {
+        if let Some(e) = crate::home::section(&format!("es-{path}"), si, &shown, w) {
             c = c.child(e);
         }
     }
     c
 }
 
-/// Days since 1970-01-01 for a "YYYY-MM-DD..." date (Howard Hinnant's days_from_civil).
+/// The UTC day (days since 1970-01-01) of a date or date-time as TIDAL writes it, its offset
+/// counted (groupFeedByPeriod compares UTC months: a "…T23:30:00-02:00" is the next day).
 fn days(date: &str) -> Option<i64> {
-    let y: i64 = date.get(0..4)?.parse().ok()?;
-    let m: i64 = date.get(5..7)?.parse().ok()?;
-    let d: i64 = date.get(8..10)?.parse().ok()?;
-    let y = if m <= 2 { y - 1 } else { y };
-    let era = y.div_euclid(400);
-    let yoe = y - era * 400;
-    let doy = (153 * (if m > 2 { m - 3 } else { m + 9 }) + 2) / 5 + d - 1;
-    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
-    Some(era * 146097 + doe - 719468)
+    crate::content::parse_date(date).map(|s| s.div_euclid(86400))
 }
 
 /// The Feed (React FeedPage): activities grouped by age, each with Play and More options.
@@ -2830,6 +2823,10 @@ mod feed_tests {
         assert_eq!(feed_bucket(m("2024-01-02") - m("2023-12-31")), "Last month");
         assert_eq!(feed_bucket(m("2024-03-01") - m("2024-03-31")), "This month");
         assert_eq!(feed_bucket(m("2024-03-01") - m("2023-12-01")), "Older");
+        // the offset counts: these are 1 March and 31 January in UTC
+        assert_eq!(m("2024-02-29T23:30:00.000-0100"), 2024 * 12 + 2);
+        assert_eq!(m("2024-02-01T00:30:00+01:00"), 2024 * 12);
+        assert_eq!(m("2024-02-01T00:00:00.000+0000"), 2024 * 12 + 1);
     }
 }
 
