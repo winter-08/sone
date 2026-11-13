@@ -275,7 +275,7 @@ pub fn overlay(s: &App, v: &View, win: (f32, f32)) -> Option<El> {
         stage = stage.child(col().key("full-lyrics-col").w(half).h_full().pl(pad)
             .transition(Transition::offset(24.0, 0.0).combined(Transition::opacity()).springs(SpringPair::new(Spring::new(0.46, 0.0), Spring::new(0.2, 0.0))))
             .enter_delay(0.1)
-            .child(lyrics(s, v, cur.id, w, stage_h)));
+            .child(lyrics(s, cur.id, w, stage_h)));
     }
 
     let layer = el().key("full-layer").role("dialog").label("Now playing").pin(Some(0.0), Some(0.0), Some(0.0), Some(0.0))
@@ -385,7 +385,7 @@ fn bar(s: &App, v: &View, cur: &QItem, w: f32, first: bool, shown: bool) -> El {
 /// The lyrics column (`h` tall): synced lines kept centred, the active one white, past ones
 /// 0.3, coming ones 0.45, a press seeking to a line; the plain text when there's no timing;
 /// otherwise a quiet "No synced lyrics" state.
-fn lyrics(s: &App, v: &View, id: u64, w: f32, h: f32) -> El {
+fn lyrics(s: &App, id: u64, w: f32, h: f32) -> El {
     let l = match data::want(Key::Lyrics(id)) {
         data::Load::Ready(l) => l,
         data::Load::Failed(_) => return no_lyrics(),
@@ -408,7 +408,6 @@ fn lyrics(s: &App, v: &View, id: u64, w: f32, h: f32) -> El {
         return ui::smooth_wheel::<App>(viewport, "full-plain-lyrics".into());
     };
     let fs = (w * 0.015 + 12.0).clamp(24.0, 40.0);
-    let duration = v.duration.max(1.0);
     let active = s.nav.full.lyric_line;
     // Room above the first line and under the last, so either can sit at the centre.
     let mut list = col().w_full().max_w(680.0).child(el().h(h * 0.5 - fs));
@@ -423,7 +422,7 @@ fn lyrics(s: &App, v: &View, id: u64, w: f32, h: f32) -> El {
         let mut item = col().key(format!("fly-{i}")).role("button")
             .label(if gap { format!("Instrumental break at {}", ui::fmt_time(at)) } else { line.clone() })
             .w_full().py(fs * if gap { 0.55 } else { 0.24 }).hover_group().cursor(rune::Cursor::Pointer)
-            .on_press(move |_: &mut App| controller::send(Cmd::SeekFraction((at / duration).clamp(0.0, 1.0) as f32)));
+            .on_press(move |_: &mut App| controller::send(Cmd::SeekTo(at)));
         let hover = |e: El| if active == Some(i) { e } else { e.group_color(white(0.7)) };
         item = if gap {
             let dot = || el().size(fs * 0.3, fs * 0.3).radius(fs * 0.15).fill(color);

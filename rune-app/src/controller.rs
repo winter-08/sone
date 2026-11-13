@@ -55,6 +55,8 @@ pub enum Cmd {
     Next,
     Previous,
     SeekFraction(f32),
+    /// Seek to a time in seconds (a lyric line's), whatever length the item says it has.
+    SeekTo(f64),
     SetVolume(f32),
     ToggleShuffle,
     CycleRepeat,
@@ -377,6 +379,7 @@ pub fn send(cmd: Cmd) {
                 return;
             }
         }
+        Cmd::SeekTo(secs) => preview_seek_to(secs.max(0.0)),
         _ => {}
     }
     if let Some(tx) = TX.get() {
@@ -503,9 +506,16 @@ fn pos() -> std::sync::MutexGuard<'static, Position> {
 /// flight, which would pull the clock back to where playback was.
 fn preview_seek(f: f32) {
     let dur = VIEW.get().map(|v| v.lock().unwrap().duration).unwrap_or(0.0);
-    let Some(p) = POSITION.get().filter(|_| dur > 0.0) else { return };
+    if dur > 0.0 {
+        preview_seek_to(f as f64 * dur);
+    }
+}
+
+/// The clock jumps to `secs` at once, before the controller seeks there.
+fn preview_seek_to(secs: f64) {
+    let Some(p) = POSITION.get() else { return };
     let mut p = p.lock().unwrap();
-    p.last = f as f64 * dur;
+    p.last = secs;
     p.at = Some(Instant::now());
     p.generation += 1;
     p.seek_at = Some(Instant::now());
@@ -1158,6 +1168,11 @@ impl Player {
                 if self.current.is_some() {
                     let s = f as f64 * self.cur_duration();
                     self.seek_to(s).await;
+                }
+            }
+            Cmd::SeekTo(secs) => {
+                if self.current.is_some() {
+                    self.seek_to(secs.max(0.0)).await;
                 }
             }
             Cmd::SetVolume(v) => self.set_volume(v),

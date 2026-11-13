@@ -2167,7 +2167,6 @@ fn lyrics(s: &App, v: &View) -> El {
             let provider = l["lyricsProvider"].as_str().map(str::to_string);
             if let Some(lines) = synced_lyrics(cur.id) {
                 let active = *s.nav.lyric_line;
-                let duration = v.duration.max(1.0);
                 let mut col_lines = col().w_full().gap(12.0).py(40.0)
                     .on_wheel(|s: &mut App, _, _| {
                         if !*s.nav.lyrics_scrolled {
@@ -2180,29 +2179,40 @@ fn lyrics(s: &App, v: &View) -> El {
                     let past = active.is_some_and(|a| i < a);
                     let at = *at;
                     let color = if on { white(0.97) } else if past { white(0.28) } else { white(0.45) };
+                    let mut words = text(line.clone()).key(format!("ly-{i}")).font(t(20.0, if on { 700.0 } else { 500.0 }).lh(26.0)).color(color).wrap()
+                        .origin(0.0, 0.5).scale(if on { 1.22 } else { 1.0 }).scale_motion(rune::Spring::new(0.5, 0.0));
+                    // (an inactive line brightens under the pointer: LyricsLine's hover colour)
+                    if !on {
+                        words = words.group_color(white(0.7));
+                    }
                     col_lines = col_lines.child(
-                        text(line.clone()).key(format!("ly-{i}")).font(t(20.0, if on { 700.0 } else { 500.0 }).lh(26.0)).color(color).wrap()
-                            .origin(0.0, 0.5).scale(if on { 1.22 } else { 1.0 }).scale_motion(rune::Spring::new(0.5, 0.0))
-                            .hover(white(0.0)).cursor(rune::Cursor::Pointer)
+                        el().key(format!("lyw-{i}")).hover_group().cursor(rune::Cursor::Pointer)
                             .on_press(move |s: &mut App| {
                                 *s.nav.lyrics_scrolled = false;
-                                controller::send(Cmd::SeekFraction((at / duration).clamp(0.0, 1.0) as f32));
-                            }),
+                                controller::send(Cmd::SeekTo(at));
+                            })
+                            .child(words),
                     );
                 }
                 c = c.child(col_lines.child(el().h(160.0)));
+                // (React puts the provider under synced lyrics and plain ones, never under
+                // "No lyrics available")
+                if let Some(p) = provider {
+                    c = c.child(text(format!("Lyrics provided by {p}")).font(t(11.0, 500.0)).color(white(0.4)));
+                }
             } else {
                 let plain = l["lyrics"].as_str().unwrap_or("").trim().to_string();
                 if plain.is_empty() {
                     c = c.child(ui::empty("No lyrics available for this track"));
                 } else {
+                    // whitespace-pre-wrap: a blank line keeps its height, between verses
                     for line in plain.lines() {
-                        c = c.child(text(line.to_string()).font(t(18.0, 500.0).lh(32.0)).color(white(0.5)).wrap());
+                        c = c.child(if line.trim().is_empty() { el().h(32.0) } else { text(line.to_string()).font(t(18.0, 500.0).lh(32.0)).color(white(0.5)).wrap() });
+                    }
+                    if let Some(p) = provider {
+                        c = c.child(text(format!("Lyrics provided by {p}")).font(t(11.0, 500.0)).color(white(0.4)).mt(20.0));
                     }
                 }
-            }
-            if let Some(p) = provider {
-                c = c.child(text(format!("Lyrics provided by {p}")).font(t(11.0, 500.0)).color(white(0.4)));
             }
         }
         data::Load::Failed(_) => c = c.child(ui::empty("No lyrics available for this track")),
