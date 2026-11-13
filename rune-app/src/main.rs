@@ -26,6 +26,7 @@ mod login;
 mod library;
 mod loved;
 mod mini;
+mod obs;
 mod paged;
 mod perf;
 mod profile;
@@ -477,6 +478,8 @@ fn main() {
     // The theme in theme.json (Settings → Themes), before the first frame.
     theme::init();
     controller::start(handle.clone());
+    // The OBS overlay's now-playing feed, while the overlay server runs (obs.rs).
+    obs::start();
 
     let spec = AppSpec::<App> {
         min_size: Some((900.0, 600.0)),

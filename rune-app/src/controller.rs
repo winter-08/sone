@@ -335,6 +335,15 @@ pub fn auth_known() -> bool {
 pub fn now_playing() -> (Option<u64>, bool) {
     VIEW.get().map(|v| { let v = v.lock().unwrap(); (v.track_id, v.playing) }).unwrap_or((None, false))
 }
+/// What the OBS overlay shows (obs.rs): the current item (trimmed), its cover, whether it
+/// plays, the clock and the stream's quality text, without cloning the whole view.
+pub fn overlay_now() -> Option<(std::sync::Arc<Value>, Option<String>, bool, f64, String)> {
+    let v = VIEW.get()?.lock().unwrap();
+    let cur = v.current.as_ref()?;
+    let pos = POSITION.get().map(|p| p.lock().unwrap().interpolated()).unwrap_or(0.0).min(v.duration.max(0.0));
+    Some((cur.track.clone(), v.cover.clone(), v.playing, pos, quality_text(&v.stream_info)))
+}
+
 
 /// The streaming quality ceiling, read from the backend (it owns the setting).
 pub fn max_quality() -> String {
