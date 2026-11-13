@@ -265,6 +265,7 @@ pub fn note_size(view: (f32, f32), zoom: f32) {
 /// the poll, at most every two seconds, and before saving.
 fn note_placement() {
     let Some(p) = MAIN.with_borrow(|m| m.as_ref().and_then(|w| w.placement())) else { return };
+    PLACEMENT_KNOWN.store(true, Ordering::Relaxed);
     let mut g = GEOMETRY.lock().unwrap();
     g.maximized = p.maximized || p.full_screen;
     if !g.maximized && !p.minimized {
@@ -274,6 +275,23 @@ fn note_placement() {
 
 fn maximized() -> bool {
     GEOMETRY.lock().unwrap().maximized
+}
+
+/// The platform tells where the window is and whether it's maximized (Rune's
+/// `WindowHandle::placement`; on Wayland it says nothing, since it asks for the position first).
+static PLACEMENT_KNOWN: AtomicBool = AtomicBool::new(false);
+
+/// The title bar's Maximize/Restore was pressed. Where the platform reports the state, the
+/// next placement read settles the label; on Wayland, where it doesn't, the press is all there
+/// is to go by, so it flips what the label shows (a maximize the compositor does by itself,
+/// a keyboard shortcut or a double click on the bar, isn't seen there).
+fn toggled_maximized() {
+    if !PLACEMENT_KNOWN.load(Ordering::Relaxed) {
+        let mut g = GEOMETRY.lock().unwrap();
+        g.maximized = !g.maximized;
+    } else {
+        PLACED_AT.set(None);
+    }
 }
 
 /// Saves the main window's geometry to the store and writes it now (on close and quit).
@@ -573,7 +591,10 @@ pub fn title_bar() -> Option<El> {
         .items_center()
         .opacity(if FOCUSED.get() { 1.0 } else { 0.6 })
         .child(bar_button("win-min", "Minimize", G::Minus, 14.0, false).on_press_tx(|_: &mut App, tx: &mut Tx| tx.minimize()))
-        .child(bar_button("win-max", if max { "Restore" } else { "Maximize" }, G::Square, 12.0, false).on_press_tx(|_: &mut App, tx: &mut Tx| tx.toggle_maximized()))
+        .child(bar_button("win-max", if max { "Restore" } else { "Maximize" }, G::Square, 12.0, false).on_press_tx(|_: &mut App, tx: &mut Tx| {
+            toggled_maximized();
+            tx.toggle_maximized()
+        }))
         .child(bar_button("win-close", "Close", G::Close, 14.0, true).on_press_tx(|_: &mut App, tx: &mut Tx| tx.close_window()));
     Some(
         row()
@@ -599,10 +620,13 @@ thread_local! {
 
 /// A frameless window's edges to resize it by (React ResizeEdges), since there's no native frame
 /// to drag: the right and bottom edges and the bottom-right corner. The top and left edges
-/// would have to move the window too, which Wayland doesn't let an app do, so they aren't
-/// offered. None with the native frame. `size` is the window's content size in view points.
+/// (and their corners) need the compositor to resize from that side (winit's
+/// `drag_resize_window`, xdg_toplevel.resize on Wayland), which Rune doesn't expose: an app
+/// can only set its size, which grows the window right and down. None with the native frame,
+/// and none while the window is maximized, as React drops them. `size` is the window's
+/// content size in view points.
 pub fn resize_edges(size: (f32, f32)) -> Vec<El> {
-    if NATIVE_FRAME.load(Ordering::Relaxed) {
+    if NATIVE_FRAME.load(Ordering::Relaxed) || maximized() {
         return Vec::new();
     }
     let drag = move |dx: bool, dy: bool| {
@@ -621,8 +645,54 @@ pub fn resize_edges(size: (f32, f32)) -> Vec<El> {
     vec![
         el().key("edge-right").pin(Some(0.0), None, Some(0.0), Some(16.0)).w(2.0).cursor(rune::Cursor::ResizeColumn).a11y_hidden().on_drag(drag(true, false)),
         el().key("edge-bottom").pin(None, Some(0.0), Some(16.0), Some(0.0)).h(4.0).cursor(rune::Cursor::ResizeRow).a11y_hidden().on_drag(drag(false, true)),
-        el().key("edge-corner").pin(None, None, Some(0.0), Some(0.0)).size(16.0, 4.0).cursor(rune::Cursor::Move).a11y_hidden().on_drag(drag(true, true)),
+        el().key("edge-corner").pin(None, None, Some(0.0), Some(0.0)).size(16.0, 4.0).cursor(diagonal_cursor()).a11y_hidden().on_drag(drag(true, true)),
     ]
+}
+
+/// The bottom-right corner's pointer: a diagonal double arrow (CSS `nwse-resize`), which
+/// Rune's cursor set lacks, drawn once as a 2x PNG (black with a white outline, as the system
+/// arrows are).
+fn diagonal_cursor() -> rune::Cursor {
+    static PNG: OnceLock<Option<&'static [u8]>> = OnceLock::new();
+    match PNG.get_or_init(|| nwse_png().map(|b| &*Box::leak(b.into_boxed_slice()))) {
+        Some(bytes) => rune::Cursor::Image(rune::CursorImage::png(bytes, [12.0, 12.0])),
+        None => rune::Cursor::Move,
+    }
+}
+
+/// A 48 px (24 pt at 2x) diagonal double arrow, top-left to bottom-right, as PNG bytes.
+pub fn nwse_png() -> Option<Vec<u8>> {
+    const N: i32 = 48;
+    // inside a triangle (a, b, c), by the signs of the edge functions
+    let tri = |p: (f32, f32), a: (f32, f32), b: (f32, f32), c: (f32, f32)| {
+        let e = |u: (f32, f32), v: (f32, f32)| (v.0 - u.0) * (p.1 - u.1) - (v.1 - u.1) * (p.0 - u.0);
+        let (d1, d2, d3) = (e(a, b), e(b, c), e(c, a));
+        !((d1 < 0.0 || d2 < 0.0 || d3 < 0.0) && (d1 > 0.0 || d2 > 0.0 || d3 > 0.0))
+    };
+    let shape = |x: f32, y: f32| {
+        // the shaft: within 1.6 px of the diagonal between the heads
+        let along = (x + y) / 2.0;
+        let off = (x - y).abs() / std::f32::consts::SQRT_2;
+        let shaft = (14.0..=34.0).contains(&along) && off <= 1.6;
+        shaft || tri((x, y), (8.0, 8.0), (8.0, 21.0), (21.0, 8.0)) || tri((x, y), (40.0, 40.0), (40.0, 27.0), (27.0, 40.0))
+    };
+    let mut img = image::RgbaImage::new(N as u32, N as u32);
+    for y in 0..N {
+        for x in 0..N {
+            let c = (x as f32 + 0.5, y as f32 + 0.5);
+            let px = if shape(c.0, c.1) {
+                [0, 0, 0, 255]
+            } else if (-2..=2).any(|dy| (-2..=2).any(|dx| dx * dx + dy * dy <= 5 && shape(c.0 + dx as f32, c.1 + dy as f32))) {
+                [255, 255, 255, 255]
+            } else {
+                [0, 0, 0, 0]
+            };
+            img.put_pixel(x as u32, y as u32, image::Rgba(px));
+        }
+    }
+    let mut out = std::io::Cursor::new(Vec::new());
+    img.write_to(&mut out, image::ImageFormat::Png).ok()?;
+    Some(out.into_inner())
 }
 
 /// What the main window's view does for the shell each run: applies the zoom and notes the size.
@@ -666,6 +736,17 @@ pub fn frame_covered(body: El, size: (f32, f32)) -> El {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_corner_cursor_is_a_diagonal_arrow() {
+        let png = nwse_png().unwrap();
+        let img = image::load_from_memory(&png).unwrap().to_rgba8();
+        assert_eq!(img.dimensions(), (48, 48));
+        // dark on the diagonal, clear off it
+        assert_eq!(img.get_pixel(24, 24).0, [0, 0, 0, 255]);
+        assert_eq!(img.get_pixel(40, 8).0[3], 0);
+        assert_eq!(img.get_pixel(8, 40).0[3], 0);
+    }
 
     #[test]
     fn zoom_steps_like_use_zoom() {
