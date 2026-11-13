@@ -593,6 +593,16 @@ fn album_title(t: &Value) -> Option<String> {
 fn is_video(t: &Value) -> bool {
     t["itemType"].as_str() == Some("video")
 }
+/// Fills what a video queue item lacks from the video's metadata (TidalVideo, camelCase):
+/// its length, picture, title, artists and explicit flag. What the item has stays.
+fn merge_video_meta(cur: &mut Value, meta: &Value) {
+    let missing = |v: &Value| v.is_null() || v.as_str() == Some("") || v.as_u64() == Some(0) || v.as_array().is_some_and(|a| a.is_empty());
+    for k in ["duration", "imageId", "title", "artist", "artists", "explicit"] {
+        if missing(&cur[k]) && !missing(&meta[k]) {
+            cur[k] = meta[k].clone();
+        }
+    }
+}
 fn art_url(t: &Value) -> String {
     if is_video(t) {
         return t["imageId"].as_str().filter(|c| !c.is_empty()).map(|c| format!("https://resources.tidal.com/images/{}/320x180.jpg", c.replace('-', "/"))).unwrap_or_default();
@@ -1145,8 +1155,8 @@ impl Player {
             Cmd::Previous => self.play_previous().await,
             Cmd::SeekFraction(_) => {
                 let Some(f) = PENDING_SEEK.lock().unwrap().take() else { return };
-                if let Some(t) = &self.current {
-                    let s = f as f64 * duration(t) as f64;
+                if self.current.is_some() {
+                    let s = f as f64 * self.cur_duration();
                     self.seek_to(s).await;
                 }
             }
@@ -1565,13 +1575,29 @@ impl Player {
         if is_video(t) {
             let _ = playback::stop_track(self.state()).await;
             self.pending_next = None;
+            // Every video start is at High (startVideoSession's default), whichever path
+            // started it: a play, Previous, a resume or a repeat.
+            self.video_quality = "HIGH".into();
             self.start_video(tid(t), 0.0).await?;
+            self.fill_video_meta(t).await;
             return Ok(Value::Null);
         }
         if crate::video::is_open() {
             crate::video::close();
         }
         self.invoke_play_track(tid(t)).await
+    }
+
+    /// The video's own metadata (startVideoSession's get_video_metadata), for what the queue
+    /// item lacks: a video queued from a deep link, MCP or an old snapshot can come without
+    /// its length, picture or artist. A failure costs nothing; the item stays as it was.
+    async fn fill_video_meta(&mut self, t: &Value) {
+        let id = tid(t);
+        let Ok(meta) = playback::get_video_metadata(self.state(), id).await else { return };
+        let Ok(meta) = serde_json::to_value(meta) else { return };
+        let q = qid_of(t);
+        let Some(cur) = self.current.as_mut().filter(|c| tid(c) == id && qid_of(c) == q) else { return };
+        merge_video_meta(cur, &meta);
     }
 
     /// Resolve the video's HLS stream at the chosen quality and open it at `at` seconds.
@@ -2527,6 +2553,18 @@ impl Player {
         self.current.as_ref().is_some_and(is_video)
     }
 
+    /// The current item's length in seconds: a video's from its stream once the pipeline knows
+    /// it (the <video> element's duration), else the item's own.
+    fn cur_duration(&self) -> f64 {
+        let item = self.current.as_ref().map(|t| duration(t) as f64).unwrap_or(0.0);
+        if self.current_is_video() {
+            if let Some(d) = crate::video::duration().filter(|d| d.is_finite() && *d > 0.0) {
+                return d;
+            }
+        }
+        item
+    }
+
     async fn pause(&mut self) {
         self.user_paused = true;
         if self.current_is_video() {
@@ -2966,7 +3004,7 @@ impl Player {
             album: self.current.as_ref().and_then(album_title).unwrap_or_default(),
             playing: self.playing,
             position: pos().interpolated(),
-            duration: self.current.as_ref().map(|t| duration(t) as f64).unwrap_or(0.0),
+            duration: self.cur_duration(),
             shuffle: self.prefs.shuffle,
             repeat: Repeat::from_u8(self.prefs.repeat),
             volume: if self.bit_perfect && !self.current_is_video() { 1.0 } else { self.prefs.volume },
@@ -3240,5 +3278,37 @@ mod mpris_tests {
     fn the_rating_is_the_favourite_flag() {
         assert_eq!(super::mpris_rating(true), 1.0);
         assert_eq!(super::mpris_rating(false), 0.0);
+    }
+}
+
+#[cfg(test)]
+mod playback_parity_tests {
+    use super::*;
+
+    #[test]
+    fn video_metadata_fills_only_what_the_item_lacks() {
+        let mut cur = json!({"id": 7, "itemType": "video", "title": "Mine", "duration": 0, "imageId": null, "_qid": "q3"});
+        let meta = json!({"id": 7, "title": "Theirs", "duration": 241, "imageId": "a-b", "artist": {"id": 1, "name": "X"}, "artists": [{"id": 1, "name": "X"}]});
+        merge_video_meta(&mut cur, &meta);
+        assert_eq!(cur["title"], "Mine");
+        assert_eq!(cur["duration"], 241);
+        assert_eq!(cur["imageId"], "a-b");
+        assert_eq!(cur["artist"]["name"], "X");
+        assert_eq!(cur["_qid"], "q3");
+    }
+
+    #[test]
+    fn a_failed_play_toasts_the_backend_message() {
+        assert_eq!(playback_message(&SoneError::Audio("device busy".into())), "device busy");
+        assert_eq!(playback_message(&SoneError::Network("timed out".into())), "timed out");
+        assert_eq!(playback_message(&SoneError::Api { status: 500, body: "{}".into() }), "Playback failed");
+        assert_eq!(playback_message(&SoneError::NotAuthenticated), "Playback failed");
+        assert_eq!(playback_message(&SoneError::ProxyBlocked { reason: "Proxy is off".into() }), "Proxy is off");
+    }
+
+    #[test]
+    fn the_tray_names_an_unknown_artist() {
+        assert_eq!(artist_join(&json!({"title": "T"})), "Unknown Artist");
+        assert_eq!(artist_join(&json!({"artists": [{"name": "A"}, {"name": "B"}]})), "A, B");
     }
 }
