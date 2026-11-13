@@ -513,12 +513,21 @@ pub struct Create {
     pub saving: bool,
 }
 
+/// Counts the menus opened, so an async result for one menu never lands in a later one.
+static MENU_GEN: AtomicU64 = AtomicU64::new(0);
+
+fn new_menu() -> u64 {
+    MENU_GEN.fetch_add(1, Ordering::Relaxed) + 1
+}
+
 pub fn open_track(s: &mut App, track: Value, playlist: Option<InPlaylist>, anchor: Anchor) {
+    new_menu();
     s.nav.ctx = Some(Ctx { target: Target::Track { track, playlist }, anchor, sub: None, confirm_delete: false, menu: true, intent: None });
 }
 
 pub fn open_media(s: &mut App, item: Value, anchor: Anchor) {
     if let Some(kind) = Media::of(&item) {
+        new_menu();
         s.nav.ctx = Some(Ctx { target: Target::Media { item, kind }, anchor, sub: None, confirm_delete: false, menu: true, intent: None });
     }
 }
@@ -526,6 +535,7 @@ pub fn open_media(s: &mut App, item: Value, anchor: Anchor) {
 /// A track row's "+": the playlist picker alone, under the button (TrackList: no submenu offset).
 pub fn open_add_below(s: &mut App, track: Value, button_key: String) {
     let id = track_id(&track);
+    new_menu();
     s.nav.ctx = Some(Ctx {
         target: Target::Track { track, playlist: None },
         anchor: Anchor::Below(button_key.clone()),
@@ -844,9 +854,9 @@ fn media_menu(item: &Value, kind: Media, c: &Ctx) -> El {
             });
         }))
         .child(sep());
-    let i4 = it.clone();
-    let _ = i4;
-    m = m.child(mi_sub("ctx-add", "Add to playlist", G::List, matches!(c.sub, Some(Sub::AddToPlaylist { .. })), Which::Add));
+    // (a spinner in place of its icon while the item's tracks are fetched for it)
+    let busy = fetching_ids();
+    m = m.child(mi_sub("ctx-add", "Add to playlist", if busy { G::Loader } else { G::List }, matches!(c.sub, Some(Sub::AddToPlaylist { .. })), Which::Add).busy(busy));
     if kind == Media::Playlist {
         m = m.child(mi_sub("ctx-move", "Move to folder", G::FolderInput, matches!(c.sub, Some(Sub::MoveToFolder { .. })), Which::Move));
     }
@@ -889,12 +899,37 @@ fn media_menu(item: &Value, kind: Media, c: &Ctx) -> El {
     m
 }
 
-static PENDING_SUB: LazyLock<Mutex<Option<Vec<u64>>>> = LazyLock::new(Default::default);
+/// A media item's track ids for the Add to playlist submenu, fetched for the menu `menu_no`
+/// (AddToPlaylistMenu's playlistTrackIds): `None` while the fetch runs, then the ids, which the
+/// next poll opens the submenu with if that menu is still the one open.
+#[derive(Default)]
+struct SubIds {
+    menu_no: u64,
+    ids: Option<Vec<u64>>,
+    /// The ids arrived and the submenu hasn't opened with them yet.
+    pending: bool,
+}
+
+static SUB_IDS: LazyLock<Mutex<SubIds>> = LazyLock::new(Default::default);
+
+/// The open menu's track ids are being fetched for its Add to playlist (its item shows a spinner).
+fn fetching_ids() -> bool {
+    let s = SUB_IDS.lock().unwrap();
+    s.menu_no == MENU_GEN.load(Ordering::Relaxed) && s.ids.is_none()
+}
 
 /// Apply an async result to the open menu: the Add to playlist submenu once a media item's
 /// track ids are in, or a page to go to.
 pub fn apply_pending(s: &mut App) {
-    if let Some(ids) = PENDING_SUB.lock().unwrap().take() {
+    let ids = {
+        let mut sub = SUB_IDS.lock().unwrap();
+        let ours = sub.menu_no == MENU_GEN.load(Ordering::Relaxed) && s.nav.ctx.as_ref().is_some_and(|c| matches!(c.target, Target::Media { .. }));
+        match (std::mem::take(&mut sub.pending), &sub.ids) {
+            (true, Some(ids)) if ours => Some(ids.clone()),
+            _ => None,
+        }
+    };
+    if let Some(ids) = ids {
         open_add(s, ids);
     }
     if let Some(p) = take_pending_nav() {
@@ -976,12 +1011,37 @@ fn open_sub(s: &mut App, which: Which) {
     match (which, c.target.clone()) {
         (Which::Add, Target::Track { track, .. }) => open_add(s, vec![track_id(&track)]),
         (Which::Add, Target::Media { item, kind }) => {
-            // React fetches every track id first, then opens the submenu
-            sone_host_shim::async_runtime::spawn(async move {
-                if let Some(ids) = media_track_ids(&item, kind).await {
-                    *PENDING_SUB.lock().unwrap() = Some(ids);
-                    bump();
+            // React fetches every track id first (once per menu), then opens the submenu.
+            let menu_no = MENU_GEN.load(Ordering::Relaxed);
+            {
+                let mut sub = SUB_IDS.lock().unwrap();
+                if sub.menu_no == menu_no {
+                    // already fetched for this menu (or on its way)
+                    if let Some(ids) = sub.ids.clone() {
+                        drop(sub);
+                        open_add(s, ids);
+                    }
+                    return;
                 }
+                *sub = SubIds { menu_no, ids: None, pending: false };
+            }
+            bump();
+            sone_host_shim::async_runtime::spawn(async move {
+                let ids = media_track_ids(&item, kind).await;
+                let mut sub = SUB_IDS.lock().unwrap();
+                if sub.menu_no != menu_no {
+                    return;
+                }
+                match ids {
+                    Some(ids) => *sub = SubIds { menu_no, ids: Some(ids), pending: true },
+                    None => {
+                        // nothing to open: let a later press try again
+                        *sub = SubIds::default();
+                        drop(sub);
+                        toast("Failed to load tracks".into(), Kind::Error);
+                    }
+                }
+                bump();
             });
         }
         (Which::Move, Target::Media { item, kind: Media::Playlist }) => {
