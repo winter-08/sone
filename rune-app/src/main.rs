@@ -23,6 +23,7 @@ mod keys;
 mod mini;
 mod perf;
 mod queue_ui;
+mod settings;
 mod shell;
 mod signal_path;
 mod sources;
