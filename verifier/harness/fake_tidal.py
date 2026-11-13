@@ -204,7 +204,8 @@ def folders_route(flow: http.HTTPFlow, path: str) -> bool:
 #     2), Fixture Mixtape's tracks carry dates added (2, 10 and 20 days ago, then 2023-03-04),
 #     and search suggestions start with "fixture history" from the server's search history.
 #   SPIKE_HOME_EXTRA=1: the Home feed (For You) also has a "Recently played" compact grid (album
-#     77, Fixture Mixtape, track 1005, artist 7) and a "Fresh Tracks" track list (1006, and 1007
+#     77, Fixture Mixtape, track 1005, artist 7), a "Fixture Videos" row (video 9001) and a "Fresh
+#     Tracks" track list (1006, and 1007
 #     credited to Mock Ensemble and Fixture Artist).
 #     A profile whose cached Home predates it shows them only once Home is refreshed.
 #   SPIKE_HOME_TABS=1: Home has a second tab, "Staff Picks" (EDITORIAL), whose feed fails (500).
@@ -283,6 +284,8 @@ def extras_route(flow: http.HTTPFlow, host: str, path: str, method: str) -> bool
             # (1007 here is credited to both fixture artists, for menus that list a track's artists)
             duo = track_json(1007)
             duo["artists"] = [duo["artist"], {"id": 7, "name": "Fixture Artist", "type": "FEATURED"}]
+            d["items"].append({"type": "VIDEO_LIST", "moduleId": "FIXTURE_VIDEOS", "title": "Fixture Videos",
+                               "items": [{"type": "VIDEO", "data": catalog_json("video_9001.json")}]})
             d["items"].append({"type": "TRACK_LIST", "moduleId": "FRESH_TRACKS", "title": "Fresh Tracks",
                                "items": [{"type": "TRACK", "data": track_json(1006)}, {"type": "TRACK", "data": duo}]})
         respond(flow, 200, d)
