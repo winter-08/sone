@@ -2849,7 +2849,7 @@ impl Player {
         }
 
         // Tray tooltip on current change.
-        let tip = self.current.as_ref().map(|t| format!("{} — {}", display_title(t), artist_names(t).join(", "))).unwrap_or_else(|| "Sone".into());
+        let tip = self.current.as_ref().map(|t| format!("{} — {}", display_title(t), artist_join(t))).unwrap_or_else(|| "Sone".into());
         if self.pubd.tooltip.as_ref() != Some(&tip) {
             let h = self.h.clone();
             let t2 = tip.clone();
