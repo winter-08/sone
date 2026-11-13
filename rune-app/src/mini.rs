@@ -389,10 +389,9 @@ fn full(s: &Mini, v: &View, w: f32, h: f32) -> El {
                     .child(prev(side, side_glyph, white(0.92)))
                     .child(play(v, play_size))
                     .child(next(side, side_glyph, white(0.92))))
-                .child(row().gap(if small { 4.0 } else { 12.0 }).items_center().child(volume(v)).child(shuffle(v)).child(repeat(v))),
+                .child(row().gap(if small { 4.0 } else { 12.0 }).items_center().child(volume(v)).child(shuffle(v)).child(repeat(v)).child(share(v, 32.0, 18.0))),
         )
-        .child(seek)
-        .child(row().pin(None, Some(6.0), Some(6.0), None).child(share(v, 32.0, 18.0)));
+        .child(seek);
     let art = el().key("mini-art").size(sz, sz).hover_group().hover_motion(OVERLAY_FADE, OVERLAY_FADE).child(cover(v, sz)).child(overlay);
     let meta = row()
         .w(sz.max((w - 16.0).min(200.0)))

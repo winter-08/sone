@@ -255,8 +255,8 @@ pub fn on_window(w: &rune::WindowHandle) {
 pub fn note_size(view: (f32, f32), zoom: f32) {
     let size = ((view.0 * zoom).round(), (view.1 * zoom).round());
     let mut g = GEOMETRY.lock().unwrap();
-    // A maximized window keeps the size it restores to.
-    if !g.maximized && g.size != Some(size) {
+    // A maximized or full-screen window keeps the size it restores to.
+    if !g.maximized && !FULL_SCREEN.load(Ordering::Relaxed) && g.size != Some(size) {
         g.size = Some(size);
     }
 }
@@ -275,6 +275,15 @@ fn note_placement() {
 
 fn maximized() -> bool {
     GEOMETRY.lock().unwrap().maximized
+}
+
+/// The window is OS full screen for the full-screen or the video player (they toggle it with
+/// `Tx::toggle_full_screen`): no resize edges then, and its size isn't the one to restore.
+static FULL_SCREEN: AtomicBool = AtomicBool::new(false);
+
+/// Called by the main window's view with whether a player holds the window full screen.
+pub fn set_full_screen(on: bool) {
+    FULL_SCREEN.store(on, Ordering::Relaxed);
 }
 
 /// The platform tells where the window is and whether it's maximized (Rune's
@@ -626,7 +635,7 @@ thread_local! {
 /// and none while the window is maximized, as React drops them. `size` is the window's
 /// content size in view points.
 pub fn resize_edges(size: (f32, f32)) -> Vec<El> {
-    if NATIVE_FRAME.load(Ordering::Relaxed) || maximized() {
+    if NATIVE_FRAME.load(Ordering::Relaxed) || maximized() || FULL_SCREEN.load(Ordering::Relaxed) {
         return Vec::new();
     }
     let drag = move |dx: bool, dy: bool| {
