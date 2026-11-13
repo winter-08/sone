@@ -183,7 +183,9 @@ pub fn dialog_title(title: &str) -> El {
 /// role, name and state.
 pub fn switch_mark(on: bool) -> El {
     el().size(36.0, 20.0).radius(10.0).fill(if on { theme::accent() } else { white(0.2) }).a11y_hidden()
-        .child(el().absolute(if on { 18.0 } else { 2.0 }, 2.0).size(16.0, 16.0).radius(8.0).fill(white(0.98)))
+        // (on the accent in a light theme the knob is white: the dark text colour React gives it
+        // there sits dark on the accent)
+        .child(el().absolute(if on { 18.0 } else { 2.0 }, 2.0).size(16.0, 16.0).radius(8.0).fill(if on && theme::fg_lightness() < 0.5 { theme::ink() } else { white(0.98) }))
 }
 
 /// A radio button's ring, with the accent dot when it's the chosen one. Decorative, as
@@ -345,7 +347,9 @@ fn eq_beats() -> &'static [rune::Beat] {
 }
 
 pub fn transport<S: 'static>(v: &View, prefix: &str, play_size: f32) -> El {
-    let accent = oklch(0.3, 0.09, hue(v.track_id));
+    // the glyph in the window's background colour on the text-coloured disc (PlayerBar's
+    // text-th-base on bg-th-text-primary); dark themes keep the track's deep tint
+    let accent = if theme::fg_lightness() < 0.5 { theme::ground() } else { oklch(0.3, 0.09, hue(v.track_id)) };
     let play = el()
         .key(format!("{prefix}-play"))
         .role("button")
