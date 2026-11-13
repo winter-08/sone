@@ -588,7 +588,8 @@ fn pick(s: &mut App, e: Entry) {
             go(s, Page::Search(q));
         }
         Entry::Hit(_, p, _) => go(s, p),
-        Entry::Track(_, id, _) => controller::send_play_ids(vec![id]),
+        // SearchBar's play button: playSingle, which keeps the manual queue.
+        Entry::Track(_, id, _) => controller::send(Cmd::PlaySingleId(id)),
         Entry::ViewAll => {
             let q = s.nav.search.text.trim().to_string();
             *s.nav.tab = SearchTab::All;
@@ -1109,16 +1110,22 @@ fn artist(id: u64, v: &View) -> El {
                 .on_press(move |s: &mut App| s.nav.dialog = Some(Dialog::Bio(id)))
                 .child(text("Read more").font(t(12.0, 650.0)).color(white(0.85)).a11y_hidden())));
     }
+    let mut top_seen = false;
     for (si, sec) in p["items"].as_array().cloned().unwrap_or_default().iter().enumerate() {
         let title = sec["title"].as_str().unwrap_or("");
         let items = sec["items"].as_array().cloned().unwrap_or_default();
         c = c.child(heading(title, theme::SECTION));
         let tracks: Vec<Value> = items.iter().filter(|it| data::kind(it) == "TRACK").map(|it| data::data(it).clone()).collect();
         if !tracks.is_empty() {
+            // ArtistPage handlePlayTrack: play from the artist source, the first track list being
+            // the top tracks; the manual queue is kept.
+            let top = !std::mem::replace(&mut top_seen, true);
             let mut rows = col().w_full().gap(2.0);
             for (i, tr) in tracks.iter().enumerate() {
-                let tid = tr["id"].as_u64().unwrap_or(0);
-                rows = rows.child(track_row(format!("ar-s{si}-t{i}"), i + 1, tr, move |_: &mut App| controller::send_play_ids(vec![tid])));
+                let (all, an) = (tracks.clone(), name.clone());
+                rows = rows.child(track_row(format!("ar-s{si}-t{i}"), i + 1, tr, move |_: &mut App| {
+                    controller::send(Cmd::PlayArtistTrack { id, name: an.clone(), tracks: all.clone(), index: i, top });
+                }));
             }
             c = c.child(rows);
         } else if items.iter().any(|it| data::kind(it) == "VIDEO") {
@@ -1230,9 +1237,13 @@ fn search_page(s: &App, q: &str) -> El {
     let video_source = json!({"type": "search", "id": q, "name": format!("Search: {q}")});
     let tracks = Rc::new(tracks);
     let track_rows = |limit: usize| {
-        track_list("sr-t", tracks.clone(), (0..tracks.len().min(limit)).collect(), |tracks, i| {
-            let id = tracks[i]["id"].as_u64().unwrap_or(0);
-            track_row(format!("sr-t{i}"), i + 1, &tracks[i], move |_: &mut App| controller::send_play_ids(vec![id]))
+        // SearchView handlePlayTrack: playFromSource over every track hit, keeping the manual queue.
+        let src = json!({"type": "search", "id": q, "name": format!("Search: {q}")});
+        track_list("sr-t", tracks.clone(), (0..tracks.len().min(limit)).collect(), move |tracks, i| {
+            let (all, src) = (tracks.clone(), src.clone());
+            track_row(format!("sr-t{i}"), i + 1, &tracks[i], move |_: &mut App| {
+                controller::send(Cmd::PlayFrom { tracks: all.to_vec(), index: i, source: src.clone(), album_mode: false });
+            })
         })
     };
     let section = |title: &str, body: El| col().w_full().gap(10.0).child(row().items_center().child(heading(title, theme::SECTION)).child(spacer()).child(
@@ -1867,10 +1878,18 @@ fn explore_sub(path: &str, title: &str) -> El {
         if !cards.is_empty() {
             block = block.child(grid(cards));
         } else if items.iter().any(|it| data::kind(it) == "TRACK") {
+            // ExploreSubPage renders HomeSection: playFromSource over the section's tracks with a
+            // home-section source, keeping the manual queue.
+            let all: Vec<Value> = items.iter().filter(|it| data::kind(it) == "TRACK").map(|it| data::data(it).clone()).collect();
+            let src = json!({"type": "home-section", "id": st, "name": st});
             let mut rows = col().w_full().gap(2.0);
             for (i, tr) in items.iter().enumerate() {
                 let id = data::data(tr)["id"].as_u64().unwrap_or(0);
-                rows = rows.child(track_row_with(format!("es-{si}-t{i}"), i + 1, data::data(tr), false, None, move |_: &mut App| controller::send_play_ids(vec![id])));
+                let (all, src) = (all.clone(), src.clone());
+                rows = rows.child(track_row_with(format!("es-{si}-t{i}"), i + 1, data::data(tr), false, None, move |_: &mut App| {
+                    let index = all.iter().position(|t| t["id"].as_u64() == Some(id)).unwrap_or(0);
+                    controller::send(Cmd::PlayFrom { tracks: all.clone(), index, source: src.clone(), album_mode: false });
+                }));
             }
             block = block.child(rows);
         } else {

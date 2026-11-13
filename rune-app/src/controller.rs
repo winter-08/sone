@@ -67,8 +67,16 @@ pub enum Cmd {
     PlayFrom { tracks: Vec<Value>, index: usize, source: Value, album_mode: bool },
     /// An artist page's Play: fetch the top tracks (as the React page does), then play them.
     PlayArtist { id: u64, name: String, shuffle: bool },
-    /// Play these track ids now (a track clicked in search or on Home).
-    PlayIds(Vec<u64>),
+    /// An artist page's track row (ArtistPage handlePlayTrack → usePlaySource startAt): play
+    /// `tracks[index]` from the artist source, keeping the manual queue. For the top tracks
+    /// (`top`, which page on in the original) the tracks before the click are not wrapped in
+    /// unless shuffle is on.
+    PlayArtistTrack { id: u64, name: String, tracks: Vec<Value>, index: usize, top: bool },
+    /// playSingle (§2.3): play this one item with an empty context queue and no source; the
+    /// manual queue is kept (useMediaPlay for a video, a deep link).
+    PlaySingle(Value),
+    /// playSingle for a track id (the search dropdown's play button).
+    PlaySingleId(u64),
     /// Put these track ids at the front of the manual queue, in order ("Play next").
     PlayNextIds(Vec<u64>),
     /// Append these track ids to the manual queue ("Add to queue").
@@ -241,10 +249,6 @@ pub fn now_playing() -> (Option<u64>, bool) {
 /// The streaming quality ceiling, read from the backend (it owns the setting).
 pub fn max_quality() -> String {
     utility::get_max_quality(crate::host().state::<AppState>())
-}
-
-pub fn send_play_ids(ids: Vec<u64>) {
-    send(Cmd::PlayIds(ids));
 }
 
 /// The main window, in [`set_clock_shown`].
@@ -902,6 +906,19 @@ impl Player {
                 }
             }
             Cmd::PlayFrom { tracks, index, source, album_mode } => self.play_from_src(tracks, index, source, album_mode).await,
+            Cmd::PlayArtistTrack { id, name, tracks, index, top } => {
+                let Some(track) = tracks.get(index).cloned() else { return };
+                let rest = artist_rest(&tracks, index, top, self.prefs.shuffle);
+                let source = json!({"type": "artist", "id": id, "name": name});
+                // Artist sources keep the manual queue, like every track click.
+                self.set_queue_src(rest, false, self.prefs.shuffle, Some(source), tracks, false);
+                self.fail_count = 0;
+                if self.play_track(track, true, false, false, true, true).await == Err(Fail::Unplayable) {
+                    self.play_next(true, true).await;
+                }
+            }
+            Cmd::PlaySingle(t) => self.play_single(t).await,
+            Cmd::PlaySingleId(id) => self.fetch_tracks(vec![id], "play_single", true),
             Cmd::PlayArtist { id, name, shuffle } => {
                 // The React artist source pages the top tracks (view-all); when that fails it
                 // plays what the page already loaded (its Top tracks module).
@@ -970,7 +987,6 @@ impl Player {
                 let _ = utility::set_max_quality(self.state(), q);
             }
             Cmd::QueueIds(ids) => self.fetch_tracks(ids, "queue", true),
-            Cmd::PlayIds(ids) => self.fetch_tracks(ids, "play_now", true),
             Cmd::PlayNextIds(ids) => self.fetch_tracks(ids, "play_next", true),
             Cmd::JumpTo(id) => {
                 if let Some(i) = self.upcoming().iter().position(|t| tid(t) == id) {
@@ -1443,7 +1459,7 @@ impl Player {
         if ids.is_empty() {
             return;
         }
-        if action == "play_now" {
+        if action == "play_now" || action == "play_single" {
             self.fetch_seq += 1;
         }
         let (tx, h, action, asked, seq) = (self.tx.clone(), self.h.clone(), action.to_string(), ids.len(), self.fetch_seq);
@@ -1460,14 +1476,14 @@ impl Player {
 
     async fn on_fetched(&mut self, tracks: Vec<Value>, action: &str, asked: usize, seq: u64, from_ui: bool) {
         // play_now: the latest request wins; queue / play_next always land.
-        if action == "play_now" && seq != self.fetch_seq {
+        if (action == "play_now" || action == "play_single") && seq != self.fetch_seq {
             return;
         }
         // MCP stays silent on failures (§2.5); the UI says what it couldn't load (useMediaPlay).
         if from_ui {
             let missed = asked - tracks.len();
             if tracks.is_empty() {
-                self.toast_error(if action == "play_now" { "Failed to play" } else { "Couldn't load tracks" });
+                self.toast_error(if action == "play_now" || action == "play_single" { "Failed to play" } else { "Couldn't load tracks" });
             } else if missed > 0 {
                 self.toast_error(format!("Couldn't load {missed} track{}", if missed == 1 { "" } else { "s" }));
             }
@@ -1478,6 +1494,11 @@ impl Player {
         match action {
             "play_now" => {
                 self.play_all(tracks).await;
+            }
+            "play_single" => {
+                if let Some(t) = tracks.into_iter().next() {
+                    self.play_single(t).await;
+                }
             }
             "queue" => {
                 for t in tracks {
@@ -2342,6 +2363,13 @@ fn wrap_after(tracks: &[Value], i: usize) -> Vec<Value> {
     tracks[i + 1..].iter().chain(&tracks[..i]).cloned().collect()
 }
 
+/// What follows an artist page's clicked track (usePlaySource with startAt): the top tracks page
+/// on past what the page shows, so without shuffle the tracks before the click aren't wrapped in
+/// (noWrap); any other list wraps as playFromSource does.
+fn artist_rest(tracks: &[Value], i: usize, top: bool, shuffle: bool) -> Vec<Value> {
+    if top && i > 0 && !shuffle { tracks[i + 1..].to_vec() } else { wrap_after(tracks, i) }
+}
+
 fn fisher_yates(mut v: Vec<Value>) -> Vec<Value> {
     for i in (1..v.len()).rev() {
         let j = rand::random::<usize>() % (i + 1);
@@ -2453,5 +2481,16 @@ mod play_from_tests {
         assert_eq!(ids(wrap_after(&all, 2)), [4, 5, 1, 2]);
         assert_eq!(ids(wrap_after(&all, 0)), [2, 3, 4, 5]);
         assert_eq!(ids(wrap_after(&all, 4)), [1, 2, 3, 4]);
+    }
+
+    #[test]
+    fn an_artists_top_tracks_dont_wrap_unless_shuffled() {
+        use super::artist_rest;
+        let all: Vec<_> = (1..=5).map(|i| json!({"id": i})).collect();
+        let ids = |v: Vec<serde_json::Value>| v.iter().map(tid).collect::<Vec<_>>();
+        assert_eq!(ids(artist_rest(&all, 2, true, false)), [4, 5]);
+        assert_eq!(ids(artist_rest(&all, 0, true, false)), [2, 3, 4, 5]);
+        assert_eq!(ids(artist_rest(&all, 2, true, true)), [4, 5, 1, 2]);
+        assert_eq!(ids(artist_rest(&all, 2, false, false)), [4, 5, 1, 2]);
     }
 }

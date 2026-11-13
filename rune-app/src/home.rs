@@ -364,7 +364,8 @@ fn promo_card(key: String, it: &Value, cw: f32) -> Option<El> {
         "EXTURL" => Box::new(move |_: &mut App| views::open_url(&target)),
         "VIDEO" => {
             let v = json!({"id": target.parse::<u64>().ok()?, "title": title, "imageId": image_id});
-            Box::new(move |_: &mut App| controller::send(Cmd::PlayCollection { tracks: vec![crate::video_ui::video_track(&v)], source: json!({"type": "home-section", "id": "promo", "name": "Home"}), album_mode: false, shuffle: false }))
+            // HomeSection → useMediaPlay: a video plays alone through playSingle (manual queue kept).
+            Box::new(move |_: &mut App| controller::send(Cmd::PlaySingle(crate::video_ui::video_track(&v))))
         }
         _ => return None,
     };
