@@ -145,6 +145,12 @@ pub fn reload_favorites() {
 }
 static FAVS_LOADED: AtomicBool = AtomicBool::new(false);
 
+/// A favourite changed outside the app (an MCP client): the heart shows it; nothing is sent.
+pub fn set_fav(k: Fav, id: String, on: bool) {
+    let changed = { let mut f = FAVS.lock().unwrap(); let set = f.set(k); if on { set.insert(id) } else { set.remove(&id) } };
+    if changed { favs_changed(); }
+}
+
 pub fn is_fav(k: Fav, id: &str) -> bool {
     FAVS.lock().unwrap().set(k).contains(id)
 }

@@ -25,6 +25,7 @@ mod keys;
 mod login;
 mod library;
 mod loved;
+mod mcp_sync;
 mod mini;
 mod obs;
 mod paged;
@@ -472,6 +473,7 @@ fn main() {
         if ev.event() == "theme-file-changed" {
             theme::on_file_changed(ev.payload());
         }
+        mcp_sync::on_event(ev.event(), ev.payload());
         controller::on_backend_event(ev.event(), ev.payload())
     });
     backend::setup_core(&handle);
