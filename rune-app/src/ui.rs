@@ -92,6 +92,8 @@ pub fn icon_button<S: 'static>(key: &str, label: &str, g: G, size: f32, c: Color
         .press(white(0.14))
         .press_scale(0.92)
         .cursor(rune::Cursor::Pointer)
+        // its name as a tooltip, as the React icon buttons' `title`s show
+        .help(label)
         .child(glyph(g, size, c))
 }
 
