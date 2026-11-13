@@ -1245,30 +1245,59 @@ fn dialog_frame(key: &str, title: &str, close_label: &str, body: El, close: fn(&
     ui::dialog_frame(&format!("{key}-scrim"), key, title, (&format!("{key}-x"), close_label), 440.0, None, Some(ui::dialog_title(title)), body, close)
 }
 
+/// The playlist whose deletion the server is answering.
+static DELETING: Mutex<Option<String>> = Mutex::new(None);
+
+/// A page that no longer exists (a deleted playlist): if it's the one showing, Home takes its
+/// history entry (React's replaceView), and Back and Forward skip it.
+fn forget_page(s: &mut App, gone: &Page) {
+    if *s.nav.page == *gone {
+        *s.nav.page = Page::Home;
+    }
+    if s.nav.back.contains(gone) {
+        s.nav.back.retain(|p| p != gone);
+    }
+    if s.nav.fwd.contains(gone) {
+        s.nav.fwd.retain(|p| p != gone);
+    }
+}
+
 fn confirm_delete(c: &Ctx) -> El {
     let Target::Media { item, .. } = &c.target else { return el() };
     let title = data::name(item);
     let uuid = data::data(item)["uuid"].as_str().unwrap_or("").to_string();
+    let busy = DELETING.lock().unwrap().is_some();
     let body = col().gap(18.0)
         .child(text(format!("Are you sure you want to delete \"{title}\"? This can't be undone.")).key("del-msg").font(t(14.0, 400.0)).color(white(0.75)).wrap())
         .child(row().gap(10.0).child(spacer())
             .child(ui::pill("del-cancel", "Cancel", None, ui::Pill::Secondary).on_press(|s: &mut App| close(s)))
-            .child(ui::pill("del-ok", "Delete", None, ui::Pill::Danger).described_by("del-msg").on_press(move |s: &mut App| {
-                close(s);
-                if s.nav.page == Page::Playlist(uuid.clone()) {
-                    // React replaces the current history entry with Home
-                    *s.nav.page = Page::Home;
+            .child(ui::pill("del-ok", if busy { "Deleting…" } else { "Delete" }, None, ui::Pill::Danger).described_by("del-msg").busy(busy).on_press(move |_: &mut App| {
+                // MediaContextMenu: the dialog stays, busy, until the server answers.
+                if DELETING.lock().unwrap().replace(uuid.clone()).is_some() {
+                    return;
                 }
+                bump();
                 let (u, l) = (uuid.clone(), title.clone());
                 sone_host_shim::async_runtime::spawn(async move {
-                    match library::delete_playlist(state(), data::user_id(), u).await {
+                    let res = library::delete_playlist(state(), data::user_id(), u.clone()).await;
+                    let ok = res.is_ok();
+                    match res {
                         Ok(()) => {
                             data::forget(&Key::Folders);
                             data::forget(&Key::AllPlaylists);
+                            data::forget(&Key::FlattenedPlaylists);
+                            data::forget(&Key::Playlist(u.clone()));
                             toast(format!("Deleted \"{}\"", clip(&l, 28)), Kind::Success);
                         }
                         Err(_) => toast("Failed to delete playlist".into(), Kind::Error),
                     }
+                    crate::coll::later(move |s| {
+                        *DELETING.lock().unwrap() = None;
+                        close(s);
+                        if ok {
+                            forget_page(s, &Page::Playlist(u));
+                        }
+                    });
                 });
             })));
     dialog_frame("del-dialog", "Delete playlist?", "Close", body, |s| {
