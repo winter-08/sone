@@ -1741,7 +1741,8 @@ impl Player {
     }
 
     async fn rate_limit_fire(&mut self, pgen: u64, retry: Option<Value>, context_first: bool) {
-        if self.resume_seq_gen != Some(pgen) || pgen != self.generation || self.user_paused {
+        // (nor over a video that became current meanwhile: React's currentVideoAtom check)
+        if self.resume_seq_gen != Some(pgen) || pgen != self.generation || self.user_paused || self.current_is_video() {
             return;
         }
         self.resume_seq_gen = None;
