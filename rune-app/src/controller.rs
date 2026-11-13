@@ -1558,7 +1558,7 @@ impl Player {
         }
         let info = playback::get_video_stream_info(self.state(), id, Some(self.video_quality.clone())).await?;
         let url = crate::hls_relay::wrap(&info.url).map_err(SoneError::Audio)?;
-        crate::video::open(&url, if self.bit_perfect { 1.0 } else { self.prefs.volume }, at).map_err(SoneError::Audio)?;
+        crate::video::open(&url, self.prefs.volume, at).map_err(SoneError::Audio)?;
         self.video_session += 1;
         Ok(())
     }
@@ -2594,7 +2594,8 @@ impl Player {
                 self.bit_perfect = false;
             }
             if let Some((vol, norm)) = self.prefs.bit_perfect_prev.take() {
-                let from = self.prefs.volume;
+                // The pipeline sat at unity (a video may have moved `prefs.volume`).
+                let from = 1.0;
                 self.ramp_volume(from, vol).await;
                 let _ = utility::set_volume_normalization(self.state(), norm);
             }
@@ -2602,12 +2603,17 @@ impl Player {
     }
 
     fn set_volume(&mut self, level: f32) {
-        // §6.6: ignored entirely under bit-perfect (no video in this slice).
-        if self.bit_perfect {
+        // §6.6: bit-perfect audio stays at unity, but a video's audio is lossy, so its volume
+        // still works; the audio pipeline is never given a non-unity level while bit-perfect is
+        // on (React usePlaybackActions setVolume).
+        let video = self.current_is_video();
+        if self.bit_perfect && !video {
             return;
         }
         self.prefs.volume = level.clamp(0.0, 1.0);
-        let _ = playback::set_volume(self.state(), self.prefs.volume);
+        if !self.bit_perfect {
+            let _ = playback::set_volume(self.state(), self.prefs.volume);
+        }
         crate::video::set_volume(self.prefs.volume);
     }
 
@@ -2910,7 +2916,7 @@ impl Player {
             duration: self.current.as_ref().map(|t| duration(t) as f64).unwrap_or(0.0),
             shuffle: self.prefs.shuffle,
             repeat: Repeat::from_u8(self.prefs.repeat),
-            volume: if self.bit_perfect { 1.0 } else { self.prefs.volume },
+            volume: if self.bit_perfect && !self.current_is_video() { 1.0 } else { self.prefs.volume },
             quality: Some(quality_text(&self.stream_info)).filter(|s| !s.is_empty()),
             current: self.current.as_ref().map(qitem),
             queue: {

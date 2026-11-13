@@ -525,7 +525,7 @@ fn heart(v: &View) -> El {
 
 /// Mute and unmute; the wheel over it steps the volume. Locked in bit-perfect mode.
 fn volume(v: &View) -> El {
-    if v.bit_perfect {
+    if v.bit_perfect && v.video.is_none() {
         return ui::unavailable(button("mini-volume", "Volume disabled in bit-perfect mode", G::Speaker, white(0.35), 28.0, 16.0, false));
     }
     let vol = v.volume;
