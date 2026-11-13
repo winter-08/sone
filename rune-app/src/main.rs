@@ -428,7 +428,11 @@ fn view(s: &App, cx: &mut Cx<App>) -> El {
         });
     }
     let _ = row;
-    // the title bar above, a frameless window's resize edges (shell.rs)
+    // the title bar above, a frameless window's resize edges (shell.rs); a player covering the
+    // window covers the title bar too, as React's overlays do
+    if (s.nav.full.open && v.video.is_none()) || (s.nav.video.expanded && v.video.is_some()) {
+        return shell::frame_covered(root, win_size);
+    }
     shell::frame(root, win_size)
 }
 

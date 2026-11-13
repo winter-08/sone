@@ -630,6 +630,18 @@ pub fn frame(body: El, size: (f32, f32)) -> El {
     col().key(FRAME_KEY).w_full().h_full().child(inner).children(resize_edges(size))
 }
 
+/// [`frame`] while a player covers the whole window (the full-screen player, the video
+/// player), which in React sit over the custom title bar: the bar's place is empty, so the
+/// player reaches the top edge (it's OS full screen then too). The tree keeps its shape, so
+/// nothing under it is built again.
+pub fn frame_covered(body: El, size: (f32, f32)) -> El {
+    let inner = match title_bar() {
+        Some(_) => col().w_full().grow(1.0).min_h(0.0).child(el().key("title-bar-covered")).child(col().w_full().grow(1.0).min_h(0.0).child(body)),
+        None => body,
+    };
+    col().key(FRAME_KEY).w_full().h_full().child(inner).children(resize_edges(size))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
