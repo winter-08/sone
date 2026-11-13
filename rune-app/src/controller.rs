@@ -708,6 +708,16 @@ fn classify(e: &SoneError) -> Fail {
     }
 }
 
+/// The toast for a failed play: the backend's own message, as React's extractPlaybackError
+/// reads it from the serialized error (`{kind, message}`): a string message as it is, a
+/// blocked proxy's reason, anything else (an API error's status and body) "Playback failed".
+fn playback_message(e: &SoneError) -> String {
+    if let SoneError::ProxyBlocked { reason } = e {
+        return reason.clone();
+    }
+    serde_json::to_value(e).ok().and_then(|v| v["message"].as_str().map(str::to_string)).unwrap_or_else(|| "Playback failed".into())
+}
+
 /// Persisted UI preferences (the React localStorage keys `sone.volume.v1` etc.).
 #[derive(serde::Serialize, serde::Deserialize, Clone)]
 struct Prefs {
@@ -1670,7 +1680,7 @@ impl Player {
                             self.toast("Track unavailable")
                         }
                     }
-                    Fail::Transient => self.toast_error(format!("Playback failed: {e}")),
+                    Fail::Transient => self.toast_error(playback_message(&e)),
                     Fail::Filtered => {}
                 }
                 Err(f)
@@ -2150,7 +2160,7 @@ impl Player {
                                 Fail::RateLimited(a) => self.schedule_rate_limit(a, None, false),
                                 Fail::Unplayable => self.toast("Track unavailable"),
                                 Fail::Network => self.toast_error("Network error — check your internet connection"),
-                                _ => self.toast_error(format!("Playback failed: {e}")),
+                                _ => self.toast_error(playback_message(&e)),
                             }
                         }
                     }
@@ -2438,7 +2448,7 @@ impl Player {
                             Fail::RateLimited(a) => self.toast(format!("Too many requests — try again in {}s", a.unwrap_or(5))),
                             Fail::Unplayable => self.toast("Track unavailable"),
                             Fail::Network => self.toast_error("Network error — check your internet connection"),
-                            _ => self.toast_error(format!("Playback failed: {e}")),
+                            _ => self.toast_error(playback_message(&e)),
                         }
                     }
                 }
@@ -2483,7 +2493,7 @@ impl Player {
                                 (self.queue, self.original, self.manual) = (q, o, m);
                                 self.playing = false;
                                 self.mark_loading(false);
-                                self.toast_error(format!("Playback failed: {e}"));
+                                self.toast_error(playback_message(&e));
                             }
                         }
                         return;
@@ -2562,7 +2572,7 @@ impl Player {
                     Fail::RateLimited(a) => self.toast(format!("Too many requests — try again in {}s", a.unwrap_or(5))),
                     Fail::Unplayable => self.toast("Track unavailable"),
                     Fail::Network => self.toast_error("Network error — check your internet connection"),
-                    _ => self.toast_error(format!("Playback failed: {e}")),
+                    _ => self.toast_error(playback_message(&e)),
                 }
             }
         }
