@@ -479,7 +479,8 @@ pub fn nowbar_with<S: 'static>(v: &View, info: El, track_actions: El, extras: El
         .child(row().key("nowbar-extras").gap(6.0).items_center().child(extras).child(volume::<S>(v, "bar-volume", 90.0)));
     row()
         .key("nowbar")
-        .role("complementary")
+        .role("region")
+        .label("Player")
         .w_full()
         .h(84.0)
         .px(PAD)
