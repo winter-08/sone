@@ -103,7 +103,13 @@ pub fn page(s: &App, uuid: &str, v: &View) -> El {
             .on_press(move |s: &mut App| interact::open_media(s, item.clone(), interact::Anchor::Below("pl-more".into()))));
     let videos = d["numberOfVideos"].as_u64().unwrap_or(0);
     let total = snap.total.map(|t| t as u64).unwrap_or_else(|| d["numberOfTracks"].as_u64().unwrap_or(0) + videos);
-    let creator = if own { "You".to_string() } else { d["creator"]["name"].as_str().map(str::to_string).unwrap_or_else(|| if d["creator"]["id"].as_u64() == Some(0) { "TIDAL".into() } else { String::new() }) };
+    // PlaylistView: your own playlist names you (unless TIDAL calls you "TIDAL User"), others
+    // their creator
+    let me = match data::want(Key::Profile) {
+        data::Load::Ready(p) => p.get(0).and_then(|n| n.as_str()).filter(|n| !n.is_empty() && *n != "TIDAL User").map(str::to_string),
+        _ => None,
+    };
+    let creator = if own { me.unwrap_or_else(|| "You".to_string()) } else { d["creator"]["name"].as_str().map(str::to_string).unwrap_or_else(|| if d["creator"]["id"].as_u64() == Some(0) { "TIDAL".into() } else { String::new() }) };
     let line = count_line(total.saturating_sub(videos), videos, d["duration"].as_u64());
     let sub = if creator.is_empty() { line } else { format!("{creator} · {line}") };
     let mut sub_col = col().gap(6.0).min_w(0.0).child(coll::dim(&sub));

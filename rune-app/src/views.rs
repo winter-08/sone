@@ -145,8 +145,33 @@ impl Default for Nav {
     }
 }
 
+thread_local! {
+    /// The results tab each search was left on, so Back and Forward land on it again (React
+    /// keeps the tab in the history entry's view state).
+    static SEARCH_TABS: std::cell::RefCell<std::collections::HashMap<String, SearchTab>> = Default::default();
+}
+
+/// After Back or Forward from `left`: remember the tab a search was left on, and give the
+/// search landed on its own (All Results when it had none).
+fn search_tab_left(s: &mut App, left: &Page) {
+    if let Page::Search(q) = left {
+        let tab = *s.nav.tab;
+        SEARCH_TABS.with(|m| m.borrow_mut().insert(q.clone(), tab));
+    }
+    if let Page::Search(q) = &*s.nav.page {
+        let tab = SEARCH_TABS.with(|m| m.borrow().get(q).copied()).unwrap_or(SearchTab::All);
+        if *s.nav.tab != tab {
+            *s.nav.tab = tab;
+        }
+    }
+}
+
 pub fn go(s: &mut App, p: Page) {
     if *s.nav.page != p {
+        if let Page::Search(q) = &*s.nav.page {
+            let tab = *s.nav.tab;
+            SEARCH_TABS.with(|m| m.borrow_mut().insert(q.clone(), tab));
+        }
         let old = std::mem::replace(&mut *s.nav.page, p);
         s.nav.back.push(old);
         s.nav.fwd.clear();
@@ -563,6 +588,11 @@ pub(crate) fn loading() -> El {
     text("Loading…").font(t(13.0, 500.0)).color(white(0.45))
 }
 
+/// A loading placeholder of another shape (skeleton.rs) was built: the pane is busy too.
+pub(crate) fn note_loading() {
+    LOADING.set(true);
+}
+
 /// Whether a `loading()` placeholder was built since the last call: a pane that built its
 /// content between two calls is still loading, and tells assistive technology so (`El::busy`).
 pub(crate) fn took_loading() -> bool {
@@ -589,11 +619,6 @@ pub(crate) fn ready_or(key: Key) -> Result<Value, El> {
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub struct Shell {
     pub sidebar_w: f32,
-/// A loading placeholder of another shape (skeleton.rs) was built: the pane is busy too.
-pub(crate) fn note_loading() {
-    LOADING.set(true);
-}
-
     /// The drawer takes a column of its own; otherwise it slides over the page from the right.
     pub drawer_docked: bool,
     pub drawer_w: f32,
@@ -637,9 +662,9 @@ pub fn header(s: &App) -> El {
             let q = s.nav.search.text.trim().to_string();
             if !q.is_empty() {
                 s.nav.search_open = false;
-                *s.nav.tab = SearchTab::All;
                 remember_search(s, &q);
                 go(s, Page::Search(q));
+                *s.nav.tab = SearchTab::All;
             }
         });
     // 360 pt wide when there's room; in a narrow window it gives way before anything else does.
@@ -669,6 +694,7 @@ pub fn header(s: &App) -> El {
         .child(step("back", "Go back", G::Back, !s.nav.back.is_empty(), |s| {
             if let Some(p) = s.nav.back.pop() {
                 let cur = std::mem::replace(&mut *s.nav.page, p);
+                search_tab_left(s, &cur);
                 s.nav.fwd.push(cur);
                 s.nav.filter = TextEdit::new("");
             }
@@ -676,6 +702,7 @@ pub fn header(s: &App) -> El {
         .child(step("forward", "Go forward", G::Forward, !s.nav.fwd.is_empty(), |s| {
             if let Some(p) = s.nav.fwd.pop() {
                 let cur = std::mem::replace(&mut *s.nav.page, p);
+                search_tab_left(s, &cur);
                 s.nav.back.push(cur);
                 s.nav.filter = TextEdit::new("");
             }
@@ -827,9 +854,9 @@ fn set_search_text(s: &mut App, text: &str, focused: bool) {
 
 fn search_for(s: &mut App, q: String) {
     set_search_text(s, &q, false);
-    *s.nav.tab = SearchTab::All;
     remember_search(s, &q);
     go(s, Page::Search(q));
+    *s.nav.tab = SearchTab::All;
 }
 
 fn pick(s: &mut App, e: Entry) {
@@ -846,9 +873,9 @@ fn pick(s: &mut App, e: Entry) {
         }
         Entry::ViewAll => {
             let q = s.nav.search.text.trim().to_string();
-            *s.nav.tab = SearchTab::All;
             remember_search(s, &q);
             go(s, Page::Search(q));
+            *s.nav.tab = SearchTab::All;
         }
     }
 }
@@ -1060,9 +1087,15 @@ fn t_(size: f32, weight: f32) -> rune::TextStyle {
 /// The collapsed sidebar's width: its icons and covers only.
 pub const SIDEBAR_COLLAPSED: f32 = 64.0;
 
+/// Whether the sidebar's `page` entry is lit on `cur`: Explore stays lit on its sub-pages (as
+/// React's Sidebar treats explore and explorePage alike).
+fn nav_on(cur: &Page, page: &Page) -> bool {
+    cur == page || (*page == Page::Explore && matches!(cur, Page::ExploreSub(..)))
+}
+
 pub fn sidebar(s: &App, w: f32) -> El {
     let nav_btn = |key: &str, label: &str, g: G, page: Page| {
-        let on = s.nav.page == page;
+        let on = nav_on(&s.nav.page, &page);
         theme::focusable_row(row().key(key.to_string()).role("button").label(label)).h(40.0).px(12.0).gap(12.0).radius(10.0).items_center()
             .fill(if on { white(0.08) } else { white(0.0) }).hover(white(0.06)).cursor(rune::Cursor::Pointer).help(label)
             .on_press(move |s: &mut App| go(s, page.clone()))
@@ -1089,7 +1122,7 @@ pub fn sidebar(s: &App, w: f32) -> El {
         .child(if collapsed { el() } else { text("Your Library").font(t(14.0, 650.0)).color(white(0.9)).truncate().a11y_hidden() });
     if w <= SIDEBAR_COLLAPSED {
         let icon_btn = |key: &str, label: &str, g: G, page: Page| {
-            let on = s.nav.page == page;
+            let on = nav_on(&s.nav.page, &page);
             theme::focusable(el().key(key.to_string()).role("button").label(label)).size(40.0, 40.0).radius(10.0).items_center().justify_center()
                 .fill(if on { white(0.08) } else { white(0.0) }).hover(white(0.06)).cursor(rune::Cursor::Pointer).help(label)
                 .on_press(move |s: &mut App| go(s, page.clone()))
@@ -1464,7 +1497,7 @@ fn album(id: u64, v: &View) -> El {
         .child(play_buttons(v, &source, play, shuf))
         .child({
             let (on, aid, l) = (crate::interact::is_fav(crate::interact::Fav::Album, &id.to_string()), id.to_string(), title.clone());
-            header_btn("album-fav", "Favorite album", if on { "Added" } else { "Add" }, if on { G::HeartFilled } else { G::Heart }, on)
+            header_btn("album-fav", if on { "Unfavorite album" } else { "Favorite album" }, if on { "Added" } else { "Add" }, if on { G::HeartFilled } else { G::Heart }, on)
                 .on_press(move |_: &mut App| crate::interact::toggle_fav(crate::interact::Fav::Album, aid.clone(), l.clone(), crate::interact::Say::Nothing))
         })
         .child(header_btn("album-share", "Share album", "Share", G::Share, false).on_press_tx(move |_: &mut App, tx: &mut Tx| {
