@@ -711,7 +711,7 @@ pub fn overlay(s: &App) -> Vec<El> {
             .on_press(|s: &mut App| close(s)).on_secondary_press(|s: &mut App, _, _| close(s));
         let mut push = |e: El| layer = std::mem::replace(&mut layer, el()).child(e);
         let (menu, sub) = match &c.target {
-            Target::Track { track, playlist } => (track_menu(track, playlist.as_ref(), c), track_sub(s, c)),
+            Target::Track { track, playlist } => (track_menu(track, playlist.as_ref(), c, &s.nav.page), track_sub(s, c)),
             Target::Media { item, kind } => (media_menu(item, *kind, c), track_sub(s, c)),
         };
         if c.menu {
@@ -737,7 +737,7 @@ pub fn overlay(s: &App) -> Vec<El> {
     out
 }
 
-fn track_menu(track: &Value, playlist: Option<&InPlaylist>, c: &Ctx) -> El {
+fn track_menu(track: &Value, playlist: Option<&InPlaylist>, c: &Ctx, page: &Page) -> El {
     let id = track_id(track);
     let title = title_of(track);
     let d = data::data(track);
@@ -782,15 +782,16 @@ fn track_menu(track: &Value, playlist: Option<&InPlaylist>, c: &Ctx) -> El {
     let mix = d["mixes"]["TRACK_MIX"].as_str().map(str::to_string);
     let has_mixes = d["mixes"].is_object();
     let radio = !video && (mix.is_some() || !has_mixes);
-    // Go to artist (TIDAL's menu has it; React SONE's doesn't): with the track radio, or in a
-    // group of its own. One artist: their page; several: a submenu of them.
+    // Go to album, Go to artist (TIDAL's menu has them; React SONE's doesn't) and Go to track radio,
+    // in one group. Go to artist: one artist, their page; several, a submenu of them.
     let artists = track_artists(d);
-    if radio || !artists.is_empty() {
+    let album = d["album"]["id"].as_u64().filter(|a| *page != Page::Album(*a));
+    if radio || album.is_some() || !artists.is_empty() {
         m = m.child(sep());
     }
-    if radio {
+    let radio_el = if radio {
         let (t4, artist) = (title.clone(), data::artist_of(track));
-        m = m.child(mi("ctx-radio", "Go to track radio", G::Radio, false, true, move |s, _| {
+        Some(mi("ctx-radio", "Go to track radio", G::Radio, false, true, move |s, _| {
             close(s);
             match &mix {
                 Some(mid) => go_radio(s, mid.clone(), &t4, &artist),
@@ -810,6 +811,16 @@ fn track_menu(track: &Value, playlist: Option<&InPlaylist>, c: &Ctx) -> El {
                     });
                 }
             }
+        }))
+    } else {
+        None
+    };
+    // Go to album (also beyond the original): not on that album's own page, where it would go
+    // nowhere, and only when the track (or video) names its album.
+    if let Some(aid) = album {
+        m = m.child(mi("ctx-album", "Go to album", G::Disc, false, true, move |s, _| {
+            close(s);
+            views::go(s, Page::Album(aid));
         }));
     }
     match artists.as_slice() {
@@ -823,6 +834,9 @@ fn track_menu(track: &Value, playlist: Option<&InPlaylist>, c: &Ctx) -> El {
             }));
         }
         _ => m = m.child(mi_sub("ctx-artist", "Go to artist", G::User, matches!(c.sub, Some(Sub::Artists)), Which::Artist)),
+    }
+    if let Some(r) = radio_el {
+        m = m.child(r);
     }
     m = m.child(sep()).child(mi("ctx-share", "Share", G::Link, false, true, move |s, tx| {
         share(tx, share_url(if video { "video" } else { "track" }, &id.to_string()));

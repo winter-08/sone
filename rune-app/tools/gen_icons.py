@@ -42,7 +42,7 @@ exports = {m.group(1): m.group(2) for m in re.finditer(r"exports\.(\w+) = (\w+);
 want = """Home Compass Bell Library Heart FolderOpen Music User ChevronLeft ChevronRight ChevronDown ChevronUp
 Search X Headphones Shield Settings Keyboard Info LogOut Clock Loader2 Play Pause MoreHorizontal Shuffle SkipBack
 SkipForward Repeat Mic2 VolumeX Volume1 Volume2 ListMusic PictureInPicture2 Maximize2 Minimize2 Minus Square Copy
-Plus ListPlus ListEnd Video GripVertical Sparkles Users Share Share2 Pencil Lock Unlock Check Radio RefreshCw Link
+Plus ListPlus ListEnd Video GripVertical Sparkles Users Share Share2 Pencil Lock Unlock Check Radio Disc3 RefreshCw Link
 Trash2 UserPlus UserCheck FolderInput Palette Cpu Tv2 AppWindow Globe FileText AlertCircle MessageSquare ArrowUpDown""".split()
 filled = {"Play", "Pause", "SkipBack", "SkipForward", "Heart"}
 
