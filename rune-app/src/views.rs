@@ -1867,6 +1867,10 @@ pub fn login(s: &App, v: &View) -> El {
                 }))
                 .child(button::<App>("login-cancel", "Cancel", None, false).on_press(|_: &mut App| controller::send(Cmd::CancelLogin)));
         }
+        state if s.nav.set.custom_login.is_some() => {
+            let failed = if let Login::Failed(e) = state { Some(e.as_str()) } else { None };
+            c = c.w(480.0).child(crate::login::view(s, failed));
+        }
         state => {
             let mode = s.nav.login_mode;
             let mtab = |key: &str, label: &str, which: LoginMode| {
@@ -1893,12 +1897,22 @@ pub fn login(s: &App, v: &View) -> El {
             };
             if let Login::Failed(e) = state {
                 c = c.child(text(e.clone()).font(t(12.0, 500.0)).color(theme::danger()).wrap());
+                // React offers the advanced view when the embedded credentials look stale.
+                if crate::login::credential_error(e) {
+                    c = c.child(theme::focusable(row().key("login-creds-stale").role("button").label("Credentials may need updating — use custom credentials")).cursor(rune::Cursor::Pointer)
+                        .on_press(crate::login::open)
+                        .child(text("Credentials may need updating — use custom credentials").font(t(12.5, 500.0)).color(oklch(0.8, 0.13, 80.0)).a11y_hidden()));
+                }
             }
-            c = c.child(row().key("login-custom").role("button").label("Use custom credentials").cursor(rune::Cursor::Pointer)
+            c = c.child(theme::focusable(row().key("login-custom").role("button").label("Use custom credentials")).cursor(rune::Cursor::Pointer).on_press(crate::login::open)
                 .child(text("Use custom credentials").font(t(12.0, 500.0)).color(white(0.55)).a11y_hidden()));
         }
     }
-    login_frame(c)
+    let mut frame = login_frame(c);
+    if let Some(d) = crate::login::help_dialog(s) {
+        frame = frame.child(d);
+    }
+    frame
 }
 
 /// The app's name, as the sign-in screen shows it.

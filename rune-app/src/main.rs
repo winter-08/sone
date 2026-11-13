@@ -20,6 +20,7 @@ mod home;
 mod icons;
 mod interact;
 mod keys;
+mod login;
 mod mini;
 mod perf;
 mod profile;

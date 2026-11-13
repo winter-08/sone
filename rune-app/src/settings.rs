@@ -163,6 +163,8 @@ pub struct Form {
     device_open: bool,
     /// The profile editor (profile.rs), while open.
     pub profile_edit: Option<crate::profile::Edit>,
+    /// The sign-in screen's custom credentials view (login.rs), while shown.
+    pub custom_login: Option<crate::login::Custom>,
 }
 
 type Apply = Box<dyn FnOnce(&mut Form) + Send>;
@@ -315,6 +317,10 @@ pub fn flush_settings(s: &mut App) {
         r(&mut s.nav.set);
     }
     crate::profile::apply_results(s);
+    // Without embedded credentials the sign-in screen can only offer the custom ones.
+    if !signed_in && s.nav.set.custom_login.is_none() && controller::auth_known() && !crate::login::has_defaults() {
+        crate::login::open(s);
+    }
     let f = &mut s.nav.set;
     let now = Instant::now();
     if f.copied.is_some_and(|(_, until)| now >= until) {

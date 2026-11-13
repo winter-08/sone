@@ -102,6 +102,12 @@ pub enum Cmd {
     StartPkceLogin,
     /// The redirect URL (or bare code) pasted back after the browser login.
     CompletePkceLogin(String),
+    /// Sign-in with the user's own client credentials (React Login's "Use custom credentials"):
+    /// a device code, PKCE in the browser (then CompletePkceLogin), or a session imported from
+    /// pasted tokens.
+    StartDeviceLoginWith { id: String, secret: String },
+    StartPkceLoginWith { id: String, secret: String },
+    ImportSession { id: String, secret: String, refresh: String, access: Option<String> },
     /// The video player's quality menu: re-resolve the stream at HIGH / MEDIUM / LOW and carry on
     /// from the same moment (VideoPlayer handleQualityChange).
     SetVideoQuality(String),
@@ -310,6 +316,11 @@ pub fn video_status() -> (bool, u64, bool) {
 
 pub fn signed_in() -> bool {
     VIEW.get().map(|v| v.lock().unwrap().signed_in).unwrap_or(false)
+}
+
+/// Whether the saved sign-in has been checked at launch (so `signed_in` is known).
+pub fn auth_known() -> bool {
+    VIEW.get().map(|v| v.lock().unwrap().auth_known).unwrap_or(false)
 }
 
 pub fn now_playing() -> (Option<u64>, bool) {
@@ -776,6 +787,8 @@ struct Player {
     login_seq: u64,
     login_creds: Option<(String, String, String)>, // device code, client id, secret
     pkce: Option<(String, String)>, // code verifier, client unique key
+    /// The user's own client id and secret, when the PKCE sign-in in progress uses them.
+    pkce_custom: Option<(String, String)>,
     pubd: Published,
     video_session: u64,
     video_quality: String,
@@ -826,6 +839,7 @@ impl Player {
             login_seq: 0,
             login_creds: None,
             pkce: None,
+            pkce_custom: None,
             pubd: Published::default(),
             video_session: 0,
             video_quality: "HIGH".into(),
@@ -975,14 +989,22 @@ impl Player {
     }
 
     async fn start_device_login(&mut self) {
-        self.login_seq += 1;
         let (id, secret) = match auth::get_default_credentials() {
-            Ok(c) => c,
+            Ok(c) if !c.0.is_empty() => c,
+            Ok(_) => {
+                self.login = Login::Failed("No embedded credentials available.".into());
+                return;
+            }
             Err(e) => {
                 self.login = Login::Failed(format!("No embedded credentials available. ({e})"));
                 return;
             }
         };
+        self.start_device_login_with(id, secret).await
+    }
+
+    async fn start_device_login_with(&mut self, id: String, secret: String) {
+        self.login_seq += 1;
         let h = self.h.clone();
         match auth::start_device_auth(h.state::<AppState>(), id.clone(), secret.clone()).await {
             Ok(r) => {
@@ -1029,11 +1051,48 @@ impl Player {
                 return;
             }
         };
+        self.pkce_custom = None;
+        self.await_pkce(params);
+    }
+
+    /// PKCE with the user's own client (React handlePkceLogin): the secret is required.
+    fn start_pkce_login_with(&mut self, id: String, secret: String) {
+        self.login_seq += 1;
+        let params = match auth::start_pkce_auth(id.clone()) {
+            Ok(p) => serde_json::to_value(p).unwrap_or_default(),
+            Err(e) => {
+                self.login = Login::Failed(e.to_string());
+                return;
+            }
+        };
+        self.pkce_custom = Some((id, secret));
+        self.await_pkce(params);
+    }
+
+    /// Open TIDAL's login page in the browser and wait for the redirect URL to be pasted back.
+    fn await_pkce(&mut self, params: Value) {
         let field = |k: &str| params[k].as_str().unwrap_or_default().to_string();
         let url = field("authorizeUrl");
         self.pkce = Some((field("codeVerifier"), field("clientUniqueKey")));
         let _ = std::process::Command::new("xdg-open").arg(&url).spawn();
         self.login = Login::PkceWaiting { url, error: None };
+    }
+
+    /// Token import (React handleTokenImport, after the paste was parsed).
+    async fn import_session(&mut self, id: String, secret: String, refresh: String, access: Option<String>) {
+        self.login_seq += 1;
+        let h = self.h.clone();
+        match auth::import_session(h.state::<AppState>(), h.clone(), id, secret, refresh, access).await {
+            Ok(t) => {
+                if t.user_id.is_none() {
+                    let _ = auth::get_session_user_id(h.state::<AppState>()).await;
+                }
+                self.login = Login::Idle;
+                self.signed_in = true;
+                self.bootstrap_library();
+            }
+            Err(e) => self.login = Login::Failed(e.to_string()),
+        }
     }
 
     async fn complete_pkce_login(&mut self, pasted: String) {
@@ -1043,10 +1102,15 @@ impl Player {
             self.login = Login::PkceWaiting { url, error: Some("Could not find authorization code in the URL.".into()) };
             return;
         };
-        match auth::complete_pkce_browser_login(self.h.clone(), code, verifier, key).await {
+        let done = match self.pkce_custom.clone() {
+            Some((id, secret)) => auth::complete_pkce_auth(self.h.state::<AppState>(), self.h.clone(), code, verifier, key, id, secret).await,
+            None => auth::complete_pkce_browser_login(self.h.clone(), code, verifier, key).await,
+        };
+        match done {
             Ok(_tokens) => {
                 self.login = Login::Idle;
                 self.pkce = None;
+                self.pkce_custom = None;
                 self.signed_in = true;
                 self.bootstrap_library();
             }
@@ -1137,9 +1201,13 @@ impl Player {
                 self.login = Login::Idle;
                 self.login_creds = None;
                 self.pkce = None;
+                self.pkce_custom = None;
             }
             Cmd::StartPkceLogin => self.start_pkce_login(),
             Cmd::CompletePkceLogin(pasted) => self.complete_pkce_login(pasted).await,
+            Cmd::StartDeviceLoginWith { id, secret } => self.start_device_login_with(id, secret).await,
+            Cmd::StartPkceLoginWith { id, secret } => self.start_pkce_login_with(id, secret),
+            Cmd::ImportSession { id, secret, refresh, access } => self.import_session(id, secret, refresh, access).await,
             Cmd::SetVideoQuality(q) => {
                 if self.video_quality != q && self.current_is_video() {
                     self.video_quality = q;
@@ -1989,6 +2057,7 @@ impl Player {
         self.login = Login::Idle;
         self.login_creds = None;
         self.pkce = None;
+        self.pkce_custom = None;
         self.signed_in = false;
         // The saved queue goes too (React removes sone.playback-state.v1).
         self.save_snapshot();
