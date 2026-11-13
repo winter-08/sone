@@ -288,7 +288,26 @@ async fn fetch(key: &Key) -> Result<Value, String> {
         Key::ArtistBio(id) => v!(pages::get_artist_bio(st(), h.clone(), *id)),
         Key::Mix(id) => v!(pages::get_mix_items(st(), id.clone())),
         Key::UserProfile => v!(tauri_app_lib::commands::profile::get_profile(st(), user_id())),
-        Key::AllPlaylists => v!(library::get_all_playlists(st(), h.clone(), user_id(), 0, 500, "DATE_UPDATED".into(), "DESC".into())),
+        // AddToPlaylistMenu: the first 500, then every further page (the picker lists them all).
+        Key::AllPlaylists => {
+            const PAGE: u32 = 500;
+            let page = |offset: u32| library::get_all_playlists(st(), h.clone(), user_id(), offset, PAGE, "DATE_UPDATED".into(), "DESC".into());
+            let mut first = v!(page(0))?;
+            let total = first["totalNumberOfItems"].as_u64().unwrap_or(0) as u32;
+            let mut offset = PAGE;
+            while offset < total {
+                let more = v!(page(offset))?;
+                let got = more["items"].as_array().cloned().unwrap_or_default();
+                if got.is_empty() {
+                    break;
+                }
+                if let Some(items) = first["items"].as_array_mut() {
+                    items.extend(got);
+                }
+                offset += PAGE;
+            }
+            Ok(first)
+        }
     })
 }
 

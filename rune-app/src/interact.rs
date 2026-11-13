@@ -135,7 +135,12 @@ pub fn reset_favorites() {
     *FAVS.lock().unwrap() = Favs::default();
     FAVS_LOADED.store(false, Ordering::Relaxed);
     FAVS_REQUESTED.store(false, Ordering::Relaxed);
-    RECENT.lock().unwrap().clear();
+    let mut recent = RECENT.lock().unwrap();
+    if !recent.is_empty() {
+        recent.clear();
+        save_recent(&recent);
+    }
+    drop(recent);
     bump();
 }
 /// Fetch the favourite ids again at the next poll (Refresh: React reloads the app, which loads
@@ -999,14 +1004,30 @@ async fn media_track_ids(item: &Value, kind: Media) -> Option<Vec<u64>> {
 
 // ------------------------------------------------------------------ submenus
 
-static RECENT: LazyLock<Mutex<Vec<String>>> = LazyLock::new(Default::default);
+/// The playlists added to lately, newest first, kept in `rune-recent-playlists.json` beside the
+/// settings (React keeps them in localStorage, sone.recent-playlists.v1).
+static RECENT: LazyLock<Mutex<Vec<String>>> = LazyLock::new(|| {
+    let saved = recent_path().and_then(|p| std::fs::read_to_string(p).ok()).and_then(|s| serde_json::from_str(&s).ok());
+    Mutex::new(saved.unwrap_or_default())
+});
 
-/// A playlist just added to (or made) goes first among the picker's recent ones.
+fn recent_path() -> Option<std::path::PathBuf> {
+    tauri_app_lib::config_dir_for_env().map(|d| d.join("rune-recent-playlists.json"))
+}
+
+fn save_recent(r: &[String]) {
+    if let (Some(p), Ok(s)) = (recent_path(), serde_json::to_string(r)) {
+        let _ = std::fs::write(p, s);
+    }
+}
+
+/// A playlist just added to (or made) goes first among the picker's recent ones (at most 8).
 fn push_recent_playlist(uuid: &str) {
     let mut r = RECENT.lock().unwrap();
     r.retain(|u| u != uuid);
     r.insert(0, uuid.to_string());
     r.truncate(8);
+    save_recent(&r);
 }
 
 fn track_sub(s: &App, c: &Ctx) -> Option<El> {
@@ -1102,7 +1123,8 @@ fn add_menu(ids: &[u64], all: bool, query: &TextEdit, anchor: &str, below: bool)
         let d = data::data(p);
         let uuid = d["uuid"].as_str().unwrap_or("").to_string();
         let title = d["title"].as_str().unwrap_or("").to_string();
-        let n = d["numberOfTracks"].as_u64().unwrap_or(0);
+        // AddToPlaylistMenu: playlistCountLabel when the playlist says, else "Playlist"
+        let count = if d["numberOfTracks"].is_null() && d["numberOfVideos"].is_null() { "Playlist".to_string() } else { crate::library::count_label(d) };
         let (u, l, ids) = (uuid.clone(), title.clone(), ids.clone());
         let mut r = theme::focusable_row(row().key(format!("atp-{i}")).role("button").label(title.as_str())).w_full().radius(MENU_ROW_R).px(14.0).h(if detailed { 56.0 } else { 38.0 }).gap(10.0).items_center()
             .hover(white(0.06)).cursor(rune::Cursor::Pointer)
@@ -1114,7 +1136,7 @@ fn add_menu(ids: &[u64], all: bool, query: &TextEdit, anchor: &str, below: bool)
             r = r.child(crate::ui::with_image(crate::ui::tile(crate::ui::hue(Some(i as u64 + 20)), 40.0, i as u64 + 20, 6.0), crate::art::item_url(p, 40.0), 40.0, 6.0))
                 .child(col().grow(1.0).min_w(0.0).a11y_hidden()
                     .child(text(title.clone()).font(t(14.0, 500.0)).color(white(0.9)).truncate())
-                    .child(text(if n > 0 { format!("{n} tracks") } else { "Playlist".into() }).font(t(12.0, 400.0)).color(white(0.5))));
+                    .child(text(count).font(t(12.0, 400.0)).color(white(0.5))));
         } else {
             r = r.child(text(title.clone()).font(t(14.0, 500.0)).color(white(0.85)).truncate().grow(1.0).min_w(0.0).a11y_hidden());
         }
@@ -1428,5 +1450,14 @@ mod add_to_playlist_tests {
         assert_eq!(add_result_toast(3, 2, 1, "Mix"), ("Added 2 tracks to \"Mix\" · 1 already there".into(), Some("Add them too")));
         assert_eq!(add_again_toast(1, 1, "Mix"), "Added to \"Mix\" again");
         assert_eq!(add_again_toast(3, 1, "Mix"), "Added 1 track again to \"Mix\"");
+    }
+
+    #[test]
+    fn picker_rows_count_tracks_and_videos() {
+        let label = |v: Value| crate::library::count_label(&v);
+        assert_eq!(label(json!({"numberOfTracks": 1})), "1 Track");
+        assert_eq!(label(json!({"numberOfTracks": 12, "numberOfVideos": 3})), "3 Videos · 12 Tracks");
+        assert_eq!(label(json!({"numberOfTracks": 0, "numberOfVideos": 1})), "1 Video");
+        assert_eq!(label(json!({"numberOfTracks": 0})), "0 Tracks");
     }
 }

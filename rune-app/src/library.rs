@@ -81,18 +81,19 @@ fn playlist_sub(d: &Value) -> String {
     let me = data::user_id();
     let own = me == 0 || d["creator"]["id"].as_u64() == Some(me);
     let creator = if own { Some("You".to_string()) } else { d["creator"]["name"].as_str().filter(|n| !n.is_empty()).map(str::to_string).or_else(|| (d["creator"]["id"].as_u64() == Some(0)).then(|| "TIDAL".into())) };
-    let count = if d["numberOfTracks"].is_null() {
-        String::new()
-    } else {
-        let (tn, vn) = (d["numberOfTracks"].as_u64().unwrap_or(0), d["numberOfVideos"].as_u64().unwrap_or(0));
-        let mut parts = vec![];
-        if vn > 0 { parts.push(format!("{vn} Video{}", if vn == 1 { "" } else { "s" })) }
-        if tn > 0 { parts.push(format!("{tn} Track{}", if tn == 1 { "" } else { "s" })) }
-        if parts.is_empty() { parts.push("0 Tracks".into()) }
-        parts.join(" · ")
-    };
+    let count = if d["numberOfTracks"].is_null() { String::new() } else { count_label(d) };
     let sub = [creator.unwrap_or_default(), count].into_iter().filter(|x| !x.is_empty()).collect::<Vec<_>>().join(" · ");
     if sub.is_empty() { "Playlist".into() } else { sub }
+}
+
+/// playlistCountLabel: "3 Videos · 12 Tracks", "1 Track", "0 Tracks".
+pub fn count_label(d: &Value) -> String {
+    let (tn, vn) = (d["numberOfTracks"].as_u64().unwrap_or(0), d["numberOfVideos"].as_u64().unwrap_or(0));
+    let mut parts = vec![];
+    if vn > 0 { parts.push(format!("{vn} Video{}", if vn == 1 { "" } else { "s" })) }
+    if tn > 0 { parts.push(format!("{tn} Track{}", if tn == 1 { "" } else { "s" })) }
+    if parts.is_empty() { parts.push("0 Tracks".into()) }
+    parts.join(" · ")
 }
 
 /// A library item as a catalogue item ({type, data}) for cards, menus and pages.
