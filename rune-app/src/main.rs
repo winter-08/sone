@@ -349,7 +349,7 @@ fn view(s: &App, cx: &mut Cx<App>) -> El {
     // The panes are regions: each builds again only when something it read changed (a `Tracked`
     // field of `App`), or its inputs did (the window's width bands, the stores outside `App`).
     // A clock tick changes only `pos`, which only the player bar reads.
-    let header = pane("header", (&s.nav.search, theme::version()), || views::header(s));
+    let header = pane("header", (&s.nav.search, theme::version(), profile::avatar()), || views::header(s));
     // Settings reads the backend's settings directly, so it builds every time.
     let page = if *Tracked::untracked(&s.nav.page) == views::Page::Settings {
         views::page(s, &s.ctl)

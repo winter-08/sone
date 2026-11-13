@@ -719,7 +719,7 @@ pub fn header(s: &App) -> El {
         }))
         .child(spacer())
         .child(bar)
-        .child(icon::<App>("account", "Account", G::User).on_press(|s: &mut App| {
+        .child(crate::profile::account_button(crate::profile::avatar()).on_press(|s: &mut App| {
             s.nav.menu_open = !s.nav.menu_open;
             if s.nav.menu_open {
                 data::want(Key::Profile);

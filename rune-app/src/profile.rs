@@ -7,7 +7,7 @@
 
 use crate::App;
 use crate::data::{self, Key};
-use crate::glyph::G;
+use crate::glyph::{G, glyph};
 use crate::theme;
 use crate::ui::{self, t, white};
 use crate::views::{self, Page, heading, open_url};
@@ -52,11 +52,25 @@ pub fn avatar_image(files: &[Value]) -> Option<String> {
     pool.last().and_then(|f| f["href"].as_str().map(str::to_string))
 }
 
-/// The signed-in user's picture for the account menu (React currentUserAvatarAtom), once the
-/// profile has been loaded (by the profile page).
+/// The signed-in user's picture for the header's Account button and the account menu (React
+/// currentUserAvatarAtom), once the profile has loaded: the controller fetches it with the rest
+/// of the account at sign-in, as AppInitializer does. Reading it never fetches (React's menu
+/// sends nothing).
 pub fn avatar() -> Option<String> {
-    // Only once loaded: opening the menu mustn't fetch (React's menu sends nothing either).
     data::peek(&Key::UserProfile).and_then(|p| avatar_image(p["pictureFiles"].as_array().map(Vec::as_slice).unwrap_or(&[])))
+}
+
+/// The header's Account button (UserMenu): a 32 pt round button showing the user's picture,
+/// or the person placeholder until it loads.
+pub fn account_button(avatar: Option<String>) -> El {
+    let face = ui::with_image(
+        el().size(32.0, 32.0).radius(16.0).fill(white(0.1)).clip_rounded(16.0).items_center().justify_center().child(glyph(G::User, 16.0, white(0.75))),
+        avatar, 32.0, 16.0);
+    theme::focusable(el().key("account").role("button").label("Account"))
+        .size(36.0, 36.0).radius(18.0).items_center().justify_center()
+        .hover(white(0.08)).press(white(0.14)).press_scale(0.92).cursor(rune::Cursor::Pointer)
+        .help("Account")
+        .child(face)
 }
 
 /// splitLinks: the website, and the social links by type.
