@@ -1021,3 +1021,37 @@ one's start phase.
   errors; no clamping of seek to duration; queue/play_next MCP actions don't start
   playback; clearQueue doesn't stop playback; end-of-queue leaves the last track as
   current; MCP `get_now_playing` position is always 0 (bug, see §8.5).
+
+---------------------------------------------------------------------------------------
+
+## 10. How the Rust port realises the parts added later (rune-app)
+
+These were missing from the first slice; the React behaviour above is the contract, and the
+notes say where the port differs on purpose.
+
+- **Content filter (§1.3).** `content.rs` holds `contentBlockReason` / `blockedMessage` /
+  `isTrackUnavailable` (the future `streamStartDate` included). The two switches live with the
+  controller's other preferences (`rune-ui.json`: `allow_explicit`, `allow_ai`, both default
+  true) and are set with `Cmd::SetAllowExplicit` / `Cmd::SetAllowAi`. Turning one off runs
+  `resetPlaybackForContentChange` at once; the React settings screen asks for confirmation
+  first, so the settings UI must confirm before sending. Every place §2-§4 names a blocked check
+  applies it: playTrack (toast, `Filtered`), set queue (blocked dropped), playAllFromSource /
+  playFromSource (with usePlaySource's refusal toast), add / play next, both drains, repeat-all,
+  previous's source fallback, gapless prediction, playFromQueue, restore.
+- **Autoplay radio (§3.2 step 11).** `Player::autoplay_radio`, on `prefs.autoplay`
+  (`Cmd::SetAutoplay`). One deliberate difference: a current track without a TRACK_MIX stops
+  cleanly (isPlaying false) instead of React's early return that leaves the bar saying "playing"
+  over a stopped pipeline.
+- **Queue panel edits.** By queue item: `Cmd::PlayQueued(qid)` (playFromQueue),
+  `Cmd::RemoveQueued(qid)` (removeFromQueue), `Cmd::MoveQueued { qid, to }` (setQueueTracks
+  `reorder`, the manual/context boundary moving as React's drop handler moves it), and
+  `Cmd::PlayHistory(qid)` (a History row: playTrack with retryOnRateLimit). Addressing by qid
+  instead of index keeps a press meant for one row from landing on another after the queue moved.
+  The Suggested tab's row press is `Cmd::QueueTrack(track)` (addToQueue tagged with its album
+  source) and its cover `Cmd::PlayTrack(track)`.
+- **MCP `play_source` / `shuffle_source` (§2.4-2.5).** `sources.rs` builds the playable source
+  (playableForSource) and loads the start batch (50 playable, 200 pages at most, artist pages
+  deduplicated) off the actor; the controller then plays it with playAllFromSource and appends
+  later pages (appendToQueue) while the queue epoch is the one the source started. The epoch is
+  a shared counter bumped wherever §9.8 says; a newer source request supersedes one still
+  loading. shuffle_source sets shuffle mode directly and puts it back if nothing starts.

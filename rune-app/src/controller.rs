@@ -14,8 +14,8 @@
 //! stops the audio and opens it in video.rs; pause, seek, volume, next/previous, repeat and
 //! MPRIS act on it; its end advances the queue; any audio track closes it.
 //!
-//! Not in this slice yet (logged when hit): MCP `play_source` / `shuffle_source` and autoplay
-//! radio.
+//! The content filter lives in content.rs, MCP's paged sources (`play_source` /
+//! `shuffle_source`) in sources.rs; autoplay radio is `autoplay_radio`.
 
 use serde_json::{Value, json};
 use sone_host_shim::{AppHandle, Manager};
@@ -110,6 +110,25 @@ pub enum Cmd {
     /// A favourite changed (interact.rs): the sync after it re-pushes the MPRIS rating
     /// (AppInitializer re-pushes metadata on favoriteTrackIds).
     FavoritesChanged,
+    /// Settings' Autoplay switch (React autoplayAtom): radio continues when the queue runs out.
+    SetAutoplay(bool),
+    /// Settings' content switches (React allowExplicitAtom / allowAiAtom). Turning one off with
+    /// something playing or queued also clears playback (resetPlaybackForContentChange); the
+    /// React screen asks first, so send it after the user confirmed.
+    SetAllowExplicit(bool),
+    SetAllowAi(bool),
+    /// The queue panel, by queue item (`QItem::qid`): play it (playFromQueue), remove it, or
+    /// drag it to index `to` of the upcoming list (setQueueTracks with `reorder`).
+    PlayQueued(String),
+    RemoveQueued(String),
+    MoveQueued { qid: String, to: usize },
+    /// A History row in the queue panel: play that track again (playTrack, retryOnRateLimit).
+    PlayHistory(String),
+    /// A suggested track's cover in the drawer: play just it (playTrack, the queue kept).
+    PlayTrack(Value),
+    /// A suggested track's row: append it to the manual queue tagged with its album as the
+    /// source it plays from (addToQueue(track, albumSource)).
+    QueueTrack(Value),
 }
 
 /// The current item when it is a music video (React currentVideoAtom).
@@ -141,6 +160,31 @@ pub struct QItem {
     pub title: String,
     pub artist: String,
     pub duration: u32,
+    /// The queue item's identity (`_qid`); duplicates of one track differ only by it.
+    pub qid: String,
+    pub explicit: bool,
+    pub ai: bool,
+    /// Not streamable now (isTrackUnavailable); its row greys and refuses a press.
+    pub unavailable: bool,
+    pub album: String,
+    pub album_id: Option<u64>,
+    /// The first artist with an id, for the row's artist link.
+    pub artist_id: Option<u64>,
+    /// The album cover (a CDN uuid or URL), or a video's picture.
+    pub cover: Option<String>,
+    /// The track itself, trimmed to what menus and the views read.
+    pub track: std::sync::Arc<Value>,
+}
+
+/// The "Playing from" collection, enough to open its page (PlayingFromLabel navigateToSource).
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Source {
+    pub kind: String,
+    /// Numbers (albums, artists) and strings (playlists, mixes) as text.
+    pub id: String,
+    pub name: String,
+    pub subtitle: Option<String>,
+    pub image: Option<String>,
 }
 
 /// What the window draws. A snapshot, replaced after every controller message.
@@ -182,6 +226,19 @@ pub struct View {
     pub video_quality: String,
     /// A video is loaded in video.rs (playing, paused or loading), not closed.
     pub video_open: bool,
+    /// The playing-from collection (`playing_from` is its name), and the one the context queue
+    /// came from while a manual item plays from its own (the queue panel's "Next up from").
+    pub source: Option<Source>,
+    pub context_source: Option<Source>,
+    /// How many of `queue` are the manual "Next in queue" items (they come first).
+    pub manual_len: usize,
+    /// The preferences the views show or apply: Autoplay and the content filter.
+    pub autoplay: bool,
+    pub allow_explicit: bool,
+    pub allow_ai: bool,
+    /// The current stream as play_tidal_track reported it (bitDepth, sampleRate, codec,
+    /// audioQuality), for the signal path panel; null between tracks.
+    pub stream_info: Option<Value>,
 }
 
 static VIEW: OnceLock<Mutex<View>> = OnceLock::new();
@@ -357,6 +414,20 @@ enum Msg {
     /// Tracks fetched off the actor for an id request (§2.5): the successful ones in request
     /// order, how many were asked, and whether the UI asked (it hears about failures; MCP doesn't).
     Fetched { tracks: Vec<Value>, action: String, asked: usize, seq: u64, from_ui: bool },
+    /// MCP play_source / shuffle_source (§2.5): the source was found; start loading it.
+    SourceBuilt { loader: Box<crate::sources::Loader>, shuffle: bool },
+    /// Its start batch loaded (usePlaySource): play it. `restore` is the shuffle mode to put back
+    /// if it doesn't start (shuffle_source turned shuffle on for it).
+    SourceReady { loader: Box<crate::sources::Loader>, request: u64, epoch: u64, restore: Option<bool> },
+    /// A later page of the source playing, for the queue of `epoch` (appendToQueue).
+    SourcePage { tracks: Vec<Value>, epoch: u64, owner: (Value, Value) },
+}
+
+/// The queue epoch (§9.8): bumped whenever the context queue is replaced wholesale, which stops a
+/// source still paging into the old one. Shared with the paging tasks.
+static EPOCH: AtomicU64 = AtomicU64::new(0);
+fn bump_epoch() {
+    EPOCH.fetch_add(1, Ordering::Relaxed);
 }
 
 const HISTORY_CAP: usize = 500;
@@ -416,6 +487,21 @@ fn preview_seek(f: f32) {
     p.seek_at = Some(Instant::now());
     drop(p);
     VERSION.fetch_add(1, Ordering::Relaxed);
+}
+
+/// A seek bar being dragged: the clock shows the time under the pointer, nothing seeks yet.
+pub fn scrub(f: f32) {
+    preview_seek(f);
+}
+
+/// A drag that was cancelled: let the next position read put the clock back.
+pub fn end_scrub() {
+    if let Some(p) = POSITION.get() {
+        p.lock().unwrap().seek_at = None;
+    }
+    if let Some(tx) = TX.get() {
+        let _ = tx.send(Msg::SeekCorrection(u64::MAX));
+    }
 }
 
 // ---- track JSON helpers (tracks stay JSON, as in the frontend and queue.json)
@@ -512,19 +598,45 @@ fn mpris_rating(loved: bool) -> f64 {
     if loved { 1.0 } else { 0.0 }
 }
 
+/// isTrackUnavailable (§1.4), the future streamStartDate included.
 fn unavailable(t: &Value) -> bool {
-    // videos aren't audio-stream-gated (isTrackUnavailable)
-    if is_video(t) {
-        return false;
-    }
-    if t["streamReady"].as_bool() == Some(false) || t["allowStreaming"].as_bool() == Some(false) {
-        return true;
-    }
-    // streamStartDate in the future (§1.4); compare as RFC 3339 text against now's prefix.
-    false
+    crate::content::unavailable(t)
 }
 fn qitem(t: &Value) -> QItem {
-    QItem { id: tid(t), title: display_title(t), artist: artist_join(t), duration: duration(t) }
+    let cover = if is_video(t) { t["imageId"].as_str() } else { t["album"]["cover"].as_str() };
+    let artist_id = t["artist"]["id"].as_u64().or_else(|| t["artists"].as_array().and_then(|a| a.iter().find_map(|x| x["id"].as_u64())));
+    // What menus and rows read; the runtime fields and the rest of the payload stay behind.
+    let mut slim = serde_json::Map::new();
+    for k in ["id", "title", "version", "duration", "artist", "artists", "album", "explicit", "ai", "mixes", "itemType", "imageId", "audioQuality", "streamReady", "allowStreaming", "streamStartDate", "trackNumber", "copyright", "isrc"] {
+        if let Some(v) = t.get(k).filter(|v| !v.is_null()) {
+            slim.insert(k.to_string(), v.clone());
+        }
+    }
+    QItem {
+        id: tid(t),
+        title: display_title(t),
+        artist: artist_join(t),
+        duration: duration(t),
+        qid: qid_of(t),
+        explicit: t["explicit"].as_bool() == Some(true),
+        ai: t["ai"].as_bool() == Some(true),
+        unavailable: unavailable(t),
+        album: album_title(t).unwrap_or_default(),
+        album_id: t["album"]["id"].as_u64(),
+        artist_id,
+        cover: cover.filter(|c| !c.is_empty()).map(str::to_string),
+        track: std::sync::Arc::new(Value::Object(slim)),
+    }
+}
+fn source_of(s: &Value) -> Option<Source> {
+    let kind = s["type"].as_str()?.to_string();
+    let id = match &s["id"] {
+        Value::String(x) => x.clone(),
+        Value::Null => String::new(),
+        v => v.to_string(),
+    };
+    let text = |k: &str| s[k].as_str().filter(|x| !x.is_empty()).map(str::to_string);
+    Some(Source { kind, id, name: s["name"].as_str().unwrap_or("").to_string(), subtitle: text("subtitle"), image: text("image") })
 }
 fn source_meta(s: &Value) -> Value {
     json!({"type": s["type"], "id": s["id"], "name": s["name"], "image": s["image"], "subtitle": s["subtitle"], "mixType": s["mixType"]})
@@ -554,6 +666,8 @@ enum Fail {
     Transient,
     RateLimited(Option<u64>),
     Blocked(String),
+    /// The content filter refused it (PlayResult "filtered"); its toast was shown.
+    Filtered,
 }
 
 fn classify(e: &SoneError) -> Fail {
@@ -580,10 +694,18 @@ struct Prefs {
     /// What bit-perfect replaced, to restore when it's turned off (sone.bitPerfect.previousState.v1).
     #[serde(default)]
     bit_perfect_prev: Option<(f32, bool)>,
+    /// The content filter (sone.allowExplicit.v1, sone.allowAi.v1): both allowed by default.
+    #[serde(default = "allowed")]
+    allow_explicit: bool,
+    #[serde(default = "allowed")]
+    allow_ai: bool,
+}
+fn allowed() -> bool {
+    true
 }
 impl Default for Prefs {
     fn default() -> Self {
-        Prefs { volume: 1.0, shuffle: false, repeat: 0, autoplay: false, bit_perfect_prev: None }
+        Prefs { volume: 1.0, shuffle: false, repeat: 0, autoplay: false, bit_perfect_prev: None, allow_explicit: true, allow_ai: true }
     }
 }
 fn prefs_path() -> Option<std::path::PathBuf> {
@@ -651,11 +773,16 @@ struct Player {
     pubd: Published,
     video_session: u64,
     video_quality: String,
+    /// The upcoming list's qids and their rows, as last published.
+    qitems: (Vec<String>, Vec<QItem>),
+    /// usePlaySource's latestRequest: a newer source request supersedes one still loading.
+    source_req: u64,
 }
 
 impl Player {
     fn new(h: AppHandle, tx: mpsc::UnboundedSender<Msg>) -> Self {
-        let prefs = prefs_path().and_then(|p| std::fs::read_to_string(p).ok()).and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default();
+        let prefs: Prefs = prefs_path().and_then(|p| std::fs::read_to_string(p).ok()).and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default();
+        crate::content::set_prefs(prefs.allow_explicit, prefs.allow_ai);
         Player {
             h,
             tx,
@@ -696,11 +823,21 @@ impl Player {
             pubd: Published::default(),
             video_session: 0,
             video_quality: "HIGH".into(),
+            qitems: Default::default(),
+            source_req: 0,
         }
     }
 
     fn state(&self) -> sone_host_shim::State<'_, AppState> {
         self.h.state::<AppState>()
+    }
+
+    /// contentBlockReason under the current preferences (§1.3).
+    fn blocked(&self, t: &Value) -> Option<crate::content::Block> {
+        crate::content::reason_with(t, self.prefs.allow_explicit, self.prefs.allow_ai)
+    }
+    fn is_blocked(&self, t: &Value) -> bool {
+        self.blocked(t).is_some()
     }
 
     fn stamp(&mut self, mut t: Value) -> Value {
@@ -774,8 +911,9 @@ impl Player {
                     self.poll_position(true).await;
                 }
                 Msg::ClockShown => {}
+                // (u64::MAX: a cancelled scrub asks for one read whatever came before)
                 Msg::SeekCorrection(seq) => {
-                    if pos().correction == seq {
+                    if pos().correction == seq || seq == u64::MAX {
                         self.poll_position(false).await;
                     }
                 }
@@ -784,6 +922,13 @@ impl Player {
                 Msg::SaveDue(_) => {}
                 Msg::LoginPoll(seq, every) => self.login_poll(seq, every).await,
                 Msg::Fetched { tracks, action, asked, seq, from_ui } => self.on_fetched(tracks, &action, asked, seq, from_ui).await,
+                Msg::SourceBuilt { loader, shuffle } => self.source_built(*loader, shuffle),
+                Msg::SourceReady { loader, request, epoch, restore } => self.source_ready(*loader, request, epoch, restore).await,
+                Msg::SourcePage { tracks, epoch, owner } => {
+                    if EPOCH.load(Ordering::Relaxed) == epoch {
+                        self.append_to_queue(tracks, false, Some(owner));
+                    }
+                }
             }
             self.sync().await;
         }
@@ -923,8 +1068,9 @@ impl Player {
             Cmd::CycleRepeat => self.prefs.repeat = (self.prefs.repeat + 1) % 3,
             Cmd::PlayCollection { tracks, source, album_mode, shuffle } => {
                 // usePlaySource: playAllFromSource refused (nothing playable) → info toast.
+                let why = self.refusal(&tracks);
                 if !self.play_all_src(tracks, Some(source), album_mode, shuffle).await {
-                    self.toast("No playable tracks");
+                    self.toast(why);
                 }
             }
             Cmd::PlayFrom { tracks, index, source, album_mode } => self.play_from_src(tracks, index, source, album_mode).await,
@@ -963,8 +1109,9 @@ impl Player {
                     return;
                 }
                 let source = json!({"type": "artist", "id": id, "name": name});
+                let why = self.refusal(&tracks);
                 if !self.play_all_src(tracks, Some(source), false, shuffle).await {
-                    self.toast("No playable tracks");
+                    self.toast(why);
                 }
             }
             Cmd::RemoveAt(i) => self.remove_from_queue(i),
@@ -1024,7 +1171,77 @@ impl Player {
                     self.play_from_queue(i).await;
                 }
             }
+            Cmd::SetAutoplay(on) => self.prefs.autoplay = on,
+            Cmd::SetAllowExplicit(on) => self.set_content_prefs(Some(on), None).await,
+            Cmd::SetAllowAi(on) => self.set_content_prefs(None, Some(on)).await,
+            Cmd::PlayQueued(q) => {
+                if let Some(i) = self.upcoming_index(&q) {
+                    self.play_from_queue(i).await;
+                }
+            }
+            Cmd::RemoveQueued(q) => {
+                if let Some(i) = self.upcoming_index(&q) {
+                    self.remove_from_queue(i);
+                }
+            }
+            Cmd::MoveQueued { qid, to } => {
+                if let Some(from) = self.upcoming_index(&qid) {
+                    let (list, manual) = reorder(self.upcoming(), self.manual.len(), from, to);
+                    let mut list = list.into_iter().map(normalize);
+                    self.manual = list.by_ref().take(manual).collect();
+                    self.queue = list.collect();
+                }
+            }
+            Cmd::PlayHistory(q) => {
+                if let Some(t) = self.history.iter().rev().find(|t| qid_of(t) == q).cloned() {
+                    let _ = self.play_track(t, true, false, false, true, false).await;
+                }
+            }
+            Cmd::PlayTrack(t) => {
+                let _ = self.play_track(t, true, false, false, true, false).await;
+            }
+            Cmd::QueueTrack(t) => {
+                if !self.is_blocked(&t) {
+                    let mut s = self.stamp(normalize(t));
+                    if s["album"]["id"].is_number() {
+                        s["_source"] = json!({"type": "album", "id": s["album"]["id"], "name": s["album"]["title"], "image": s["album"]["cover"]});
+                    }
+                    self.manual.push(s);
+                }
+            }
         }
+    }
+
+    /// The index in the upcoming list (manual, then context) of the item with this `_qid`.
+    fn upcoming_index(&self, qid: &str) -> Option<usize> {
+        self.manual.iter().chain(self.queue.iter()).position(|t| qid_of(t) == qid)
+    }
+
+    /// The content switches (§1.3). Turning either off clears playback, as the React settings
+    /// do after their confirmation (resetPlaybackForContentChange, §1.5).
+    async fn set_content_prefs(&mut self, explicit: Option<bool>, ai: Option<bool>) {
+        let off = explicit == Some(false) && self.prefs.allow_explicit || ai == Some(false) && self.prefs.allow_ai;
+        self.prefs.allow_explicit = explicit.unwrap_or(self.prefs.allow_explicit);
+        self.prefs.allow_ai = ai.unwrap_or(self.prefs.allow_ai);
+        crate::content::set_prefs(self.prefs.allow_explicit, self.prefs.allow_ai);
+        if !off {
+            return;
+        }
+        bump_epoch();
+        self.resume_seq_gen = None;
+        crate::video::close();
+        let _ = playback::stop_track(self.state()).await;
+        self.pending_next = None;
+        self.set_current(None);
+        self.playing = false;
+        self.stream_info = None;
+        self.queue.clear();
+        self.manual.clear();
+        self.original = None;
+        self.history.clear();
+        self.playback_source = None;
+        self.context_source = None;
+        self.autoplay_ids.clear();
     }
 
     async fn on_event(&mut self, name: &str, payload: &str) {
@@ -1059,7 +1276,22 @@ impl Player {
                 _ => {}
             },
             "mcp:toggle-shuffle" => self.toggle_shuffle(),
-            "mcp:play-source" | "mcp:shuffle-source" => log::warn!("[rune] {name} not ported yet: {payload}"),
+            "mcp:play-source" | "mcp:shuffle-source" => {
+                let kind = p["sourceType"].as_str().unwrap_or("").to_string();
+                let id = match &p["id"] {
+                    Value::String(s) => s.clone(),
+                    v => v.to_string(),
+                };
+                let (tx, h, shuffle) = (self.tx.clone(), self.h.clone(), name == "mcp:shuffle-source");
+                sone_host_shim::async_runtime::spawn(async move {
+                    match crate::sources::build(&h, &kind, &id).await {
+                        Some(l) => {
+                            let _ = tx.send(Msg::SourceBuilt { loader: Box::new(l), shuffle });
+                        }
+                        None => log::warn!("[rune] mcp play_source: no {kind} {id}"),
+                    }
+                });
+            }
             // §7.2 / §7.3
             "tray:toggle-play" => self.toggle_play().await,
             "mpris:play" => {
@@ -1266,6 +1498,11 @@ impl Player {
 
     /// playTrack (§2.1). `chosen_by_user`, `skip_history`, `quiet_unplayable`, `retry_rl`, `context_first`.
     async fn play_track(&mut self, track: Value, chosen_by_user: bool, skip_history: bool, quiet_unplayable: bool, retry_rl: bool, context_first: bool) -> Result<(), Fail> {
+        // Content filter first (§2.1 step 1): nothing else changes.
+        if let Some(b) = self.blocked(&track) {
+            self.toast(crate::content::message(b));
+            return Err(Fail::Filtered);
+        }
         if let Some(t) = self.last_play_invoke {
             if t.elapsed() < REENTRY_GUARD {
                 return Err(Fail::Transient);
@@ -1327,6 +1564,7 @@ impl Player {
                         }
                     }
                     Fail::Transient => self.toast_error(format!("Playback failed: {e}")),
+                    Fail::Filtered => {}
                 }
                 Err(f)
             }
@@ -1408,6 +1646,7 @@ impl Player {
     }
 
     fn set_queue_src(&mut self, tracks: Vec<Value>, clear_manual: bool, shuffled: bool, source: Option<Value>, all: Vec<Value>, album_mode: bool) {
+        bump_epoch();
         self.original = None;
         if clear_manual {
             self.manual.clear();
@@ -1422,6 +1661,7 @@ impl Player {
             s
         });
         self.use_track_gain = !album_mode;
+        let tracks: Vec<Value> = tracks.into_iter().filter(|t| !self.is_blocked(t)).collect();
         let stamped: Vec<Value> = tracks.into_iter().map(|t| {
             let n = normalize(t);
             self.stamp(n)
@@ -1442,7 +1682,7 @@ impl Player {
     /// playAllFromSource (§2.3): the Play / Shuffle buttons on album, playlist and artist pages.
     async fn play_all_src(&mut self, tracks: Vec<Value>, source: Option<Value>, album_mode: bool, shuffle: bool) -> bool {
         let all = tracks.clone();
-        let eligible: Vec<Value> = tracks.into_iter().filter(|t| !unavailable(t)).collect();
+        let eligible: Vec<Value> = tracks.into_iter().filter(|t| !unavailable(t) && !self.is_blocked(t)).collect();
         if eligible.is_empty() {
             return false;
         }
@@ -1467,15 +1707,30 @@ impl Player {
         true
     }
 
+    /// What usePlaySource says when playAllFromSource refuses `tracks`: the first content-block
+    /// reason among them, else "No playable tracks".
+    fn refusal(&self, tracks: &[Value]) -> &'static str {
+        tracks.iter().find_map(|t| self.blocked(t)).map_or("No playable tracks", crate::content::message)
+    }
+
     async fn play_single(&mut self, t: Value) {
+        if let Some(b) = self.blocked(&t) {
+            self.toast(crate::content::message(b));
+            return;
+        }
         self.set_queue(vec![], false, false);
         let _ = self.play_track(t, true, false, false, true, false).await;
     }
 
     /// playFromSource (§2.3): play `tracks[index]`; the rest is what follows it, then what came
-    /// before (wrap-around), shuffled when shuffle mode is on. The manual queue survives.
+    /// before (wrap-around), shuffled when shuffle mode is on. The manual queue survives. A
+    /// blocked track only says why; blocked ones elsewhere in the collection are left out.
     async fn play_from_src(&mut self, tracks: Vec<Value>, index: usize, source: Value, album_mode: bool) {
         let Some(track) = tracks.get(index).cloned() else { return };
+        if let Some(b) = self.blocked(&track) {
+            self.toast(crate::content::message(b));
+            return;
+        }
         let rest = wrap_after(&tracks, index);
         self.set_queue_src(rest, false, self.prefs.shuffle, Some(source), tracks, album_mode);
         self.fail_count = 0;
@@ -1531,14 +1786,15 @@ impl Player {
                     self.play_single(t).await;
                 }
             }
+            // addToQueue / playNextInQueue ignore blocked tracks (UPA:777-795).
             "queue" => {
-                for t in tracks {
+                for t in tracks.into_iter().filter(|t| !self.is_blocked(t)).collect::<Vec<_>>() {
                     let s = self.stamp(normalize(t));
                     self.manual.push(s);
                 }
             }
             "play_next" => {
-                for t in tracks.into_iter().rev() {
+                for t in tracks.into_iter().filter(|t| !self.is_blocked(t)).rev().collect::<Vec<_>>() {
                     let s = self.stamp(normalize(t));
                     self.manual.insert(0, s);
                 }
@@ -1566,12 +1822,120 @@ impl Player {
             self.toast("Track unavailable");
             return;
         }
+        if let Some(b) = self.blocked(&t) {
+            self.toast(crate::content::message(b));
+            return;
+        }
         self.fail_count = 0;
         self.remove_from_queue(i);
         let _ = self.play_track(t, true, false, false, true, false).await;
     }
 
+    /// usePlaySource for an MCP source (§2.4-2.5): shuffle_source turns shuffle mode on first
+    /// (directly, so the current queue isn't reshuffled); then the start batch loads off the
+    /// actor, as of this request and queue epoch.
+    fn source_built(&mut self, mut loader: crate::sources::Loader, shuffle: bool) {
+        let restore = shuffle.then_some(self.prefs.shuffle);
+        if shuffle {
+            self.prefs.shuffle = true;
+        }
+        self.source_req += 1;
+        let (request, epoch) = (self.source_req, EPOCH.load(Ordering::Relaxed));
+        let (tx, h, ae, aa) = (self.tx.clone(), self.h.clone(), self.prefs.allow_explicit, self.prefs.allow_ai);
+        sone_host_shim::async_runtime::spawn(async move {
+            let playable = move |t: &Value| !unavailable(t) && crate::content::reason_with(t, ae, aa).is_none();
+            loader.start(&h, &playable).await;
+            let _ = tx.send(Msg::SourceReady { loader: Box::new(loader), request, epoch, restore });
+        });
+    }
+
+    async fn source_ready(&mut self, mut loader: crate::sources::Loader, request: u64, epoch: u64, restore: Option<bool>) {
+        let put_back = |p: &mut Self| {
+            if let Some(s) = restore {
+                p.prefs.shuffle = s;
+            }
+        };
+        // A newer source, or any queue replacement, since it was asked for: drop it.
+        if request != self.source_req || EPOCH.load(Ordering::Relaxed) != epoch {
+            return put_back(self);
+        }
+        if loader.tracks.is_empty() {
+            if loader.failed {
+                self.toast_error("Couldn't load tracks");
+            }
+            return put_back(self);
+        }
+        let tracks = std::mem::take(&mut loader.tracks);
+        let why = self.refusal(&tracks);
+        if !self.play_all_src(tracks, Some(loader.meta.clone()), loader.album_mode, false).await {
+            self.toast(why);
+            return put_back(self);
+        }
+        if !loader.has_more {
+            return;
+        }
+        // The rest, page by page, for as long as the queue is the one this source started.
+        let ours = epoch + 1;
+        let owner = (loader.meta["type"].clone(), loader.meta["id"].clone());
+        let (tx, h, ae, aa) = (self.tx.clone(), self.h.clone(), self.prefs.allow_explicit, self.prefs.allow_ai);
+        sone_host_shim::async_runtime::spawn(async move {
+            let playable = move |t: &Value| !unavailable(t) && crate::content::reason_with(t, ae, aa).is_none();
+            while loader.has_more && EPOCH.load(Ordering::Relaxed) == ours {
+                let fresh = match loader.next_page(&h, &playable).await {
+                    Ok(f) => f,
+                    Err(e) => {
+                        log::warn!("[rune] failed to load remaining {} tracks: {e}", owner.0);
+                        return;
+                    }
+                };
+                let tracks: Vec<Value> = fresh.into_iter().filter(|t| !unavailable(t)).collect();
+                if !tracks.is_empty() && tx.send(Msg::SourcePage { tracks, epoch: ours, owner: owner.clone() }).is_err() {
+                    return;
+                }
+            }
+        });
+    }
+
+    /// appendToQueue (§2.3): a later page of the source playing. Into the owner's track list
+    /// (for repeat-all and previous), and into the queue: at random places after its head when
+    /// shuffled (and in order onto the unshuffled copy), else at the end.
+    fn append_to_queue(&mut self, tracks: Vec<Value>, shuffle: bool, owner: Option<(Value, Value)>) {
+        let fresh: Vec<Value> = tracks.into_iter().filter(|t| !self.is_blocked(t)).collect();
+        if fresh.is_empty() {
+            return;
+        }
+        let stamped: Vec<Value> = fresh.into_iter().map(|t| {
+            let n = normalize(t);
+            self.stamp(n)
+        }).collect();
+        let owns = |s: &Option<Value>| match (&owner, s) {
+            (Some((k, i)), Some(s)) => s["type"] == *k && s["id"] == *i,
+            (None, Some(_)) => true,
+            _ => false,
+        };
+        let target = if owner.is_some() && owns(&self.context_source) { self.context_source.as_mut() } else if owns(&self.playback_source) { self.playback_source.as_mut() } else { None };
+        if let Some(s) = target {
+            if let Some(a) = s["tracks"].as_array_mut() {
+                a.extend(stamped.iter().cloned());
+            }
+        }
+        if self.prefs.shuffle || shuffle {
+            if self.prefs.shuffle {
+                if let Some(o) = &mut self.original {
+                    o.extend(stamped.iter().cloned());
+                }
+            }
+            for t in stamped {
+                let at = if self.queue.is_empty() { 0 } else { 1 + rand::random::<usize>() % self.queue.len() };
+                self.queue.insert(at, t);
+            }
+        } else {
+            self.queue.extend(stamped);
+        }
+    }
+
     fn clear_queue(&mut self) {
+        bump_epoch();
         self.resume_seq_gen = None;
         self.queue.clear();
         self.manual.clear();
@@ -1632,11 +1996,15 @@ impl Player {
                 self.fail_count = 0;
             }
             let mut toasted = false;
-            let skip_manual = context_first && self.queue.iter().any(|t| !unavailable(t));
+            let skip_manual = context_first && self.queue.iter().any(|t| !unavailable(t) && !self.is_blocked(t));
             // Manual drain (step 7).
             if !skip_manual {
                 while !self.manual.is_empty() {
                     let next = self.manual[0].clone();
+                    if self.is_blocked(&next) {
+                        self.manual.remove(0);
+                        continue;
+                    }
                     if unavailable(&next) {
                         self.manual.remove(0);
                         if self.record_unplayable(&mut toasted) {
@@ -1686,6 +2054,9 @@ impl Player {
                 if let Some(o) = &mut self.original {
                     o.retain(|x| qid_of(x) != q);
                 }
+                if self.is_blocked(&next) {
+                    continue;
+                }
                 if unavailable(&next) {
                     if self.record_unplayable(&mut toasted) {
                         return;
@@ -1720,7 +2091,8 @@ impl Player {
                     Some(t) => t,
                     None => self.history.iter().cloned().chain(self.current.clone()).collect(),
                 };
-                let all: Vec<Value> = raw.into_iter().filter(|t| !unavailable(t)).map(|t| {
+                let raw: Vec<Value> = raw.into_iter().filter(|t| !unavailable(t) && !self.is_blocked(t)).collect();
+                let all: Vec<Value> = raw.into_iter().map(|t| {
                     let mut t = t;
                     if let Some(o) = t.as_object_mut() {
                         o.remove("_qid");
@@ -1751,11 +2123,57 @@ impl Player {
                 }
                 return;
             }
-            if self.prefs.autoplay {
-                log::warn!("[rune] autoplay radio not ported yet; stopping at end of queue");
+            if self.prefs.autoplay && self.autoplay_radio().await {
+                return;
             }
             self.playing = false;
         })
+    }
+
+    /// Autoplay radio (§3.2 step 11, UPA:1284-1331): the queue ran out, so continue with the
+    /// current track's radio (its TRACK_MIX), leaving out what was already played. The radio
+    /// becomes the context queue; "Playing from" stays. Whether a track was started (or a retry
+    /// scheduled); false falls through to stopping.
+    ///
+    /// React returns early without clearing isPlaying when the track has no radio, though the
+    /// pipeline was already stopped (the bar keeps saying "playing"); here it stops cleanly.
+    async fn autoplay_radio(&mut self) -> bool {
+        let Some(cur) = self.current.clone() else { return false };
+        let Some(mix) = cur["mixes"]["TRACK_MIX"].as_str().filter(|m| !m.is_empty()).map(str::to_string) else { return false };
+        let h = self.h.clone();
+        let items = match tauri_app_lib::commands::pages::get_mix_items(h.state::<AppState>(), mix).await {
+            Ok(m) => serde_json::to_value(m).unwrap_or(Value::Null),
+            Err(e) => {
+                match classify(&e) {
+                    Fail::Network => self.toast_error("Network error — check your internet connection"),
+                    Fail::RateLimited(after) => {
+                        self.schedule_rate_limit(after, None, false);
+                        return true;
+                    }
+                    _ => log::warn!("[rune] autoplay radio: {e}"),
+                }
+                return false;
+            }
+        };
+        let played: HashSet<u64> = self.history.iter().map(tid).chain([tid(&cur)]).collect();
+        let fresh = radio_fresh(&items, &played, |t| self.is_blocked(t));
+        let Some((next, rest)) = fresh.split_first() else { return false };
+        self.autoplay_ids = rest.iter().map(tid).collect();
+        bump_epoch();
+        self.queue = rest.iter().map(|t| {
+            let n = normalize(t.clone());
+            self.stamp(n)
+        }).collect();
+        self.use_track_gain = true;
+        match self.play_track(next.clone(), false, false, false, false, false).await {
+            Err(Fail::Unplayable) => self.play_next(false, false).await,
+            Err(Fail::RateLimited(_)) => {
+                let n = self.stamp(normalize(next.clone()));
+                self.queue.insert(0, n);
+            }
+            _ => {}
+        }
+        true
     }
 
     /// track-advanced (§3.4): the audio thread already switched; reconcile.
@@ -1865,7 +2283,7 @@ impl Player {
                 let tracks = src["tracks"].as_array().cloned().unwrap_or_default();
                 if let Some(idx) = tracks.iter().position(|t| tid(t) == tid(&cur)) {
                     let mut p = idx as isize - 1;
-                    while p >= 0 && unavailable(&tracks[p as usize]) {
+                    while p >= 0 && (unavailable(&tracks[p as usize]) || self.is_blocked(&tracks[p as usize])) {
                         p -= 1;
                     }
                     if idx > 0 && p >= 0 {
@@ -2059,7 +2477,7 @@ impl Player {
         } else {
             let head = self.manual.first().or(self.queue.first()).cloned();
             head.filter(|h| {
-                !unavailable(h) && !is_video(h)
+                !unavailable(h) && !is_video(h) && !self.is_blocked(h)
                     && match h.get("_source").filter(|s| !s.is_null()) {
                         Some(s) => self.playback_source.as_ref().map(|p| p["id"] == s["id"]).unwrap_or(false),
                         None => true,
@@ -2169,8 +2587,13 @@ impl Player {
     fn restore_snapshot(&mut self) {
         let Ok(Some(s)) = playback::load_playback_queue(self.state()) else { return };
         let Ok(v) = serde_json::from_str::<Value>(&s) else { return };
+        // (blocked tracks are dropped under the current content preferences, AI:583-713)
+        let (ae, aa) = (self.prefs.allow_explicit, self.prefs.allow_ai);
         let clean = |t: &Value| -> Option<Value> {
             t["id"].as_u64()?;
+            if crate::content::reason_with(t, ae, aa).is_some() {
+                return None;
+            }
             let mut t = t.clone();
             if let Some(o) = t.as_object_mut() {
                 o.remove("_playingFrom");
@@ -2347,9 +2770,17 @@ impl Player {
             volume: if self.bit_perfect { 1.0 } else { self.prefs.volume },
             quality: Some(quality_text(&self.stream_info)).filter(|s| !s.is_empty()),
             current: self.current.as_ref().map(qitem),
-            queue: self.upcoming().iter().map(qitem).collect(),
+            queue: {
+                // Rows are rebuilt only when the upcoming items change (a qid names one item).
+                let keys: Vec<String> = self.manual.iter().chain(&self.queue).map(qid_of).collect();
+                if self.qitems.0 != keys {
+                    self.qitems = (keys, self.manual.iter().chain(&self.queue).map(qitem).collect());
+                }
+                self.qitems.1.clone()
+            },
             playing_from: self.playback_source.as_ref().and_then(|s| s["name"].as_str()).map(str::to_string),
-            history: self.history.iter().rev().take(50).map(qitem).collect(),
+            // The queue panel's History: the last ten, oldest first (QueueTab history.slice(-10)).
+            history: self.history[self.history.len().saturating_sub(10)..].iter().map(qitem).collect(),
             bit_perfect: self.bit_perfect,
             exclusive: self.exclusive,
             signed_in: self.signed_in,
@@ -2370,6 +2801,13 @@ impl Player {
             video_session: self.video_session,
             video_quality: self.video_quality.clone(),
             video_open: crate::video::is_open(),
+            source: self.playback_source.as_ref().and_then(source_of),
+            context_source: self.context_source.as_ref().and_then(source_of),
+            manual_len: self.manual.len(),
+            autoplay: self.prefs.autoplay,
+            allow_explicit: self.prefs.allow_explicit,
+            allow_ai: self.prefs.allow_ai,
+            stream_info: self.stream_info.clone().filter(|i| i.is_object()),
         };
         // Signal windows only when something they draw changed. The controller republishes on
         // every backend event (position syncs among them), and each signal is an animated
@@ -2387,6 +2825,35 @@ impl Player {
             VERSION.fetch_add(1, Ordering::Relaxed);
         }
     }
+}
+
+/// The queue panel's drag (setQueueTracks `reorder`): `list` (manual items first, `manual` of
+/// them) with item `from` moved to index `to`, and the new manual count. An item dragged out of
+/// the manual part joins the context queue, and one dragged into it becomes manual.
+fn reorder<T>(mut list: Vec<T>, manual: usize, from: usize, to: usize) -> (Vec<T>, usize) {
+    if from >= list.len() {
+        return (list, manual);
+    }
+    let to = to.min(list.len() - 1);
+    if from == to {
+        return (list, manual);
+    }
+    let moved = list.remove(from);
+    list.insert(to, moved);
+    let manual = if from < manual && to >= manual {
+        manual - 1
+    } else if from >= manual && to < manual {
+        manual + 1
+    } else {
+        manual
+    };
+    (list, manual)
+}
+
+/// The radio's tracks (`get_mix_items`' `tracks`) worth playing next: not played already
+/// (`played`: history and the current track), not blocked, not unavailable; in mix order.
+fn radio_fresh(items: &Value, played: &HashSet<u64>, blocked: impl Fn(&Value) -> bool) -> Vec<Value> {
+    items["tracks"].as_array().map(|a| a.iter().filter(|t| tid(t) != 0 && !played.contains(&tid(t)) && !blocked(t) && !unavailable(t)).cloned().collect()).unwrap_or_default()
 }
 
 /// The tracks after `i`, then the ones before it (playFromSource's wrap-around rest).
@@ -2497,6 +2964,33 @@ mod pkce_tests {
         assert_eq!(pkce_code("https://tidal.com/android/login/auth?state=x"), None);
         assert_eq!(pkce_code("https://tidal.com/oops"), None);
         assert_eq!(pkce_code("short"), None);
+    }
+}
+
+#[cfg(test)]
+mod queue_tests {
+    use super::{radio_fresh, reorder};
+    use serde_json::json;
+    use std::collections::HashSet;
+
+    #[test]
+    fn a_drag_across_the_divider_changes_section() {
+        // manual a b | context c d e
+        let l = vec!['a', 'b', 'c', 'd', 'e'];
+        assert_eq!(reorder(l.clone(), 2, 0, 2), (vec!['b', 'c', 'a', 'd', 'e'], 1));
+        assert_eq!(reorder(l.clone(), 2, 4, 0), (vec!['e', 'a', 'b', 'c', 'd'], 3));
+        assert_eq!(reorder(l.clone(), 2, 3, 2), (vec!['a', 'b', 'd', 'c', 'e'], 2));
+        assert_eq!(reorder(l.clone(), 2, 1, 1), (l.clone(), 2));
+        assert_eq!(reorder(l.clone(), 2, 0, 99), (vec!['b', 'c', 'd', 'e', 'a'], 1));
+    }
+
+    #[test]
+    fn the_radio_leaves_out_what_was_played_and_what_is_blocked() {
+        let mix = json!({"tracks": [{"id": 1}, {"id": 2, "explicit": true}, {"id": 3, "streamReady": false}, {"id": 4}, {"id": 5}]});
+        let played: HashSet<u64> = [1, 5].into_iter().collect();
+        let fresh = radio_fresh(&mix, &played, |t| t["explicit"].as_bool() == Some(true));
+        assert_eq!(fresh.iter().map(|t| t["id"].as_u64().unwrap()).collect::<Vec<_>>(), [4]);
+        assert!(radio_fresh(&json!({}), &played, |_| false).is_empty());
     }
 }
 

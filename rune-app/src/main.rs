@@ -8,6 +8,7 @@
 
 mod art;
 mod bio;
+mod content;
 mod controller;
 mod data;
 mod full_ui;
@@ -19,6 +20,7 @@ mod icons;
 mod interact;
 mod mini;
 mod perf;
+mod sources;
 mod theme;
 mod ui;
 mod video;

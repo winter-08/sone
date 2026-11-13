@@ -48,5 +48,5 @@ The sandbox never touches real audio hardware.
 
 Library/search/home/album/artist/playlist views, sign-in UI (an existing signed-in profile works),
 settings UI, miniplayer, lyrics, music videos (blocked on Rune Linux video, anomalyco/rune#30),
-MCP `play_source`/`shuffle_source`, autoplay radio, toasts beyond a one-line notice, and the tray's
+toasts beyond a one-line notice, and the tray's
 "Show" item (it targets a webview window).
