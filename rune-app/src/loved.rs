@@ -148,7 +148,13 @@ fn videos_tab(snap: &paged::Snap, needle: &str, source: Value) -> El {
             .child(text("No results").font(t(15.0, 650.0)).color(white(0.9)))
             .child(ui::empty(&format!("No videos match \u{201c}{}\u{201d}.", needle.trim())));
     }
-    let mut c = col().w_full().gap(10.0).child(views::grid(crate::video_ui::video_cards("lvv", &vids, source)));
+    // A click plays from that video through all the loved videos, paging in the rest
+    // (FavoritesView's playSource), not just the cards loaded so far.
+    let cards = vids.iter().enumerate().map(|(i, d)| {
+        let (id, src) = (d["id"].as_u64(), source.clone());
+        crate::video_ui::video_card_with(format!("lvv-{i}"), d, move |_: &mut App| paged::play(PKey::LovedVideos, src.clone(), false, id, loved_video))
+    }).collect();
+    let mut c = col().w_full().gap(10.0).child(views::grid(cards));
     if snap.more && needle.trim().is_empty() {
         let n = snap.len;
         c = c.child(rune::el().key(format!("lvv-more-{n}")).w_full().h(2.0).a11y_hidden()

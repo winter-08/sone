@@ -43,6 +43,21 @@ fn image_url(id: &str, pt: f32) -> Option<String> {
 /// SearchView handlePlayVideo: videos play through the queue so prev/next walk the grid).
 /// With `source` null (Home's cards: useMediaPlay) the video plays alone instead (playSingle).
 pub fn video_card(key: String, d: &Value, list: &[Value], idx: usize, source: Value) -> El {
+    let tracks: Vec<Value> = list.iter().map(video_track).collect();
+    let play = move |_: &mut App| {
+        if source.is_null() {
+            controller::send(Cmd::PlaySingle(tracks[idx].clone()));
+        } else {
+            controller::send(Cmd::PlayFrom { tracks: tracks.clone(), index: idx, source: source.clone(), album_mode: false });
+        }
+    };
+    video_card_with(key, d, play)
+}
+
+/// A 16:9 card pressing which runs `play`. Right-click opens the video's menu at the pointer
+/// (React's MediaContextMenu on a video: play next, queue, add to playlist, share); an
+/// explicit video is badged as MediaCard does.
+pub fn video_card_with(key: String, d: &Value, play: impl Fn(&mut App) + Clone + 'static) -> El {
     const W: f32 = 220.0;
     const H: f32 = 124.0;
     let id = d["id"].as_u64().unwrap_or(0);
@@ -53,14 +68,7 @@ pub fn video_card(key: String, d: &Value, list: &[Value], idx: usize, source: Va
     if let Some(px) = image_id(d).and_then(|i| image_url(i, W)).and_then(|u| crate::art::pixels(&u, W)) {
         art = art.child(el().absolute(0.0, 0.0).size(W, H).pixels_fit(&px, rune::SurfaceFit::Fill));
     }
-    let tracks: Vec<Value> = list.iter().map(video_track).collect();
-    let play = move |_: &mut App| {
-        if source.is_null() {
-            controller::send(Cmd::PlaySingle(tracks[idx].clone()));
-        } else {
-            controller::send(Cmd::PlayFrom { tracks: tracks.clone(), index: idx, source: source.clone(), album_mode: false });
-        }
-    };
+    let menu_item = video_track(d);
     let on = interact::is_fav(Fav::Video, &id.to_string());
     let (fid, fl) = (id.to_string(), title.clone());
     let play2 = play.clone();
@@ -74,11 +82,17 @@ pub fn video_card(key: String, d: &Value, list: &[Value], idx: usize, source: Va
             .on_press(move |_: &mut App| interact::toggle_fav(Fav::Video, fid.clone(), fl.clone(), Say::Nothing))
             .child(glyph(if on { G::HeartFilled } else { G::Heart }, 16.0, if on { theme::accent() } else { white(0.95) })));
     let heading_play = play.clone();
+    let heading = text(title.clone()).font(t(13.0, 650.0)).color(white(0.95)).truncate().role("heading").label(title).focusable(true).no_focus_ring().on_press(heading_play);
+    let head = match crate::content::badges(d["explicit"].as_bool() == Some(true), false) {
+        Some(b) => row().w_full().min_w(0.0).gap(6.0).items_center().child(heading.shrink()).child(b),
+        None => heading,
+    };
     col().key(key).role("presentation").w(W + 16.0).gap(6.0).padding(8.0).radius(12.0)
         .hover(white(0.06)).hover_group().focus_within_ring(2.0, -2.0, white(0.6)).cursor(rune::Cursor::Pointer)
         .on_press(play)
+        .on_secondary_press(move |s: &mut App, p, _| interact::open_track(s, menu_item.clone(), None, interact::Anchor::Point(p.x, p.y)))
         .child(art)
-        .child(text(title.clone()).font(t(13.0, 650.0)).color(white(0.95)).truncate().role("heading").label(title).focusable(true).no_focus_ring().on_press(heading_play))
+        .child(head)
         .child(text(artist).font(t(11.0, 400.0)).color(white(0.55)).truncate())
 }
 
