@@ -2274,7 +2274,7 @@ fn lyrics(s: &App, v: &View) -> El {
                         words = words.group_color(white(0.7));
                     }
                     col_lines = col_lines.child(
-                        el().key(format!("lyw-{i}")).hover_group().cursor(rune::Cursor::Pointer)
+                        el().key(format!("lyw-{i}")).role("presentation").hover_group().cursor(rune::Cursor::Pointer)
                             .on_press(move |s: &mut App| {
                                 *s.nav.lyrics_scrolled = false;
                                 controller::send(Cmd::SeekTo(at));
