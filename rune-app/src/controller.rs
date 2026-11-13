@@ -107,6 +107,9 @@ pub enum Cmd {
     SetVideoQuality(String),
     /// The video overlay's close on a finished video (VideoPlayer onEnded → closeVideo).
     CloseVideo,
+    /// A favourite changed (interact.rs): the sync after it re-pushes the MPRIS rating
+    /// (AppInitializer re-pushes metadata on favoriteTrackIds).
+    FavoritesChanged,
 }
 
 /// The current item when it is a music video (React currentVideoAtom).
@@ -498,6 +501,17 @@ fn normalize(mut t: Value) -> Value {
     }
     t
 }
+/// Whether the item is a favourite: a Loved track, or for a video a loved video (React pushes no
+/// MPRIS metadata for a video at all; this port does, so it rates it by the video's heart).
+fn loved(t: &Value) -> bool {
+    crate::interact::is_fav(if is_video(t) { crate::interact::Fav::Video } else { crate::interact::Fav::Track }, &tid(t).to_string())
+}
+
+/// xesam:userRating as AppInitializer sends it: 1.0 for a favourite, else 0.0.
+fn mpris_rating(loved: bool) -> f64 {
+    if loved { 1.0 } else { 0.0 }
+}
+
 fn unavailable(t: &Value) -> bool {
     // videos aren't audio-stream-gated (isTrackUnavailable)
     if is_video(t) {
@@ -991,6 +1005,7 @@ impl Player {
                 crate::video::close();
                 self.playing = false;
             }
+            Cmd::FavoritesChanged => {}
             Cmd::SetMaxQuality(q) => {
                 let _ = utility::set_max_quality(self.state(), q);
             }
@@ -2216,7 +2231,7 @@ impl Player {
 
         // MPRIS metadata (+ status without position) on current/streamInfo change (§8.1).
         if let Some(cur) = self.current.clone() {
-            let key = (tid(&cur), qid_of(&cur), quality_text(&self.stream_info), false);
+            let key = (tid(&cur), qid_of(&cur), quality_text(&self.stream_info), loved(&cur));
             if self.pubd.meta.as_ref() != Some(&key) {
                 let md = playback::MprisMetadata {
                     track_id: tid(&cur),
@@ -2231,7 +2246,7 @@ impl Player {
                     track_number: cur["trackNumber"].as_u64().map(|n| n as u32),
                     disc_number: cur["volumeNumber"].as_u64().map(|n| n as u32),
                     content_created: cur["album"]["releaseDate"].as_str().map(str::to_string),
-                    user_rating: Some(0.0),
+                    user_rating: Some(mpris_rating(key.3)),
                 };
                 let _ = playback::update_mpris_metadata(self.state(), md);
                 let _ = playback::update_mpris_playback_status(self.state(), self.playing, None);
@@ -2520,5 +2535,14 @@ mod video_item_tests {
     fn a_video_in_a_playlist_is_never_stream_gated() {
         assert!(!unavailable(&json!({"id": 9, "itemType": "video", "streamReady": false, "allowStreaming": false})));
         assert!(unavailable(&json!({"id": 9, "itemType": "track", "streamReady": false})));
+    }
+}
+
+#[cfg(test)]
+mod mpris_tests {
+    #[test]
+    fn the_rating_is_the_favourite_flag() {
+        assert_eq!(super::mpris_rating(true), 1.0);
+        assert_eq!(super::mpris_rating(false), 0.0);
     }
 }

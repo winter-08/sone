@@ -115,8 +115,14 @@ pub fn load_favorites_once() {
         if let Ok(v) = videos { f.videos = v.into_iter().map(|id| id.to_string()).collect() }
         drop(f);
         FAVS_LOADED.store(true, Ordering::Relaxed);
-        bump();
+        favs_changed();
     });
+}
+
+/// The favourite sets changed: hearts redraw, and the controller re-pushes the MPRIS rating.
+fn favs_changed() {
+    bump();
+    controller::send(Cmd::FavoritesChanged);
 }
 
 pub fn favorites_loaded() -> bool {
@@ -153,7 +159,7 @@ pub fn toggle_fav(k: Fav, id: String, label: String, say: Say) {
         if on { set.insert(id.clone()); } else { set.remove(&id); }
         on
     };
-    bump();
+    favs_changed();
     sone_host_shim::async_runtime::spawn(async move {
         let u = data::user_id();
         let num = id.parse::<u64>().unwrap_or(0);
@@ -199,7 +205,7 @@ pub fn toggle_fav(k: Fav, id: String, label: String, say: Say) {
                 let set = f.set(k);
                 if now_on { set.remove(&id); } else { set.insert(id.clone()); }
                 drop(f);
-                bump();
+                favs_changed();
                 match say {
                     Say::Loved | Say::LovedShort => toast("Failed to update Loved tracks".into(), Kind::Error),
                     Say::LovedVideo => toast("Failed to update Loved videos".into(), Kind::Error),
