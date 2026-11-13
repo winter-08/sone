@@ -406,7 +406,7 @@ pub fn open_folder_menu(s: &mut App, id: String, name: String, anchor: Anchor) {
 /// The create-playlist dialog (interact.rs), and with `folder` the new playlist goes into it.
 fn open_create(s: &mut App, folder: Option<String>) {
     s.nav.coll.create_in = folder;
-    s.nav.create = Some(interact::Create { title: TextEdit::new(""), desc: TextEdit::new(""), public: false, ids: vec![], saving: false });
+    s.nav.create = Some(interact::Create::new(vec![]));
 }
 
 /// Every list a folder change can touch: the library's playlist lists and folders, and the

@@ -511,6 +511,15 @@ pub struct Create {
     pub public: bool,
     pub ids: Vec<u64>,
     pub saving: bool,
+    /// The last save failed (shown in the dialog).
+    pub error: Option<String>,
+}
+
+impl Create {
+    /// A new, empty dialog that adds `ids` to the playlist it makes.
+    pub fn new(ids: Vec<u64>) -> Create {
+        Create { title: TextEdit::new(""), desc: TextEdit::new(""), public: false, ids, saving: false, error: None }
+    }
 }
 
 /// Counts the menus opened, so an async result for one menu never lands in a later one.
@@ -992,6 +1001,14 @@ async fn media_track_ids(item: &Value, kind: Media) -> Option<Vec<u64>> {
 
 static RECENT: LazyLock<Mutex<Vec<String>>> = LazyLock::new(Default::default);
 
+/// A playlist just added to (or made) goes first among the picker's recent ones.
+fn push_recent_playlist(uuid: &str) {
+    let mut r = RECENT.lock().unwrap();
+    r.retain(|u| u != uuid);
+    r.insert(0, uuid.to_string());
+    r.truncate(8);
+}
+
 fn track_sub(s: &App, c: &Ctx) -> Option<El> {
     let sub = match c.sub.as_ref()? {
         Sub::AddToPlaylist { ids, all, query, anchor, below } => add_menu(ids, *all, query, anchor, *below),
@@ -1108,7 +1125,7 @@ fn add_menu(ids: &[u64], all: bool, query: &TextEdit, anchor: &str, below: bool)
         m = m.child(theme::focusable_row(row().key("atp-create").role("button").label("Create new playlist")).w_full().radius(MENU_ROW_R).px(14.0).h(48.0).gap(12.0).items_center().hover(white(0.06)).cursor(rune::Cursor::Pointer)
                 .on_press(move |s: &mut App| {
                     close(s);
-                    s.nav.create = Some(Create { title: TextEdit::new(""), desc: TextEdit::new(""), public: false, ids: ids_c.clone(), saving: false });
+                    s.nav.create = Some(Create::new(ids_c.clone()));
                 })
                 .child(el().size(32.0, 32.0).radius(16.0).fill(white(0.08)).items_center().justify_center().child(glyph(G::Plus, 18.0, white(0.85))))
                 .child(text("Create new playlist").font(t(15.0, 500.0)).color(white(0.92)).a11y_hidden()))
@@ -1208,12 +1225,7 @@ fn add_to_playlist(uuid: String, label: String, ids: Vec<u64>, again: Option<usi
         }
         match res {
             Ok(added) => {
-                {
-                    let mut r = RECENT.lock().unwrap();
-                    r.retain(|u| *u != uuid);
-                    r.insert(0, uuid.clone());
-                    r.truncate(8);
-                }
+                push_recent_playlist(&uuid);
                 let skipped = skipped_ids(&ids, &added);
                 match add_result_toast(ids.len(), added.len(), skipped.len(), &l) {
                     (msg, None) => toast(msg, Kind::Success),
@@ -1275,8 +1287,10 @@ fn create_modal(cr: &Create) -> El {
         .child(col().gap(4.0)
             .child(row().h(88.0).px(12.0).py(10.0).radius(10.0).fill(white(0.06))
                 .child(text_input(&cr.desc, t(13.0, 400.0).lh(18.0)).key("cp-desc").label("Write a description").described_by("cp-desc-count").grow(1.0).color(white(0.9)).placeholder("Write a description", white(0.4))
-                    .on_edit(|s: &mut App| &mut s.nav.create.as_mut().expect("the field shows with its dialog").desc)))
-            .child(text(format!("{}/500 characters", cr.desc.text.chars().count())).key("cp-desc-count").font(t(11.0, 400.0)).color(white(0.45))))
+                    .on_edit(|s: &mut App| &mut s.nav.create.as_mut().expect("the field shows with its dialog").desc)
+                    .on_input_change(|s: &mut App, _| if let Some(c) = &mut s.nav.create { cap_desc(&mut c.desc) })))
+            .child(text(format!("{}/{DESC_MAX} characters", cr.desc.text.chars().count().min(DESC_MAX))).key("cp-desc-count").font(t(11.0, 400.0)).color(white(0.45))))
+        .child(crate::coll::error_line(&cr.error))
         .child(theme::focusable(row().key("cp-public").role("switch").label("Make it public")).described_by("cp-public-note").checked(cr.public).gap(10.0).items_center().cursor(rune::Cursor::Pointer)
             .on_press(|s: &mut App| if let Some(c) = &mut s.nav.create { c.public = !c.public })
             .child(col().grow(1.0).a11y_hidden()
@@ -1295,7 +1309,8 @@ fn save_playlist(s: &mut App) {
         return;
     }
     c.saving = true;
-    let (desc, public, ids) = (c.desc.text.chars().take(500).collect::<String>(), c.public, c.ids.clone());
+    let save_no = CREATE_GEN.fetch_add(1, Ordering::Relaxed) + 1;
+    let (desc, public, ids) = (c.desc.text.trim().to_string(), c.public, c.ids.clone());
     sone_host_shim::async_runtime::spawn(async move {
         let access = if public { "PUBLIC" } else { "UNLISTED" };
         match library::create_playlist(state(), title.clone(), desc, access.into()).await {
@@ -1306,35 +1321,54 @@ fn save_playlist(s: &mut App) {
                 }
                 // Made from a folder's menu: into that folder (library.rs).
                 if !uuid.is_empty() {
-                    crate::library::created_playlist(uuid);
+                    crate::library::created_playlist(uuid.clone());
                 }
                 data::forget(&Key::Folders);
                 data::forget(&Key::AllPlaylists);
-                *CLOSE_CREATE.lock().unwrap() = true;
+                if !uuid.is_empty() {
+                    push_recent_playlist(&uuid);
+                }
+                *CREATED.lock().unwrap() = Some((save_no, Ok(())));
                 toast(format!("Created playlist \"{}\"", clip(&title, 28)), Kind::Success);
             }
-            Err(_) => {
-                *CLOSE_CREATE.lock().unwrap() = false;
-                toast("Failed to create playlist".into(), Kind::Error);
-            }
+            // CreatePlaylistModal says so in the dialog, which can save again.
+            Err(_) => *CREATED.lock().unwrap() = Some((save_no, Err("Failed to create playlist".into()))),
         }
         bump();
     });
 }
 
-static CLOSE_CREATE: LazyLock<Mutex<bool>> = LazyLock::new(Default::default);
+/// Counts the create-playlist saves; the result of save `n` is `CREATED`'s `(n, …)`.
+static CREATE_GEN: AtomicU64 = AtomicU64::new(0);
+static CREATED: LazyLock<Mutex<Option<(u64, Result<(), String>)>>> = LazyLock::new(Default::default);
 
-/// Close the create dialog once its playlist exists (from the poll, which owns the state).
+/// What the create dialog's save came to (from the poll, which owns the state): it closes once
+/// its playlist exists, or says it failed and can save again. Only the latest save's answer
+/// counts, and only while its dialog is still saving.
 pub fn settle_create(s: &mut App) {
-    let mut done = CLOSE_CREATE.lock().unwrap();
-    if *done {
-        *done = false;
-        s.nav.create = None;
-    } else if let Some(c) = &mut s.nav.create
-        && c.saving
-        && TOASTS.lock().unwrap().iter().any(|t| t.msg == "Failed to create playlist")
-    {
-        c.saving = false;
+    let Some((save_no, res)) = CREATED.lock().unwrap().take() else { return };
+    let Some(c) = &mut s.nav.create else { return };
+    if !c.saving || save_no != CREATE_GEN.load(Ordering::Relaxed) {
+        return;
+    }
+    match res {
+        Ok(()) => s.nav.create = None,
+        Err(e) => {
+            c.saving = false;
+            c.error = Some(e);
+        }
+    }
+}
+
+/// CreatePlaylistModal's description limit: an edit past it is refused.
+const DESC_MAX: usize = 500;
+
+/// The description as an edit left it, held to [`DESC_MAX`] characters (the caret at the end).
+fn cap_desc(e: &mut TextEdit) {
+    if e.text.chars().count() > DESC_MAX {
+        let focused = e.focused;
+        *e = TextEdit::new(&e.text.chars().take(DESC_MAX).collect::<String>());
+        e.focused = focused;
     }
 }
 
