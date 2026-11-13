@@ -377,6 +377,8 @@ pub fn flush_settings(s: &mut App) {
         if should_submit_proxy(&p) {
             // submitProxy: a refusal says why in the banner (the settings still reached disk).
             run(async move { utility::set_proxy_settings(st(), p).await.map_err(|e| e.to_string()) }, |f, r| {
+                // Either way the backend dropped the prerolled gapless track: arm it again.
+                crate::controller::send(crate::controller::Cmd::ProxySaved);
                 if let Err(e) = r {
                     f.banner = Banner::Err;
                     f.banner_msg = describe(&e, "Could not apply proxy settings");

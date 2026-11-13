@@ -138,6 +138,9 @@ pub enum Cmd {
     /// Settings → Playback's gapless toggle: saved by the backend, then the prerolled next
     /// track is refreshed for it.
     SetGapless(bool),
+    /// Proxy settings were handed to the backend, which drops the prerolled gapless track
+    /// whatever it made of them: forget it and arm it again (React PROXY_SAVED_EVENT).
+    ProxySaved,
     /// Log out (React useAuth.logout): the backend's logout, then every trace of the account
     /// and its playback is dropped and the sign-in screen shows.
     Logout,
@@ -1190,14 +1193,24 @@ impl Player {
             }
             Cmd::RemoveAt(i) => self.remove_from_queue(i),
             Cmd::ClearQueue => self.clear_queue(),
-            Cmd::SetBitPerfect(on) => self.set_bit_perfect(on).await,
+            // Both modes turn gapless off and on, and the backend drops an armed track when
+            // exclusive turns on: re-arm at once (React's mode subscriptions, no debounce).
+            Cmd::SetBitPerfect(on) => {
+                self.set_bit_perfect(on).await;
+                self.gapless_refresh().await;
+            }
             Cmd::SetExclusive(on) => {
                 if utility::set_exclusive_mode(self.state(), on).is_ok() {
                     self.exclusive = on;
                     if !on && self.bit_perfect {
                         self.set_bit_perfect(false).await;
                     }
+                    self.gapless_refresh().await;
                 }
+            }
+            Cmd::ProxySaved => {
+                self.pending_next = None;
+                self.gapless_refresh().await;
             }
             Cmd::StartDeviceLogin => self.start_device_login().await,
             Cmd::CancelLogin => {
