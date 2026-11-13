@@ -43,7 +43,14 @@ pub fn set_mini(open: bool) {
     OPEN.store(open, Ordering::Relaxed);
     set_shown(open);
     if let Some(w) = WINDOW.get() {
-        if open { w.open() } else { w.close() }
+        // its saved size and place (shell.rs), as React's useMiniplayerWindow keeps them
+        if open {
+            crate::shell::restore_mini(w);
+            w.open()
+        } else {
+            crate::shell::save_mini(w);
+            w.close()
+        }
     }
     controller::bump();
 }
@@ -68,6 +75,9 @@ pub fn attach<S: 'static>(app: &mut rune::App<S>) {
     // Borderless: no compositor edges to resize by on Wayland, so the card has its own grip.
     let options = rune::WindowOptions { borderless: true, always_on_top: true, resizable: true, visible: false, min_size: Some(MIN), max_size: Some(MAX), ..Default::default() };
     let mini = rune::App::new(spec).on_close(|_, _| {
+        if let Some(w) = WINDOW.get() {
+            crate::shell::save_mini(w);
+        }
         OPEN.store(false, Ordering::Relaxed);
         set_shown(false);
         controller::bump(); // the main window's miniplayer button says "Open" again
@@ -165,6 +175,7 @@ fn view(s: &Mini, cx: &mut Cx<Mini>) -> El {
     theme::set_ambient(hue);
     let (w, h) = cx.layout_with("mini-root", |r| (r[2].round(), r[3].round())).unwrap_or(SIZE);
     s.size.set((w, h));
+    crate::shell::note_mini_size((w, h));
     let tier = Tier::of(h);
     let body = if v.current.is_none() && v.video.is_none() {
         empty(tier, w, h)

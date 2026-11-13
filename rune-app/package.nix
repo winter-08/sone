@@ -92,10 +92,12 @@ rustPlatform.buildRustPackage {
       desktopName = "RONE";
       genericName = "TIDAL player";
       comment = "SONE with a native Rune interface";
-      exec = "rone";
+      # %u: a tidal:// link the desktop opens with it (a running instance takes it, shell.rs)
+      exec = "rone %u";
       icon = appId;
       startupWMClass = appId;
       categories = [ "Audio" "AudioVideo" "Player" ];
+      mimeTypes = [ "x-scheme-handler/tidal" ];
     })
   ];
 

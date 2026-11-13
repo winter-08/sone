@@ -1335,11 +1335,17 @@ impl Player {
             }
             "mpris:set-loop-status" => self.prefs.repeat = p.as_u64().unwrap_or(0).min(2) as u8,
             "mpris:set-fullscreen" => crate::full_ui::request(p.as_bool().unwrap_or(false)),
+            // A track link plays here; the other links (album, artist, playlist, mix) open their
+            // page, and before sign-in every link waits (shell.rs, React handleDeepLink).
             "mpris:open-uri" => {
-                if let Some(id) = p.as_str().and_then(|u| u.strip_prefix("tidal://track/")).and_then(|s| s.parse::<u64>().ok()) {
-                    if let Ok(t) = metadata::get_track(self.state(), id).await {
-                        self.play_single(t).await;
+                let url = p.as_str().unwrap_or("").to_string();
+                match crate::shell::track_link(&url).filter(|_| self.signed_in) {
+                    Some(id) => {
+                        if let Ok(t) = metadata::get_track(self.state(), id).await {
+                            self.play_single(t).await;
+                        }
                     }
+                    None => crate::shell::open_link(url),
                 }
             }
             // A video's end advances like a track's; when nothing follows (the same video is still

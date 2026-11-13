@@ -19,9 +19,11 @@ mod hls_relay;
 mod home;
 mod icons;
 mod interact;
+mod keys;
 mod mini;
 mod perf;
 mod queue_ui;
+mod shell;
 mod signal_path;
 mod sources;
 mod theme;
@@ -31,7 +33,7 @@ mod video_ui;
 mod views;
 
 use rune::{AppSpec, Cx, El, Key, KeyEvent, ScrollSpec, Tracked, Tx, col, el, row};
-use sone_host_shim::AppHandle;
+use sone_host_shim::{AppHandle, Listener};
 use std::sync::OnceLock;
 use std::time::Duration;
 use tauri_app_lib as backend;
@@ -106,6 +108,8 @@ fn poll(s: &mut App, t: f64, tx: &mut Tx) -> bool {
     }
     interact::apply_pending(s);
     queue_ui::apply_nav(s);
+    // links waiting for sign-in, the window's place, the full player's idle inhibit
+    shell::tick(s);
     data::nudge_due_retries();
     // (Hover intent, the players' control fades and the lyric line only draw: off screen they
     // wait, and catch up on the poll that showing the window runs.)
@@ -228,16 +232,13 @@ fn clear_line(line: &mut Tracked<Option<usize>>) -> bool {
 fn on_key(s: &mut App, e: &KeyEvent, tx: &mut Tx) -> bool {
     // any key brings the full player's controls back
     full_ui::wake(s);
+    // the Keyboard Shortcuts dialog waiting for a new key takes every key, Escape included
+    if keys::editing().is_some() && keys::on_key(s, e, tx) {
+        return true;
+    }
     // a context menu is the top Escape layer (React dismissStack), then the full-screen or
     // the video player (never open together)
     if matches!(e.key, Key::Escape) && (interact::on_escape(s) || full_ui::on_escape(s) || video_ui::on_escape(s, tx)) {
-        return true;
-    }
-    // "/" (outside a text field) and Ctrl+K focus the search bar
-    let typing = s.nav.search.focused || s.nav.filter.focused;
-    if (!typing && !e.mods.cmd && !e.mods.alt && matches!(&e.key, Key::Text(t) if t == "/")) || e.is_command('k') {
-        s.nav.search.focused = true;
-        s.nav.search_open = !s.nav.search.text.trim().is_empty();
         return true;
     }
     if matches!(e.key, Key::Escape) && (s.nav.menu_open || s.nav.settings_open) {
@@ -249,18 +250,8 @@ fn on_key(s: &mut App, e: &KeyEvent, tx: &mut Tx) -> bool {
         *s.nav.drawer = None;
         return true;
     }
-    if e.mods.cmd || e.mods.ctrl || e.mods.alt || s.nav.search.focused || s.nav.filter.focused {
-        return false;
-    }
-    match &e.key {
-        Key::Text(t) if t == " " => {
-            fx::key_toggled();
-            controller::send(controller::Cmd::TogglePlay)
-        }
-        Key::Text(t) if s.nav.full.open && t.eq_ignore_ascii_case("l") => full_ui::toggle_lyrics(s),
-        _ => return false,
-    }
-    true
+    // the bound shortcuts (keys.rs): Space, Ctrl+K, Alt+S, … as the user set them
+    keys::on_key(s, e, tx)
 }
 
 /// The window went off screen (minimised, hidden or covered whole) or came back. Off screen,
@@ -305,6 +296,8 @@ fn pane(id: &str, inputs: impl std::hash::Hash, build: impl FnOnce() -> El) -> E
 
 fn view(s: &App, cx: &mut Cx<App>) -> El {
     perf::view_ran();
+    // the UI zoom (Ctrl+= / Ctrl+-), and the window's size for the next start
+    let win_size = shell::view(cx);
     art::set_scale(cx.env().scale);
     let v = controller::view();
     // What the panes read besides `App`'s `Tracked` fields, read once for this build and given
@@ -321,11 +314,11 @@ fn view(s: &App, cx: &mut Cx<App>) -> El {
     // Until the saved sign-in has been checked (about 0.6 s, the keyring among it), neither the
     // login screen nor the shell: a signed-in launch went through the login screen first.
     if !v.auth_known {
-        return views::splash();
+        return shell::frame(views::splash(), win_size);
     }
     // Shell data (Home, folders, ...) is loaded by the controller once signed in.
     if !v.signed_in {
-        return views::login(s, &v);
+        return shell::frame(views::login(s, &v), win_size);
     }
     // The panes are regions: each builds again only when something it read changed (a `Tracked`
     // field of `App`), or its inputs did (the window's width bands, the stores outside `App`).
@@ -396,15 +389,14 @@ fn view(s: &App, cx: &mut Cx<App>) -> El {
         });
     }
     let _ = row;
-    root
+    // the title bar above, a frameless window's resize edges (shell.rs)
+    shell::frame(root, win_size)
 }
 
-/// The window's first size.  overrides it (the verifier uses a tall one).
+/// The window's first size: SONE_WINDOW_SIZE (the verifier uses a tall one), else the size it
+/// had when it last closed.
 fn initial_size() -> (f32, f32) {
-    std::env::var("SONE_WINDOW_SIZE").ok().and_then(|v| {
-        let (w, h) = v.split_once('x')?;
-        Some((w.parse().ok()?, h.parse().ok()?))
-    }).unwrap_or((1280.0, 800.0))
+    shell::initial_size()
 }
 
 const FONTS: &[&[u8]] = &[include_bytes!("../assets/Inter-Regular.ttf"), include_bytes!("../assets/Inter-Medium.ttf"), include_bytes!("../assets/Inter-SemiBold.ttf")];
@@ -416,6 +408,13 @@ pub const TITLE: &str = match option_env!("SONE_RUNE_TITLE") {
 };
 
 fn main() {
+    // One process per user, as Tauri's single-instance plugin kept it: a second launch hands its
+    // `tidal://` link (or, without one, a reopen) to the running app, which raises its window,
+    // and ends here before it starts a backend of its own.
+    let app_id = option_env!("SONE_RUNE_APP_ID").unwrap_or("sone-rune");
+    if !rune::single_instance(app_id) {
+        return;
+    }
     // The backend's own logger (file + stderr, honouring logging.toggle).
     let sone_dir = backend::config_dir_for_env().unwrap_or_else(|| std::path::PathBuf::from("./.sone"));
     let logging_enabled = backend::logging::read_logging_preference(&sone_dir.join("logging.toggle"));
@@ -440,12 +439,27 @@ fn main() {
         ..AppSpec::new(TITLE, initial_size(), App::new, view)
     };
     // Matches the desktop entry package.nix installs, so the desktop shows its name and icon.
-    rune::set_app_id(option_env!("SONE_RUNE_APP_ID").unwrap_or("sone-rune"));
+    rune::set_app_id(app_id);
     // Rune now ends the process at once when the app quits, skipping everything after `run`;
     // the queue flush below and the logger's final flush (dropping `_logger`) need the
     // orderly teardown.
     rune::orderly_exit();
-    let mut app = rune::App::new(spec).on_visibility(on_visibility);
+    // The window shell (shell.rs): the frame the title bar mode asks for and the saved place;
+    // closing hides to the tray when Close to tray is on (keep_running), else quits; links and
+    // second launches raise the window.
+    let mut app = rune::App::new(spec)
+        .on_visibility(on_visibility)
+        .window_options(shell::window_options())
+        .keep_running()
+        .on_close(shell::on_close)
+        .on_quit(shell::on_quit)
+        .on_reopen(shell::on_reopen)
+        .on_open_url(shell::on_open_url)
+        .on_focus(shell::on_focus)
+        .on_window(shell::on_window);
+    shell::set_app_handle(app.handle());
+    // The tray's Show and MPRIS Raise (the backend's restore_window, which has no window here).
+    handle.listen("window:raise", |_| shell::raise());
     // Frame counts for SONE_PERF.
     if perf::on() {
         app = app.on_frame_encoded(perf::frame);
@@ -455,10 +469,12 @@ fn main() {
     // A queue change still inside its save debounce is written on the way out (§1.5).
     handle.on_exit(|code| {
         controller::flush_snapshot();
+        shell::on_exit();
         std::process::exit(code)
     });
     app.run();
     controller::flush_snapshot();
+    shell::on_exit();
 }
 
 #[cfg(test)]

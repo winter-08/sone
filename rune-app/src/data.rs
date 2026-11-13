@@ -192,6 +192,12 @@ pub fn forget(key: &Key) {
     VERSION.fetch_add(1, Ordering::Relaxed);
 }
 
+/// Forget every cached entry, so everything shown is fetched again (Refresh app data).
+pub fn clear() {
+    CACHE.lock().unwrap().clear();
+    VERSION.fetch_add(1, Ordering::Relaxed);
+}
+
 pub fn user_id() -> u64 {
     crate::host().state::<AppState>().load_settings().and_then(|s| s.auth_tokens).and_then(|t| t.user_id).unwrap_or(0)
 }

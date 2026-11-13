@@ -478,13 +478,7 @@ impl Shell {
     }
 }
 
-pub fn window_buttons() -> El {
-    row()
-        .gap(2.0)
-        .child(ui::icon_button::<App>("win-min", "Minimize", G::Minus, 14.0, white(0.6)).on_press_tx(|_: &mut App, tx: &mut Tx| tx.minimize()))
-        .child(ui::icon_button::<App>("win-max", "Maximize", G::Square, 12.0, white(0.6)).on_press_tx(|_: &mut App, tx: &mut Tx| tx.toggle_maximized()))
-        .child(ui::icon_button::<App>("win-close", "Close", G::Close, 14.0, white(0.6)).on_press_tx(|_: &mut App, tx: &mut Tx| tx.close_window()))
-}
+// (The window buttons are the title bar's: shell::title_bar.)
 
 pub fn header(s: &App) -> El {
     let field = text_input(&s.nav.search, t(14.0, 500.0).lh(20.0))
@@ -549,7 +543,6 @@ pub fn header(s: &App) -> El {
                 data::want(Key::Profile);
             }
         }))
-        .child(window_buttons())
 }
 
 /// The suggestions dropdown under the search field while typing (React SearchBar).
@@ -639,7 +632,11 @@ fn pick(s: &mut App, e: Entry) {
 /// highlighted (or first) suggestion, Enter opens the highlighted entry (or searches, through
 /// `on_submit`), Escape closes the dropdown (SearchBar.tsx has Enter and Escape; arrows and Tab
 /// go further).
-fn search_key(s: &mut App, ev: &rune::KeyEvent, _tx: &mut Tx) -> bool {
+fn search_key(s: &mut App, ev: &rune::KeyEvent, tx: &mut Tx) -> bool {
+    // bound Ctrl and Alt shortcuts run from the search field too (keys.rs)
+    if crate::keys::field_key(s, ev, tx) {
+        return true;
+    }
     let q = s.nav.search.text.trim().to_string();
     let entries = if s.nav.search_open && !q.is_empty() { dropdown_entries(&q) } else { vec![] };
     match &ev.key {
@@ -773,7 +770,7 @@ pub fn sidebar(s: &App, w: f32) -> El {
     let nav_btn = |key: &str, label: &str, g: G, page: Page| {
         let on = s.nav.page == page;
         theme::focusable_row(row().key(key.to_string()).role("button").label(label)).h(40.0).px(12.0).gap(12.0).radius(10.0).items_center()
-            .fill(if on { white(0.08) } else { white(0.0) }).hover(white(0.06)).cursor(rune::Cursor::Pointer)
+            .fill(if on { white(0.08) } else { white(0.0) }).hover(white(0.06)).cursor(rune::Cursor::Pointer).help(label)
             .on_press(move |s: &mut App| go(s, page.clone()))
             .child(glyph(g, 18.0, white(if on { 0.95 } else { 0.7 })))
             .child(text(label.to_string()).font(t(14.0, 600.0)).color(white(if on { 0.95 } else { 0.75 })).a11y_hidden())
@@ -849,7 +846,7 @@ pub(crate) fn loved_art(size: f32, radius: f32, heart: f32) -> El {
 
 fn lib_row(key: &str, label: &str, title: &str, sub: &str, seed: u64, img: Option<String>, menu: Option<Value>, page: Option<Page>) -> El {
     let art = if key == "lib-loved" { loved_art(40.0, 6.0, 15.0) } else { ui::with_image(ui::tile(ui::hue(Some(seed)), 40.0, seed, 6.0), img, 40.0, 6.0) };
-    let mut r = theme::focusable_row(row().key(key.to_string()).role("button").label(label)).w_full().h(52.0).px(8.0).gap(10.0).radius(8.0).items_center().hover(white(0.06)).cursor(rune::Cursor::Pointer)
+    let mut r = theme::focusable_row(row().key(key.to_string()).role("button").label(label)).w_full().h(52.0).px(8.0).gap(10.0).radius(8.0).items_center().hover(white(0.06)).cursor(rune::Cursor::Pointer).help(title)
         .child(art)
         .child(col().min_w(0.0).a11y_hidden().child(text(title.to_string()).font(t(13.0, 600.0)).color(white(0.92)).truncate()).child(text(sub.to_string()).font(t(11.0, 400.0)).color(white(0.55)).truncate()));
     if let Some(p) = page {
@@ -1492,22 +1489,8 @@ pub(crate) fn open_url(url: &str) {
 pub fn dialog(s: &App) -> Option<El> {
     let d = s.nav.dialog?;
     let (head, body) = match d {
-        Dialog::Shortcuts => {
-            let mut rows = col().w_full().gap(2.0);
-            for (label, keys) in [("Play / Pause", "Space"), ("Next track", "Ctrl+Right"), ("Previous track", "Ctrl+Left"), ("Volume up", "Ctrl+Up"),
-                ("Volume down", "Ctrl+Down"), ("Mute / Unmute", "Ctrl+M"), ("Like / Unlike current track", "Ctrl+L"), ("Shuffle on / off", "Ctrl+S"),
-                ("Repeat off / all / one", "Ctrl+R"), ("Focus search bar", "Ctrl+K"), ("Refresh app data", "Ctrl+Shift+R"), ("Zoom in", "Ctrl+="),
-                ("Zoom out", "Ctrl+-"), ("Reset zoom to 100%", "Ctrl+0"), ("Toggle exclusive output", "Ctrl+E"), ("Toggle bit-perfect mode", "Ctrl+B"),
-                ("Show keyboard shortcuts", "Ctrl+/"), ("Close window", "Ctrl+W"), ("Quit SONE", "Ctrl+Q")] {
-                rows = rows.child(row().w_full().h(30.0).items_center()
-                    .child(text(label.to_string()).font(t(13.0, 500.0)).color(white(0.85)))
-                    .child(spacer())
-                    .child(text(keys.to_string()).font(t(12.0, 600.0)).color(white(0.6))));
-            }
-            (Some(ui::dialog_title("Keyboard Shortcuts")), col().w_full().gap(14.0)
-                .child(rows)
-                .child(button::<App>("sc-restore", "Restore defaults", None, false)))
-        }
+        // The bindings in force, rebindable (keys.rs).
+        Dialog::Shortcuts => (Some(ui::dialog_title("Keyboard Shortcuts")), crate::keys::dialog_body()),
         Dialog::Bio(id) => {
             let p = data::ready(Key::Artist(id))?;
             let a = data::data(&p["item"]);
@@ -1540,7 +1523,10 @@ pub fn dialog(s: &App) -> Option<El> {
     };
     let label = match d { Dialog::Shortcuts => "Keyboard shortcuts", Dialog::About => "About SONE", Dialog::Bio(_) => "Biography" };
     let w = if matches!(d, Dialog::Bio(_)) { 640.0 } else { 520.0 };
-    Some(ui::dialog_frame("dialog-layer", "dialog", label, ("dialog-close", "Close dialog"), w, None, head, body, |s: &mut App| s.nav.dialog = None))
+    Some(ui::dialog_frame("dialog-layer", "dialog", label, ("dialog-close", "Close dialog"), w, None, head, body, |s: &mut App| {
+        s.nav.dialog = None;
+        crate::keys::stop_editing();
+    }))
 }
 
 /// The settings modal, when open.
@@ -2133,10 +2119,10 @@ fn wordmark() -> El {
     row().items_end().child(text(&crate::TITLE[..1]).font(t(56.0, 700.0)).color(white(0.95)).a11y_hidden()).child(heading(&crate::TITLE[1..], 56.0))
 }
 
-/// The sign-in screen's window: its background and window buttons, `c` centred.
+/// The sign-in screen's window: its background, `c` centred (the window buttons are the title
+/// bar's, shell.rs).
 fn login_frame(c: El) -> El {
     col().key("login-root").w_full().h_full().fill(ui::base(270.0))
-        .child(row().w_full().px(12.0).py(8.0).child(spacer()).child(window_buttons()))
         .child(col().grow(1.0).w_full().items_center().justify_center().child(c))
 }
 
