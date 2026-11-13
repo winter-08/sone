@@ -474,6 +474,7 @@ pub fn tick(s: &mut App) {
     let want = s.nav.full.open;
     if want != INHIBITED.load(Ordering::Relaxed) {
         INHIBITED.store(want, Ordering::Relaxed);
+        crate::mini::hide_for_full(want);
         sone_host_shim::async_runtime::spawn(async move {
             let st = crate::host().state::<AppState>();
             let mut inhibitor = st.idle_inhibitor.lock().await;

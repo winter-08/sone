@@ -55,6 +55,19 @@ pub fn set_mini(open: bool) {
     controller::bump();
 }
 
+/// While the full-screen player is up, an open miniplayer steps out of the way (hidden, still
+/// open) and comes back after, as React's MaximizedPlayer hides it to avoid the always-on-top
+/// clash.
+pub fn hide_for_full(hidden: bool) {
+    if !mini_open() {
+        return;
+    }
+    if let Some(w) = WINDOW.get() {
+        if hidden { w.hide() } else { w.show() }
+    }
+    set_shown(!hidden);
+}
+
 /// Whether the miniplayer is on screen: its tick runs, and it keeps the controller's position
 /// poll going while the main window is away.
 fn set_shown(shown: bool) {
@@ -368,7 +381,11 @@ fn empty(tier: Tier, w: f32, h: f32) -> El {
 fn link(e: El, key: &str, label: String, page: Option<crate::views::Page>) -> El {
     let Some(page) = page else { return e };
     theme::focusable(el().key(key.to_string()).role("link").label(label)).shrink().min_w(0.0).radius(3.0).hover_group().cursor(rune::Cursor::Pointer)
-        .on_press(move |_: &mut Mini| crate::queue_ui::request_nav(Some(page.clone())))
+        .on_press(move |_: &mut Mini| {
+            crate::queue_ui::request_nav(Some(page.clone()));
+            // the page opens in the main window: bring it forward (from the tray too)
+            crate::shell::raise();
+        })
         .child(e.group_color(white(1.0)).a11y_hidden())
 }
 
