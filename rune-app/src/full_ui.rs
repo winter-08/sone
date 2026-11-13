@@ -75,7 +75,7 @@ pub fn request(on: bool) {
 pub fn open(s: &mut App) {
     let f = &mut s.nav.full;
     f.open = true;
-    f.lyrics = false;
+    // (the lyrics column stays as it was left: React's maximizedLyricsAtom outlives the player)
     f.lyric_line = None;
     f.opened_on = controller::now_playing().0;
     f.pop = None;
