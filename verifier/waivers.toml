@@ -14,6 +14,9 @@ allow = [
   # the album header's artist: a clickable span in the reference (TrackArtists), not exposed;
   # the candidate makes it a keyboard-reachable link to the artist's page
   "link: Fixture Artist",
+  # a toast's close button is unnamed in the reference (ToastContext's X); the launch's legacy
+  # sign-in toast (consume_legacy_auth_notice) shows one in both at start-up
+  "button: Dismiss",
 ]
 
 [modal_overlays]
