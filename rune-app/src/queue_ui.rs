@@ -57,8 +57,7 @@ pub fn navigable(s: &Source) -> bool {
     matches!(s.kind.as_str(), "album" | "playlist" | "playlist-recs" | "mix" | "artist" | "artist-tracks" | "favorites" | "radio")
 }
 
-/// navigateToSource: the source's page. An artist's track list (React ArtistTracksPage) has no
-/// page here yet, so it opens the artist.
+/// navigateToSource: the source's page.
 pub fn open_source(s: &mut App, src: &Source) {
     if let Some(p) = source_page(src) {
         views::go(s, p);
@@ -90,7 +89,8 @@ pub fn source_page(src: &Source) -> Option<Page> {
         "playlist" | "playlist-recs" => Some(Page::Playlist(src.id.clone())),
         "mix" => Some(Page::Mix(src.id.clone(), src.name.clone(), src.subtitle.clone().unwrap_or_default())),
         "radio" => Some(Page::Mix(src.id.clone(), src.name.clone(), String::new())),
-        "artist" | "artist-tracks" => src.id.parse().ok().map(Page::Artist),
+        "artist" => src.id.parse().ok().map(Page::Artist),
+        "artist-tracks" => src.id.parse().ok().map(|id| Page::ArtistTracks(id, src.name.clone())),
         "favorites" => Some(Page::Loved),
         _ => None,
     }

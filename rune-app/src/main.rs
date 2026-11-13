@@ -9,6 +9,7 @@
 mod art;
 mod bio;
 mod content;
+mod coll;
 mod controller;
 mod data;
 mod drawer_tabs;
@@ -21,7 +22,10 @@ mod icons;
 mod interact;
 mod keys;
 mod login;
+mod library;
+mod loved;
 mod mini;
+mod paged;
 mod perf;
 mod profile;
 mod queue_ui;
@@ -29,11 +33,13 @@ mod settings;
 mod shell;
 mod signal_path;
 mod sources;
+mod playlist;
 mod theme;
 mod ui;
 mod video;
 mod video_ui;
 mod views;
+mod viewall;
 
 use rune::{AppSpec, Cx, El, Key, KeyEvent, ScrollSpec, Tracked, Tx, col, el, row};
 use sone_host_shim::{AppHandle, Listener};
@@ -113,6 +119,7 @@ fn poll(s: &mut App, t: f64, tx: &mut Tx) -> bool {
     queue_ui::apply_nav(s);
     // links waiting for sign-in, the window's place, the full player's idle inhibit
     shell::tick(s);
+    coll::poll(s);
     data::nudge_due_retries();
     // (Hover intent, the players' control fades and the lyric line only draw: off screen they
     // wait, and catch up on the poll that showing the window runs.)
@@ -241,7 +248,7 @@ fn on_key(s: &mut App, e: &KeyEvent, tx: &mut Tx) -> bool {
     }
     // a context menu is the top Escape layer (React dismissStack), then the full-screen or
     // the video player (never open together)
-    if matches!(e.key, Key::Escape) && (interact::on_escape(s) || full_ui::on_escape(s) || video_ui::on_escape(s, tx)) {
+    if matches!(e.key, Key::Escape) && (interact::on_escape(s) || coll::on_escape(s) || full_ui::on_escape(s) || video_ui::on_escape(s, tx)) {
         return true;
     }
     // a dialog over Settings, the profile editor or the sign-in help closes before what's under it
@@ -346,7 +353,9 @@ fn view(s: &App, cx: &mut Cx<App>) -> El {
         content = content.child(pane("drawer", (shell_in, stores), || views::drawer(s, &s.ctl, shell).unwrap_or_else(el)));
     }
     let main = col().grow(1.0).min_w(0.0).h_full().child(header).child(content);
-    let sidebar = pane("sidebar", (shell.sidebar_w.to_bits(), stores), || views::sidebar(s, shell.sidebar_w));
+    // "Your Library" collapses the sidebar to its icons (React's 60 px sidebar).
+    let sidebar_w = if Tracked::untracked(&s.nav.coll.ui).collapsed { views::SIDEBAR_COLLAPSED } else { shell.sidebar_w };
+    let sidebar = pane("sidebar", (sidebar_w.to_bits(), stores), || views::sidebar(s, sidebar_w));
     let body = row().grow(1.0).min_h(0.0).w_full().child(sidebar).child(main);
     // The player bar centres its transport from the window's width and its extras' width.
     let win_w = cx.layout_with("root", |r| r[2].round()).unwrap_or(initial_size().0);
@@ -382,6 +391,9 @@ fn view(s: &App, cx: &mut Cx<App>) -> El {
     // (the quality badge's panel opens from the bar and from the full-screen player, over both)
     if let Some(p) = signal_path::overlay(&v) {
         root = root.child(p);
+    }
+    for o in coll::overlay(s) {
+        root = root.child(o);
     }
     for o in interact::overlay(s) {
         root = root.child(o);

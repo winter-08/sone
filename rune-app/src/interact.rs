@@ -425,7 +425,8 @@ pub enum Anchor {
 pub enum Sub {
     /// Beside the menu's "Add to playlist" item, or (`below`) under a track row's "+" button.
     AddToPlaylist { ids: Vec<u64>, all: bool, query: TextEdit, anchor: String, below: bool },
-    MoveToFolder { uuid: String, label: String },
+    /// Move to folder (library.rs): `all` shows every folder, found by `query`.
+    MoveToFolder { uuid: String, label: String, all: bool, query: TextEdit },
 }
 
 #[derive(Clone, Debug)]
@@ -636,8 +637,8 @@ pub fn overlay(s: &App) -> Vec<El> {
             .on_press(|s: &mut App| close(s)).on_secondary_press(|s: &mut App, _, _| close(s));
         let mut push = |e: El| layer = std::mem::replace(&mut layer, el()).child(e);
         let (menu, sub) = match &c.target {
-            Target::Track { track, playlist } => (track_menu(track, playlist.as_ref(), c), track_sub(c)),
-            Target::Media { item, kind } => (media_menu(item, *kind, c), track_sub(c)),
+            Target::Track { track, playlist } => (track_menu(track, playlist.as_ref(), c), track_sub(s, c)),
+            Target::Media { item, kind } => (media_menu(item, *kind, c), track_sub(s, c)),
         };
         if c.menu {
             match &c.anchor {
@@ -893,7 +894,8 @@ async fn media_track_ids(item: &Value, kind: Media) -> Option<Vec<u64>> {
     let d = data::data(item);
     let v = match kind {
         Media::Album => data::get(Key::Album(d["id"].as_u64()?)).await.ok().map(|p| ids_in(&p["page"]["tracks"])),
-        Media::Playlist => data::get(Key::Playlist(d["uuid"].as_str()?.to_string())).await.ok().map(|p| ids_in(&p["tracks"]["items"])),
+        // Every page of it (getPlaylistTracks), not the first hundred.
+        Media::Playlist => crate::paged::fetch_all(&crate::paged::PKey::Playlist { uuid: d["uuid"].as_str()?.to_string(), order: None, dir: None }).await.ok().map(|items| ids_in(&Value::Array(items))),
         Media::Artist => data::get(Key::ArtistTopTracks(d["id"].as_u64()?)).await.ok().map(|p| {
             let a = ids_in(&p["items"]);
             if a.is_empty() { ids_in(&p) } else { a }
@@ -913,10 +915,10 @@ async fn media_track_ids(item: &Value, kind: Media) -> Option<Vec<u64>> {
 
 static RECENT: LazyLock<Mutex<Vec<String>>> = LazyLock::new(Default::default);
 
-fn track_sub(c: &Ctx) -> Option<El> {
+fn track_sub(s: &App, c: &Ctx) -> Option<El> {
     let sub = match c.sub.as_ref()? {
         Sub::AddToPlaylist { ids, all, query, anchor, below } => add_menu(ids, *all, query, anchor, *below),
-        Sub::MoveToFolder { uuid, label } => folder_menu(uuid, label),
+        Sub::MoveToFolder { uuid, label, all, query } => crate::library::move_menu(s, uuid, label, *all, query, "ctx-move"),
     };
     // reaching the submenu keeps it open
     Some(sub.on_hover_change(|s: &mut App, inside, _| {
@@ -941,7 +943,7 @@ fn open_sub(s: &mut App, which: Which) {
             });
         }
         (Which::Move, Target::Media { item, kind: Media::Playlist }) => {
-            c.sub = Some(Sub::MoveToFolder { uuid: data::data(&item)["uuid"].as_str().unwrap_or("").to_string(), label: data::name(&item) });
+            c.sub = Some(Sub::MoveToFolder { uuid: data::data(&item)["uuid"].as_str().unwrap_or("").to_string(), label: data::name(&item), all: false, query: TextEdit::new("") });
         }
         _ => {}
     }
@@ -1122,52 +1124,6 @@ fn add_to_playlist(uuid: String, label: String, ids: Vec<u64>, again: Option<usi
     });
 }
 
-fn folder_menu(uuid: &str, label: &str) -> El {
-    let mut m = panel("ctx-sub", 320.0).anchored("ctx-move", Side::Right, rune::Align::Start, 6.0);
-    let folders: Vec<Value> = data::peek(&Key::Folders).map(|v| v["items"].as_array().cloned().unwrap_or_default()).unwrap_or_default()
-        .into_iter().filter(|f| data::kind(f) == "FOLDER" || data::data(f)["itemType"].as_str() == Some("FOLDER")).collect();
-    for (i, f) in folders.iter().enumerate() {
-        let d = data::data(f);
-        let (fid, fname) = (d["id"].as_str().unwrap_or("").to_string(), d["name"].as_str().unwrap_or("").to_string());
-        let (u, l, n2) = (uuid.to_string(), label.to_string(), fname.clone());
-        m = m.child(theme::focusable_row(row().key(format!("mtf-{i}")).role("button").label(fname.as_str())).w_full().radius(MENU_ROW_R).px(14.0).h(38.0).gap(10.0).items_center().hover(white(0.06)).cursor(rune::Cursor::Pointer)
-            .on_press(move |s: &mut App| {
-                close(s);
-                move_to_folder(u.clone(), l.clone(), fid.clone(), n2.clone());
-            })
-            .child(glyph(G::FolderOpen, 16.0, white(0.6)))
-            .child(text(fname).font(t(14.0, 500.0)).color(white(0.85)).truncate().a11y_hidden()));
-    }
-    if folders.is_empty() {
-        m = m.child(ui::empty("No folders yet").px(14.0).py(10.0));
-    }
-    let (u, l) = (uuid.to_string(), label.to_string());
-    m.child(sep()).child(theme::focusable_row(row().key("mtf-root").role("button").label("Playlists")).w_full().radius(MENU_ROW_R).px(14.0).h(38.0).gap(10.0).items_center().hover(white(0.06)).cursor(rune::Cursor::Pointer)
-        .on_press(move |s: &mut App| {
-            close(s);
-            move_to_folder(u.clone(), l.clone(), "root".into(), String::new());
-        })
-        .child(glyph(G::FolderInput, 16.0, white(0.6)))
-        .child(text("Playlists").font(t(14.0, 500.0)).color(white(0.85)).a11y_hidden()))
-}
-
-fn move_to_folder(uuid: String, label: String, folder: String, folder_name: String) {
-    sone_host_shim::async_runtime::spawn(async move {
-        let trn = format!("trn:playlist:{uuid}");
-        match library::move_playlist_to_folder(state(), folder.clone(), trn).await {
-            Ok(()) => {
-                data::forget(&Key::Folders);
-                let l = clip(&label, 28);
-                toast(if folder == "root" { format!("Moved \"{l}\" to Playlists") } else { format!("Moved \"{l}\" to \"{folder_name}\"") }, Kind::Success);
-            }
-            Err(e) => {
-                log::warn!("[interact] move to folder: {e}");
-                toast("Failed to move playlist".into(), Kind::Error);
-            }
-        }
-    });
-}
-
 // ------------------------------------------------------------------ dialogs
 
 /// A dialog titled `title` (also its accessible name), in the app's one dialog frame.
@@ -1244,7 +1200,11 @@ fn save_playlist(s: &mut App) {
             Ok(p) => {
                 let uuid = serde_json::to_value(&p).ok().and_then(|v| data::data(&v)["uuid"].as_str().map(str::to_string)).unwrap_or_default();
                 if !ids.is_empty() && !uuid.is_empty() {
-                    let _ = library::add_tracks_to_playlist(state(), uuid, ids, tauri_app_lib::tidal_api::OnDupes::Add).await;
+                    let _ = library::add_tracks_to_playlist(state(), uuid.clone(), ids, tauri_app_lib::tidal_api::OnDupes::Add).await;
+                }
+                // Made from a folder's menu: into that folder (library.rs).
+                if !uuid.is_empty() {
+                    crate::library::created_playlist(uuid);
                 }
                 data::forget(&Key::Folders);
                 data::forget(&Key::AllPlaylists);

@@ -123,7 +123,7 @@ pub fn home(s: &App) -> El {
     c
 }
 
-fn section(si: usize, sec: &Value, w: f32) -> Option<El> {
+pub(crate) fn section(si: usize, sec: &Value, w: f32) -> Option<El> {
     let items = sec["items"].as_array().cloned().unwrap_or_default();
     if items.is_empty() {
         return None;
@@ -135,15 +135,31 @@ fn section(si: usize, sec: &Value, w: f32) -> Option<El> {
     }
     let view_all = sec["apiPath"].as_str().filter(|p| !p.is_empty() && sec["hasMore"].as_bool() != Some(false)).map(str::to_string);
     if kind == "COMPACT_GRID_CARD" || title == "Recently played" {
-        return Some(col().w_full().gap(14.0).child(header(si, &title, view_all, false)).child(compact_grid(si, &title, &items, w)));
+        return Some(col().w_full().gap(14.0).child(header(si, &title, sec.get("header").filter(|h| h.is_object()), view_all, false)).child(compact_grid(si, &title, &items, w)));
     }
     let cards = card_row(si, &title, &items, w)?;
-    Some(col().w_full().gap(14.0).child(header(si, &title, view_all, true)).child(cards))
+    Some(col().w_full().gap(14.0).child(header(si, &title, sec.get("header").filter(|h| h.is_object()), view_all, true)).child(cards))
 }
 
-fn header(si: usize, title: &str, view_all: Option<String>, arrows: bool) -> El {
+fn header(si: usize, title: &str, ctx: Option<&Value>, view_all: Option<String>, arrows: bool) -> El {
     let mut r = row().w_full().items_center().gap(8.0);
-    if !title.is_empty() {
+    if let Some(it) = ctx {
+        // A row based on an item ("Because you liked …"): its picture, the section's title small,
+        // the item's name big; it opens the item (a track, its album).
+        let it2 = it.clone();
+        let name = data::name(it);
+        let d = data::data(it);
+        let target = if data::kind(it) == "TRACK" { d["album"]["id"].as_u64().map(Page::Album) } else { views::item_page(it) };
+        let mut c = theme::focusable_row(row().key(format!("home-ctx-{si}")).role("button").label(format!("{title} {name}").as_str())).gap(12.0).items_center().min_w(0.0).shrink().cursor(rune::Cursor::Pointer)
+            .child(thumb(&it2, 48.0, 4.0))
+            .child(col().min_w(0.0).a11y_hidden()
+                .child(text(title.to_string()).font(t(13.0, 400.0)).color(white(0.55)).truncate())
+                .child(text(name).font(t(theme::SECTION, 700.0)).color(white(0.95)).truncate()));
+        if let Some(p) = target {
+            c = c.on_press(move |s: &mut App| go(s, p.clone()));
+        }
+        r = r.child(c);
+    } else if !title.is_empty() {
         r = r.child(views::heading(title, theme::SECTION));
     }
     r = r.child(spacer());
@@ -177,7 +193,8 @@ fn header(si: usize, title: &str, view_all: Option<String>, arrows: bool) -> El 
         let t2 = title.to_string();
         r = r.child(theme::focusable(row().key(format!("home-viewall-{si}")).role("button").label("View all")).h(30.0).px(12.0).radius(15.0).items_center()
             .hover(white(0.06)).cursor(rune::Cursor::Pointer)
-            .on_press(move |s: &mut App| go(s, Page::ExploreSub(path.clone(), t2.clone())))
+            // HomeSection: navigateToViewAll, the section's whole list in one grid.
+            .on_press(move |s: &mut App| go(s, Page::ViewAll(t2.clone(), path.clone(), None)))
             .child(text("View all").font(t(13.0, 700.0)).color(white(0.6)).a11y_hidden()));
     }
     r
@@ -224,7 +241,7 @@ fn shortcuts(items: &[Value], w: f32) -> El {
     };
     let mut grid = row().w_full().gap(gap).flex_wrap()
         .child(tile("home-sc-loved".into(), "Loved Tracks".into(), views::loved_art(56.0, 0.0, 22.0)).on_press(|s: &mut App| go(s, Page::Loved)));
-    for (i, it) in items.iter().filter(|it| data::kind(it) != "TASK").take(7).enumerate() {
+    for (i, it) in items.iter().filter(|it| data::kind(it) != "TASK" && !is_my_tracks(it)).take(7).enumerate() {
         let it2 = it.clone();
         let mut t = tile(format!("home-sc-{i}"), data::name(it), thumb(it, 56.0, 0.0)).on_press(move |s: &mut App| open_item(s, &it2));
         if interact::Media::of(it).is_some() {
@@ -332,6 +349,14 @@ fn card_row(si: usize, title: &str, items: &[Value], w: f32) -> Option<El> {
             // HomeSection plays a video card alone (useMediaPlay: playSingle), not the row's videos
             let d = data::data(it).clone();
             Some(crate::video_ui::video_card(ck, &d, std::slice::from_ref(&d), 0, Value::Null))
+        } else if is_my_tracks(it) {
+            // My Tracks shows as Loved Tracks (HomeSection's myTracks card).
+            let a = cw - 16.0;
+            Some(theme::focusable_row(col().key(ck).role("presentation")).w(cw).padding(8.0).gap(6.0).radius(12.0).hover(white(0.06)).cursor(rune::Cursor::Pointer)
+                .on_press(|s: &mut App| go(s, Page::Loved))
+                .child(views::loved_art(a, 10.0, 40.0))
+                .child(views::heading("Loved Tracks", 13.0).truncate())
+                .child(text("Collection").font(t(11.0, 400.0)).color(white(0.55))))
         } else {
             views::item_page(it).map(|page| {
                 let seed = data::data(it)["id"].as_u64().unwrap_or(i as u64 + 1);
@@ -400,11 +425,13 @@ fn promo_card(key: String, it: &Value, cw: f32) -> Option<El> {
     if let Some(px) = url.and_then(|u| crate::art::pixels(&u, a)) {
         art = art.child(el().absolute(0.0, 0.0).size(a, h).pixels_fit(&px, rune::SurfaceFit::Fill));
     }
-    let header = d["header"].as_str().unwrap_or("").to_string();
+    // The eyebrow (the long header, in the accent) only when the card's title is the short one;
+    // otherwise the header is the title (MediaCard).
+    let header = d["shortHeader"].as_str().and(d["header"].as_str()).unwrap_or("").to_string();
     Some(theme::focusable_row(col().key(key).role("presentation")).w(cw).padding(8.0).gap(6.0).radius(12.0).hover(white(0.06)).cursor(rune::Cursor::Pointer)
         .on_press(move |s: &mut App| open(s))
         .child(art)
-        .child(text(header).font(t(10.0, 700.0).tracking(0.6)).color(white(0.5)).truncate())
+        .child(if header.is_empty() { el() } else { text(header).font(t(10.0, 700.0).tracking(0.6)).color(theme::accent()).truncate() })
         .child(views::heading(&title, 13.0).truncate())
         .child(text(sub).font(t(11.0, 400.0)).color(white(0.55)).truncate()))
 }

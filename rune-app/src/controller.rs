@@ -141,6 +141,10 @@ pub enum Cmd {
     /// Log out (React useAuth.logout): the backend's logout, then every trace of the account
     /// and its playback is dropped and the sign-in screen shows.
     Logout,
+    /// A collection page's Play, Shuffle or track row (usePlaySource): the loader holds what the
+    /// page has loaded and pages in the rest (sources.rs, paged.rs); it plays as the MCP sources
+    /// do, from its `start_at` track if it has one, shuffled if `play_shuffle`.
+    PlaySource(Box<crate::sources::Loader>),
 }
 
 /// The current item when it is a music video (React currentVideoAtom).
@@ -437,7 +441,7 @@ enum Msg {
     /// if it doesn't start (shuffle_source turned shuffle on for it).
     SourceReady { loader: Box<crate::sources::Loader>, request: u64, epoch: u64, restore: Option<bool> },
     /// A later page of the source playing, for the queue of `epoch` (appendToQueue).
-    SourcePage { tracks: Vec<Value>, epoch: u64, owner: (Value, Value) },
+    SourcePage { tracks: Vec<Value>, epoch: u64, owner: (Value, Value), shuffle: bool },
 }
 
 /// The queue epoch (§9.8): bumped whenever the context queue is replaced wholesale, which stops a
@@ -944,9 +948,9 @@ impl Player {
                 Msg::Fetched { tracks, action, asked, seq, from_ui } => self.on_fetched(tracks, &action, asked, seq, from_ui).await,
                 Msg::SourceBuilt { loader, shuffle } => self.source_built(*loader, shuffle),
                 Msg::SourceReady { loader, request, epoch, restore } => self.source_ready(*loader, request, epoch, restore).await,
-                Msg::SourcePage { tracks, epoch, owner } => {
+                Msg::SourcePage { tracks, epoch, owner, shuffle } => {
                     if EPOCH.load(Ordering::Relaxed) == epoch {
-                        self.append_to_queue(tracks, false, Some(owner));
+                        self.append_to_queue(tracks, shuffle, Some(owner));
                     }
                 }
             }
@@ -1222,6 +1226,7 @@ impl Player {
                     }
                 }
             }
+            Cmd::PlaySource(loader) => self.source_built(*loader, false),
             Cmd::CloseVideo => {
                 crate::video::close();
                 self.playing = false;
@@ -1953,10 +1958,27 @@ impl Player {
             return put_back(self);
         }
         let tracks = std::mem::take(&mut loader.tracks);
-        let why = self.refusal(&tracks);
-        if !self.play_all_src(tracks, Some(loader.meta.clone()), loader.album_mode, false).await {
-            self.toast(why);
-            return put_back(self);
+        // A page's Shuffle with shuffle mode off scatters the later pages too (shuffleAppend).
+        let shuffle_append = loader.play_shuffle && !self.prefs.shuffle;
+        match loader.start_at.and_then(|id| tracks.iter().position(|t| tid(t) == id)) {
+            // A track row (usePlaySource startAt): from it; with more pages coming and shuffle
+            // off, the tracks before it aren't wrapped in (noWrap).
+            Some(i) => {
+                let no_wrap = loader.has_more && i > 0 && !self.prefs.shuffle;
+                let (list, index) = if no_wrap { (tracks[i..].to_vec(), 0) } else { (tracks, i) };
+                let before = EPOCH.load(Ordering::Relaxed);
+                self.play_from_src(list, index, loader.meta.clone(), loader.album_mode).await;
+                if EPOCH.load(Ordering::Relaxed) == before {
+                    return; // refused (a blocked track says why)
+                }
+            }
+            None => {
+                let why = self.refusal(&tracks);
+                if !self.play_all_src(tracks, Some(loader.meta.clone()), loader.album_mode, loader.play_shuffle).await {
+                    self.toast(why);
+                    return put_back(self);
+                }
+            }
         }
         if !loader.has_more {
             return;
@@ -1976,7 +1998,7 @@ impl Player {
                     }
                 };
                 let tracks: Vec<Value> = fresh.into_iter().filter(|t| !unavailable(t)).collect();
-                if !tracks.is_empty() && tx.send(Msg::SourcePage { tracks, epoch: ours, owner: owner.clone() }).is_err() {
+                if !tracks.is_empty() && tx.send(Msg::SourcePage { tracks, epoch: ours, owner: owner.clone(), shuffle: shuffle_append }).is_err() {
                     return;
                 }
             }

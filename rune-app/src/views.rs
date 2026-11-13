@@ -35,6 +35,14 @@ pub enum Page {
     /// The signed-in user's profile (React ProfilePage), and all its public playlists.
     Profile,
     ProfilePlaylists,
+    /// An artist's popular tracks (React ArtistTracksPage): artist id and name.
+    ArtistTracks(u64, String),
+    /// A section's whole list (React ViewAllPage): title, api path, and the artist whose page
+    /// it came from (paged through get_artist_view_all) or none (one get_page_section).
+    ViewAll(String, String, Option<u64>),
+    /// Your library's Show all (React LibraryViewAll): the kind, and for playlists the folder
+    /// (id and name) or none for the top level.
+    Library(crate::paged::Lib, Option<(String, String)>),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -117,6 +125,8 @@ pub struct Nav {
     pub content_w: Tracked<f32>,
     /// The sign-in screen's PKCE field: the redirect URL pasted back from the browser.
     pub pkce_paste: TextEdit,
+    /// Collections and the library: sorts, tabs, folder and playlist dialogs (coll.rs).
+    pub coll: crate::coll::Coll,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -131,7 +141,7 @@ impl Default for Nav {
     fn default() -> Self {
         Nav { page: Page::Home.into(), back: Tracked::default(), fwd: Tracked::default(), search: TextEdit::new(""), lib: LibTab::Playlists.into(), tab: SearchTab::All.into(), filter: TextEdit::new(""), queue_open: false, suggest_due: None, menu_open: false, settings_tab: SettingsTab::Playback, drawer: None.into(), login_mode: LoginMode::Pkce, settings_open: false, dialog: None,
             set: Default::default(), ctx: None, create: None, lyric_line: None.into(), lyrics_scrolled: false.into(), search_open: false, search_sel: None,
-            video: Default::default(), full: Default::default(), home_tab: String::from("static").into(), home_pages: 0.into(), content_w: 0.0.into(), pkce_paste: TextEdit::new("") }
+            video: Default::default(), full: Default::default(), home_tab: String::from("static").into(), home_pages: 0.into(), content_w: 0.0.into(), pkce_paste: TextEdit::new(""), coll: Default::default() }
     }
 }
 
@@ -159,20 +169,20 @@ pub fn go(s: &mut App, p: Page) {
 // ------------------------------------------------------------------ small pieces
 
 /// [`ui::pill`], primary or secondary.
-fn button<S: 'static>(key: &str, label: &str, g: Option<G>, primary: bool) -> El {
+pub(crate) fn button<S: 'static>(key: &str, label: &str, g: Option<G>, primary: bool) -> El {
     ui::pill(key, label, g, if primary { ui::Pill::Primary } else { ui::Pill::Secondary })
 }
 
 /// A page-header action (AlbumView, PlaylistView, ArtistPage): a 22 pt icon over an 11 pt
 /// caption. `label` is the accessible name (React's title), `caption` what shows under it.
-fn header_btn(key: &str, label: &str, caption: &str, g: G, on: bool) -> El {
+pub(crate) fn header_btn(key: &str, label: &str, caption: &str, g: G, on: bool) -> El {
     theme::focusable(col().key(key.to_string()).role("button").label(label))
-        .w(52.0).py(4.0).gap(3.0).radius(8.0).items_center().hover(white(0.06)).cursor(rune::Cursor::Pointer)
+        .w(52.0).py(4.0).gap(3.0).radius(8.0).items_center().hover(white(0.06)).cursor(rune::Cursor::Pointer).help(label)
         .child(glyph(g, 22.0, if on { accent() } else { white(0.8) }))
         .child(text(caption.to_string()).font(t(11.0, 500.0)).color(white(0.6)).a11y_hidden())
 }
 
-fn icon<S: 'static>(key: &str, label: &str, g: G) -> El {
+pub(crate) fn icon<S: 'static>(key: &str, label: &str, g: G) -> El {
     ui::icon_button::<S>(key, label, g, 18.0, white(0.75))
 }
 
@@ -187,7 +197,7 @@ pub(crate) fn heading(label: &str, size: f32) -> El {
 /// shows a play button (bottom-left, accent, 40 pt) and a heart (bottom-right, 32 pt), or for an
 /// artist a centred 48 pt play button ("Play <name>", "Add <name> to library"; React's are
 /// unnamed). Tab reaches the card through its heading, and the ring goes round the whole card.
-fn card(key: String, title: &str, sub: &str, seed: u64, round: bool, img: Option<String>, item: Option<Value>, go_to: Page) -> El {
+pub(crate) fn card(key: String, title: &str, sub: &str, seed: u64, round: bool, img: Option<String>, item: Option<Value>, go_to: Page) -> El {
     card_w(148.0, key, title, sub, seed, round, img, item, go_to)
 }
 
@@ -275,7 +285,7 @@ pub fn set_now_playing(now: (Option<u64>, bool)) {
 }
 
 /// A track row with the row actions the React rows expose.
-fn track_row(key: String, n: usize, tr: &Value, on_play: impl Fn(&mut App) + 'static) -> El {
+pub(crate) fn track_row(key: String, n: usize, tr: &Value, on_play: impl Fn(&mut App) + 'static) -> El {
     track_row_with(key, n, tr, true, None, on_play)
 }
 
@@ -285,7 +295,7 @@ fn track_row(key: String, n: usize, tr: &Value, on_play: impl Fn(&mut App) + 'st
 /// Add to playlist (the playlist picker, below it) and the heart (toggled optimistically, filled
 /// in the accent when loved). `pl` places it in the user's own playlist, for "Remove from
 /// playlist".
-fn track_row_with(key: String, n: usize, tr: &Value, actions: bool, pl: Option<crate::interact::InPlaylist>, on_play: impl Fn(&mut App) + 'static) -> El {
+pub(crate) fn track_row_with(key: String, n: usize, tr: &Value, actions: bool, pl: Option<crate::interact::InPlaylist>, on_play: impl Fn(&mut App) + 'static) -> El {
     use crate::interact::{self, Anchor, Fav, Say};
     let d = data::data(tr);
     let title = d["title"].as_str().unwrap_or("").to_string();
@@ -345,8 +355,18 @@ fn track_row_with(key: String, n: usize, tr: &Value, actions: bool, pl: Option<c
                 .min_w(0.0)
                 .child(title_row)
                 .child(text(data::artist_of(tr)).font(t(12.0, 400.0)).color(white(0.55)).truncate()),
-        )
-        .child(text(ui::fmt_time(dur as f64)).font(ui::tnum(t(12.0, 400.0))).color(white(0.55)).w(48.0));
+        );
+    // TrackList's album column, a link to the album (not on the album's own page).
+    if let (Some(album_id), Some(album)) = (d["album"]["id"].as_u64(), d["album"]["title"].as_str().filter(|a| !a.is_empty()))
+        && actions
+        && !key.starts_with("al-t")
+    {
+        r = r.child(row().w(220.0).shrink().min_w(0.0).child(
+            text(album.to_string()).font(t(12.0, 400.0)).color(white(0.55)).truncate()
+                .key(format!("{key}-album")).role("link").label(album).focusable(true).focus_ring(2.0, 2.0, white(0.6))
+                .cursor(rune::Cursor::Pointer).on_press(move |s: &mut App| go(s, Page::Album(album_id)))));
+    }
+    r = r.child(text(ui::fmt_time(dur as f64)).font(ui::tnum(t(12.0, 400.0))).color(white(0.55)).w(48.0));
     if actions {
         // TrackList: a video's heart (a playlist can hold videos) favourites the video.
         let fav = if d["itemType"].as_str() == Some("video") { Fav::Video } else { Fav::Track };
@@ -369,7 +389,7 @@ fn track_row_with(key: String, n: usize, tr: &Value, actions: bool, pl: Option<c
     r
 }
 
-fn grid(cards: Vec<El>) -> El {
+pub(crate) fn grid(cards: Vec<El>) -> El {
     let mut r = row().w_full().gap(8.0).flex_wrap();
     for c in cards {
         r = r.child(c);
@@ -383,7 +403,7 @@ fn grid(cards: Vec<El>) -> El {
 /// filter's matches) in order; track `i`'s row is keyed `{prefix}{i}`, as it always was, and
 /// `row(tracks, i)` builds it. Its rows land at once, as rows of a plain column did: a growth
 /// stack's rows would grow in and fold out on a spring.
-fn track_list(prefix: &'static str, tracks: Rc<Vec<Value>>, shown: Vec<usize>, row: impl Fn(&Rc<Vec<Value>>, usize) -> El + 'static) -> El {
+pub(crate) fn track_list<P: std::ops::Deref<Target = Vec<Value>> + 'static>(prefix: &'static str, tracks: P, shown: Vec<usize>, row: impl Fn(&P, usize) -> El + 'static) -> El {
     let shown = Rc::new(shown);
     // The keys change only with the rows shown, so layout needn't ask for every key each commit.
     let keys_version = {
@@ -408,7 +428,7 @@ pub(crate) fn item_page(item: &Value) -> Option<Page> {
     }
 }
 
-fn cards_for(prefix: &str, items: &[Value]) -> Vec<El> {
+pub(crate) fn cards_for(prefix: &str, items: &[Value]) -> Vec<El> {
     items
         .iter()
         .enumerate()
@@ -763,6 +783,9 @@ fn t_(size: f32, weight: f32) -> rune::TextStyle {
     t(size, weight)
 }
 
+/// The collapsed sidebar's width: its icons and covers only.
+pub const SIDEBAR_COLLAPSED: f32 = 64.0;
+
 pub fn sidebar(s: &App, w: f32) -> El {
     let nav_btn = |key: &str, label: &str, g: G, page: Page| {
         let on = s.nav.page == page;
@@ -781,27 +804,30 @@ pub fn sidebar(s: &App, w: f32) -> El {
             })
             .child(text(label.to_string()).font(t(12.0, 600.0)).color(white(0.9)).a11y_hidden())
     };
-    let sort_label = if s.nav.lib == LibTab::Playlists { "Sort by: Last updated" } else { "Sort by: Date added" };
-    let mut list = col().w_full().gap(2.0);
-    match *s.nav.lib {
-        LibTab::Playlists => {
-            list = list.child(lib_row("lib-loved", "Loved Tracks Collection", "Loved Tracks", "Collection", 9, None, None, Some(Page::Loved)));
-            if let Some(f) = data::ready(Key::Folders) {
-                for (i, it) in f["items"].as_array().cloned().unwrap_or_default().iter().enumerate() {
-                    let d = &it["data"];
-                    let title = d["title"].as_str().or(it["name"].as_str()).unwrap_or("").to_string();
-                    let n = d["numberOfTracks"].as_u64().unwrap_or(0);
-                    let sub = format!("You · {n} Tracks");
-                    let uuid = d["uuid"].as_str().unwrap_or("").to_string();
-                    // The React row's accessible name is its cover's alt text, title and subtitle.
-                    let label = format!("{title} {title} {sub}");
-                    list = list.child(lib_row(&format!("lib-pl-{i}"), &label, &title, &sub, i as u64 + 20, crate::art::item_url(it, 40.0), Some(json!({"type": "PLAYLIST", "data": d.clone()})), Some(Page::Playlist(uuid))));
-                }
-            }
-        }
-        LibTab::Albums => list = list.child(lib_list(Key::FavAlbums)),
-        LibTab::Artists => list = list.child(lib_list(Key::FavArtists)),
-        LibTab::Mixes => list = list.child(lib_list(Key::FavMixes)),
+    // "Your Library" collapses the sidebar to its icons and expands it again (React Sidebar).
+    let lib_toggle = |collapsed: bool| row().key("lib").role("button").label("Your Library").shrink().h(34.0).px(8.0).gap(10.0).items_center().cursor(rune::Cursor::Pointer)
+        .hover(white(0.06)).radius(8.0).focusable(true)
+        .on_press(|s: &mut App| {
+            let c = !s.nav.coll.ui.collapsed;
+            s.nav.coll.ui.collapsed = c;
+        })
+        .child(glyph(G::Library, 18.0, white(0.75)))
+        .child(if collapsed { el() } else { text("Your Library").font(t(14.0, 650.0)).color(white(0.9)).truncate().a11y_hidden() });
+    if w <= SIDEBAR_COLLAPSED {
+        let icon_btn = |key: &str, label: &str, g: G, page: Page| {
+            let on = s.nav.page == page;
+            theme::focusable(el().key(key.to_string()).role("button").label(label)).size(40.0, 40.0).radius(10.0).items_center().justify_center()
+                .fill(if on { white(0.08) } else { white(0.0) }).hover(white(0.06)).cursor(rune::Cursor::Pointer).help(label)
+                .on_press(move |s: &mut App| go(s, page.clone()))
+                .child(glyph(g, 18.0, white(if on { 0.95 } else { 0.7 })))
+        };
+        return col().key("sidebar").role("navigation").w(w).h_full().py(12.0).px(8.0).gap(6.0).items_center().fill(theme::sidebar_bg())
+            .child(icon_btn("nav-home", "Home", G::Home, Page::Home))
+            .child(icon_btn("nav-explore", "Explore", G::Compass, Page::Explore))
+            .child(icon_btn("nav-feed", "Feed", G::Bell, Page::Feed))
+            .child(el().h(10.0))
+            .child(lib_toggle(true))
+            .child(ui::smooth_wheel::<App>(col().grow(1.0).min_h(0.0).w_full().scroll(ScrollSpec { stick_bottom: false }).child(crate::library::sidebar_list(s)), "lib-scroll".into()).labelled_by("lib"));
     }
     let mut tabs = row().gap(6.0).focus_group().child(tab("tab-pl", "Playlists", LibTab::Playlists)).child(tab("tab-al", "Albums", LibTab::Albums)).child(tab("tab-ar", "Artists", LibTab::Artists)).child(tab("tab-mx", "Mixes", LibTab::Mixes));
     if w < 280.0 {
@@ -821,15 +847,12 @@ pub fn sidebar(s: &App, w: f32) -> El {
         .child(el().h(10.0))
         .child(
             row().w_full().items_center().gap(6.0)
-                .child(row().key("lib").role("button").label("Your Library").shrink().h(34.0).px(8.0).gap(10.0).items_center().cursor(rune::Cursor::Pointer)
-                    .child(glyph(G::Library, 18.0, white(0.75))).child(text("Your Library").font(t(14.0, 650.0)).color(white(0.9)).truncate().a11y_hidden()))
+                .child(lib_toggle(false))
                 .child(spacer())
-                .child(icon::<App>("lib-sort", sort_label, G::Sort))
-                .child(row().key("lib-all").role("button").label("Show all").h(28.0).px(8.0).items_center().cursor(rune::Cursor::Pointer)
-                    .child(text("Show all").font(t(12.0, 600.0)).color(white(0.6)).a11y_hidden())),
+                .child(crate::library::sidebar_tools(s)),
         )
         .child(tabs)
-        .child(ui::smooth_wheel::<App>(col().grow(1.0).min_h(0.0).w_full().scroll(ScrollSpec { stick_bottom: false }).child(list), "lib-scroll".into()).labelled_by("lib"))
+        .child(ui::smooth_wheel::<App>(col().grow(1.0).min_h(0.0).w_full().scroll(ScrollSpec { stick_bottom: false }).child(crate::library::sidebar_list(s)), "lib-scroll".into()).labelled_by("lib"))
 }
 
 /// Loved Tracks' artwork: not an image from TIDAL but React's fixed gradient (#450af5 → #8e2de2
@@ -841,7 +864,7 @@ pub(crate) fn loved_art(size: f32, radius: f32, heart: f32) -> El {
         .child(glyph(G::HeartFilled, heart, white(1.0)))
 }
 
-fn lib_row(key: &str, label: &str, title: &str, sub: &str, seed: u64, img: Option<String>, menu: Option<Value>, page: Option<Page>) -> El {
+pub(crate) fn lib_row(key: &str, label: &str, title: &str, sub: &str, seed: u64, img: Option<String>, menu: Option<Value>, page: Option<Page>) -> El {
     let art = if key == "lib-loved" { loved_art(40.0, 6.0, 15.0) } else { ui::with_image(ui::tile(ui::hue(Some(seed)), 40.0, seed, 6.0), img, 40.0, 6.0) };
     let mut r = theme::focusable_row(row().key(key.to_string()).role("button").label(label)).w_full().h(52.0).px(8.0).gap(10.0).radius(8.0).items_center().hover(white(0.06)).cursor(rune::Cursor::Pointer).help(title)
         .child(art)
@@ -855,21 +878,6 @@ fn lib_row(key: &str, label: &str, title: &str, sub: &str, seed: u64, img: Optio
     r
 }
 
-fn lib_list(key: Key) -> El {
-    let v = match ready_or(key.clone()) { Ok(v) => v, Err(e) => return e };
-    let items = v["items"].as_array().cloned().unwrap_or_default();
-    if items.is_empty() {
-        let msg = match key { Key::FavArtists => "You don't follow any artists yet", Key::FavMixes => "No saved mixes yet", _ => "No albums in your library yet" };
-        return ui::empty(msg).px(8.0).py(12.0);
-    }
-    let mut c = col().w_full().gap(2.0);
-    for (i, it) in items.iter().enumerate() {
-        let name = data::name(it);
-        let page = item_page(it).or_else(|| data::data(it)["id"].as_u64().map(Page::Album));
-        c = c.child(lib_row(&format!("lib-{key:?}-{i}"), &name, &name, &data::artist_of(it), i as u64 + 40, crate::art::item_url(it, 40.0), (key != Key::FavAlbums).then(|| it.clone()), page));
-    }
-    c
-}
 
 /// Player-bar extras the React bar has around the transport (React PlayerBar).
 /// After the bar's title (PlayerBar's LikeButton and ContextMenuButton): the heart, filled in
@@ -1002,14 +1010,17 @@ pub fn page(s: &App, v: &View) -> El {
     let body = match &*s.nav.page {
         Page::Home => crate::home::home(s),
         Page::Explore => explore(),
-        Page::ExploreSub(path, title) => explore_sub(path, title),
+        Page::ExploreSub(path, title) => explore_sub(s, path, title),
         Page::Mix(id, title, sub) => mix_page(id, title, sub, v),
-        Page::Loved => loved_page(s, v),
+        Page::Loved => crate::loved::page(s, v),
+        Page::ArtistTracks(id, name) => crate::viewall::artist_tracks(s, *id, name, v),
+        Page::ViewAll(title, path, artist) => crate::viewall::page(s, title, path, *artist),
+        Page::Library(kind, folder) => crate::library::page(s, *kind, folder.as_ref()),
         Page::Feed => feed(),
         Page::Search(q) => search_page(s, q),
         Page::Album(id) => album(*id, v),
         Page::Artist(id) => artist(*id, v),
-        Page::Playlist(u) => playlist(s, u, v),
+        Page::Playlist(u) => crate::playlist::page(s, u, v),
         Page::Settings => col().w_full().gap(18.0).child(heading("Settings", theme::PAGE_TITLE)).child(settings_page(s)),
         Page::Profile => crate::profile::page(s),
         Page::ProfilePlaylists => crate::profile::playlists_page(s),
@@ -1032,7 +1043,7 @@ pub fn page_key(s: &App) -> String {
     format!("page-{:?}", s.nav.page)
 }
 
-fn play_label(v: &View, source_name: &str) -> &'static str {
+pub(crate) fn play_label(v: &View, source_name: &str) -> &'static str {
     if v.playing_from.as_deref() == Some(source_name) && v.current.is_some() {
         if v.playing { "Pause" } else { "Resume" }
     } else {
@@ -1040,11 +1051,11 @@ fn play_label(v: &View, source_name: &str) -> &'static str {
     }
 }
 
-fn hero(title: &str, title_heading: bool, sub: &str, seed: u64, round: bool, img: Option<String>, actions: El) -> El {
+pub(crate) fn hero(title: &str, title_heading: bool, sub: &str, seed: u64, round: bool, img: Option<String>, actions: El) -> El {
     hero_with(title, title_heading, text(sub.to_string()).font(t(13.0, 500.0)).color(white(0.6)), seed, round, img, actions)
 }
 
-fn hero_with(title: &str, title_heading: bool, sub: El, seed: u64, round: bool, img: Option<String>, actions: El) -> El {
+pub(crate) fn hero_with(title: &str, title_heading: bool, sub: El, seed: u64, round: bool, img: Option<String>, actions: El) -> El {
     let h = ui::hue(Some(seed));
     let art = if round { ui::with_image(ui::art(h, 180.0, seed, 0.0), img, 180.0, 90.0) } else { ui::with_image(ui::tile(h, 180.0, seed, 14.0), img, 180.0, 14.0) };
     let title_el = if title_heading { heading(title, theme::PAGE_TITLE) } else { text(title.to_string()).font(t(theme::PAGE_TITLE, 650.0)).color(white(0.95)) };
@@ -1057,7 +1068,7 @@ fn hero_with(title: &str, title_heading: bool, sub: El, seed: u64, round: bool, 
 /// "Artist, Artist · 2013" under an album's title, each artist a link to their page, as the
 /// React header's TrackArtists (there clickable spans; here also reachable by keyboard and
 /// exposed as links).
-fn album_byline(a: &Value) -> El {
+pub(crate) fn album_byline(a: &Value) -> El {
     let d = data::data(a);
     let mut artists: Vec<(u64, String)> = d["artists"].as_array().map(|xs| {
         xs.iter().filter_map(|x| Some((x["id"].as_u64()?, x["name"].as_str()?.to_string()))).collect()
@@ -1087,7 +1098,7 @@ fn album_byline(a: &Value) -> El {
     r
 }
 
-fn play_buttons(v: &View, src_name: &str, play: Cmd, shuffle: Cmd) -> El {
+pub(crate) fn play_buttons(v: &View, src_name: &str, play: Cmd, shuffle: Cmd) -> El {
     let label = play_label(v, src_name);
     let toggle = label != "Play";
     row().gap(8.0).items_center()
@@ -1149,7 +1160,16 @@ fn album(id: u64, v: &View) -> El {
             .collect();
         let cards = cards_for(&format!("al-s{si}"), &items);
         if !cards.is_empty() {
-            c = c.child(heading(sec["title"].as_str().unwrap_or(""), theme::SECTION)).child(grid(cards));
+            let title = sec["title"].as_str().unwrap_or("").to_string();
+            let mut head = row().w_full().items_center().child(heading(&title, theme::SECTION));
+            // AlbumView's CardScrollSection: View all opens the whole section (ViewAllPage).
+            if let Some(path) = sec["apiPath"].as_str().filter(|p| !p.is_empty()) {
+                let to = Page::ViewAll(title.clone(), path.to_string(), None);
+                head = head.child(spacer()).child(theme::focusable(row().key(format!("al-s{si}-all")).role("button").label("View all")).h(26.0).px(8.0).radius(8.0).items_center().hover(white(0.06)).cursor(rune::Cursor::Pointer)
+                    .on_press(move |s: &mut App| go(s, to.clone()))
+                    .child(caps("View all", 0.6).a11y_hidden()));
+            }
+            c = c.child(head).child(grid(cards));
         }
     }
     c
@@ -1159,15 +1179,27 @@ fn artist(id: u64, v: &View) -> El {
     let p = match ready_or(Key::Artist(id)) { Ok(v) => v, Err(e) => return e };
     let a = data::data(&p["item"]);
     let name = a["name"].as_str().unwrap_or("").to_string();
-    let play = Cmd::PlayArtist { id, name: name.clone(), shuffle: false };
-    let shuf = Cmd::PlayArtist { id, name: name.clone(), shuffle: true };
+    // Play and Shuffle page through all of the artist's top tracks (the artist play source).
+    // The page's own top tracks start it, as ArtistPage's `loaded`.
+    let src = json!({"type": "artist", "id": id, "name": name});
+    let preview: Vec<Value> = p["items"].as_array().into_iter().flatten()
+        .map(|sec| sec["items"].as_array().cloned().unwrap_or_default().into_iter().filter(|it| data::kind(it) == "TRACK").map(|it| data::data(&it).clone()).collect::<Vec<_>>())
+        .find(|ts| !ts.is_empty()).unwrap_or_default();
     let actions = row().gap(8.0).items_center()
-        .child(play_buttons(v, &name, play, shuf))
+        .child(crate::coll::play_pair(v, &name, move |shuffle| crate::paged::play_with(crate::paged::PKey::ArtistTracks(id), preview.clone(), src.clone(), shuffle, None, |_| true)))
         .child({
             // ArtistPage: Plus/"Follow", or Check/"Following" in the accent
             let (on, aid, l) = (crate::interact::is_fav(crate::interact::Fav::Artist, &id.to_string()), id.to_string(), name.clone());
             header_btn("artist-follow", if on { "Following" } else { "Follow" }, if on { "Following" } else { "Follow" }, if on { G::Check } else { G::Plus }, on)
                 .on_press(move |_: &mut App| crate::interact::toggle_fav(crate::interact::Fav::Artist, aid.clone(), l.clone(), crate::interact::Say::Nothing))
+        })
+        .child(match a["mixes"]["ARTIST_MIX"].as_str() {
+            // ArtistPage's "Artist radio", when the artist has one.
+            Some(mix) => {
+                let to = Page::Mix(mix.to_string(), format!("{name} Radio"), name.clone());
+                header_btn("artist-radio", "Artist radio", "Radio", G::Radio, false).on_press(move |s: &mut App| go(s, to.clone()))
+            }
+            None => el(),
         })
         .child(header_btn("artist-share", "Share", "Share", G::Share, false).on_press_tx(move |_: &mut App, tx: &mut Tx| {
             tx.copy_rich(rune::ClipboardContent::new(format!("https://tidal.com/artist/{id}")));
@@ -1192,17 +1224,39 @@ fn artist(id: u64, v: &View) -> El {
     for (si, sec) in p["items"].as_array().cloned().unwrap_or_default().iter().enumerate() {
         let title = sec["title"].as_str().unwrap_or("");
         let items = sec["items"].as_array().cloned().unwrap_or_default();
-        c = c.child(heading(title, theme::SECTION));
+        // getArtistPage skips empty modules and the credits module.
+        if items.is_empty() || items.first().is_some_and(|it| data::kind(it) == "TRACK_CREDIT") {
+            continue;
+        }
         let tracks: Vec<Value> = items.iter().filter(|it| data::kind(it) == "TRACK").map(|it| data::data(it).clone()).collect();
+        // A section with more has View all: popular tracks for a track list (ArtistTracksPage),
+        // the whole list otherwise (ViewAllPage through get_artist_view_all).
+        let mut head = row().w_full().items_center().child(heading(title, theme::SECTION));
+        if let Some(path) = sec["viewAll"].as_str().or(sec["showMore"]["apiPath"].as_str()).filter(|p| !p.is_empty()) {
+            let to = if tracks.is_empty() { Page::ViewAll(title.to_string(), path.to_string(), Some(id)) } else { Page::ArtistTracks(id, name.clone()) };
+            head = head.child(spacer()).child(theme::focusable(row().key(format!("ar-s{si}-all")).role("button").label("View all")).h(26.0).px(8.0).radius(8.0).items_center().hover(white(0.06)).cursor(rune::Cursor::Pointer)
+                .on_press(move |s: &mut App| go(s, to.clone()))
+                .child(caps("View all", 0.6).a11y_hidden()));
+        }
+        c = c.child(head);
         if !tracks.is_empty() {
             // ArtistPage handlePlayTrack: play from the artist source, the first track list being
             // the top tracks; the manual queue is kept.
             let top = !std::mem::replace(&mut top_seen, true);
             let mut rows = col().w_full().gap(2.0);
-            for (i, tr) in tracks.iter().enumerate() {
+            // ArtistPage shows a track section's first ten.
+            for (i, tr) in tracks.iter().take(10).enumerate() {
                 let (all, an) = (tracks.clone(), name.clone());
+                let tid = tr["id"].as_u64();
                 rows = rows.child(track_row(format!("ar-s{si}-t{i}"), i + 1, tr, move |_: &mut App| {
-                    controller::send(Cmd::PlayArtistTrack { id, name: an.clone(), tracks: all.clone(), index: i, top });
+                    if top {
+                        // The top tracks: the artist source from the clicked one, the rest of
+                        // the artist's top tracks paged in behind it.
+                        let src = json!({"type": "artist", "id": id, "name": an});
+                        crate::paged::play_with(crate::paged::PKey::ArtistTracks(id), all.clone(), src, false, tid, |_| true);
+                    } else {
+                        controller::send(Cmd::PlayArtistTrack { id, name: an.clone(), tracks: all.clone(), index: i, top });
+                    }
                 }));
             }
             c = c.child(rows);
@@ -1217,74 +1271,9 @@ fn artist(id: u64, v: &View) -> El {
     c
 }
 
-fn playlist(s: &App, uuid: &str, v: &View) -> El {
-    let p = match ready_or(Key::Playlist(uuid.to_string())) { Ok(v) => v, Err(e) => return e };
-    let d = &p["details"];
-    let title = d["title"].as_str().unwrap_or("").to_string();
-    let tracks: Vec<Value> = p["tracks"]["items"].as_array().cloned().unwrap_or_default();
-    let source = json!({"type": "playlist", "id": uuid, "name": title});
-    let play = Cmd::PlayCollection { tracks: tracks.clone(), source: source.clone(), album_mode: false, shuffle: false };
-    let shuf = Cmd::PlayCollection { tracks: tracks.clone(), source: source.clone(), album_mode: false, shuffle: true };
-    // PlaylistView: your own playlist has Edit and Private/Public; anyone else's, the heart.
-    let me = data::user_id();
-    let own = d["creator"]["id"].as_u64().is_some_and(|c| c == me) || d["creator"]["id"].is_null();
-    let mut actions = row().gap(8.0).items_center().child(play_buttons(v, &title, play, shuf));
-    if own {
-        let public = d["accessType"].as_str() == Some("PUBLIC"); // PlaylistView: resolvedAccessType === "PUBLIC"
-        actions = actions
-            .child(header_btn("pl-edit", "Edit playlist", "Edit", G::Pencil, false))
-            .child(header_btn("pl-public", if public { "Make playlist private" } else { "Make playlist public" }, if public { "Public" } else { "Private" }, if public { G::Unlock } else { G::Lock }, public));
-    } else {
-        let (on, u, l) = (crate::interact::is_fav(crate::interact::Fav::Playlist, uuid), uuid.to_string(), title.clone());
-        actions = actions.child(header_btn("pl-fav", if on { "Remove from favorites" } else { "Add to favorites" }, if on { "Added" } else { "Add" }, if on { G::HeartFilled } else { G::Heart }, on)
-            .on_press(move |_: &mut App| crate::interact::toggle_fav(crate::interact::Fav::Playlist, u.clone(), l.clone(), crate::interact::Say::Nothing)));
-    }
-    let share_uuid = uuid.to_string();
-    let item = json!({"type": "PLAYLIST", "data": d.clone()});
-    actions = actions
-        .child(header_btn("pl-share", "Share playlist", "Share", G::Share, false).on_press_tx(move |_: &mut App, tx: &mut Tx| {
-            tx.copy_rich(rune::ClipboardContent::new(format!("https://tidal.com/playlist/{share_uuid}")));
-            crate::interact::toast("Copied share link to clipboard".into(), crate::interact::Kind::Success);
-        }))
-        .child(header_btn("pl-more", "More options", "More", G::More, false)
-            .on_press(move |s: &mut App| crate::interact::open_media(s, item.clone(), crate::interact::Anchor::Below("pl-more".into()))));
-    let n = d["numberOfTracks"].as_u64().unwrap_or(tracks.len() as u64);
-    let creator = d["creator"]["name"].as_str().unwrap_or("You");
-    let filter = text_input(&s.nav.filter, t(13.0, 500.0).lh(18.0))
-        .key("pl-filter")
-        .label("Filter playlist on title, artist or album")
-        .single_line()
-        .w(320.0)
-        .color(white(0.95))
-        .caret(white(0.95), white(0.25))
-        .placeholder("Filter", white(0.4))
-        .on_edit(|s: &mut App| &mut s.nav.filter);
-    let needle = s.nav.filter.text.clone();
-    let mut shown = Vec::new();
-    for (i, tr) in tracks.iter().enumerate() {
-        if !data::matches(&format!("{} {}", data::name(tr), data::artist_of(tr)), &needle) {
-            continue;
-        }
-        shown.push(i);
-    }
-    let empty = shown.is_empty();
-    let uuid = uuid.to_string();
-    let rows = track_list("pl-t", Rc::new(tracks), shown, move |tracks, i| {
-        let (all, src) = (tracks.clone(), source.clone());
-        let in_pl = own.then(|| crate::interact::InPlaylist { uuid: uuid.clone(), index: i });
-        track_row_with(format!("pl-t{i}"), i + 1, data::data(&tracks[i]), true, in_pl, move |_: &mut App| {
-            controller::send(Cmd::PlayFrom { tracks: all.to_vec(), index: i, source: src.clone(), album_mode: false });
-        })
-    });
-    col().w_full().gap(16.0)
-        .child(hero(&title, true, &format!("{creator} · {n} tracks"), 30, false, crate::art::item_url(d, 180.0), actions))
-        .child(row().h(40.0).px(12.0).radius(10.0).items_center().fill(white(0.06)).child(filter))
-        .child(if !empty { rows } else { tracks_empty(s, "This playlist is empty") })
-}
-
 /// What a track list shows with nothing in it: `none` when it has no tracks at all, or that
 /// the filter matched none of them.
-fn tracks_empty(s: &App, none: &str) -> El {
+pub(crate) fn tracks_empty(s: &App, none: &str) -> El {
     match s.nav.filter.text.trim() {
         "" => ui::empty(none),
         f => ui::empty(&format!("No tracks match \"{f}\"")),
@@ -1304,10 +1293,10 @@ fn search_page(s: &App, q: &str) -> El {
         .child(tab("st-all", "All Results", SearchTab::All))
         .child(tab("st-top", "Top Hits", SearchTab::TopHits))
         .child(tab("st-tracks", "Tracks", SearchTab::Tracks))
+        .child(tab("st-vid", "Videos", SearchTab::Videos))
         .child(tab("st-pl", "Playlists", SearchTab::Playlists))
         .child(tab("st-al", "Albums", SearchTab::Albums))
-        .child(tab("st-ar", "Artists", SearchTab::Artists))
-        .child(tab("st-vid", "Videos", SearchTab::Videos));
+        .child(tab("st-ar", "Artists", SearchTab::Artists));
     let tracks: Vec<Value> = v["tracks"].as_array().cloned().unwrap_or_default();
     let typed = |k: &str, arr: &str| -> Vec<Value> { v[arr].as_array().cloned().unwrap_or_default().into_iter().map(|d| json!({"type": k, "data": d})).collect() };
     let (albums, artists, playlists) = (typed("ALBUM", "albums"), typed("ARTIST", "artists"), typed("PLAYLIST", "playlists"));
@@ -1324,17 +1313,40 @@ fn search_page(s: &App, q: &str) -> El {
             })
         })
     };
-    let section = |title: &str, body: El| col().w_full().gap(10.0).child(row().items_center().child(heading(title, theme::SECTION)).child(spacer()).child(
-        row().role("button").label("VIEW ALL").h(26.0).px(8.0).items_center().cursor(rune::Cursor::Pointer).child(caps("View all", 0.6).a11y_hidden()))).child(body);
-    // A kind with no hits says so where its rows or cards would be.
+    // SearchView's All tab: each kind's first few under its heading, its View all opening that
+    // kind's tab; a kind with no hits is left out.
+    let section = |title: &str, to: SearchTab, body: El| col().w_full().gap(10.0).child(row().items_center().child(heading(title, theme::SECTION)).child(spacer()).child(
+        theme::focusable(row().key(format!("sr-all-{title}")).role("button").label("VIEW ALL")).h(26.0).px(8.0).radius(8.0).items_center().hover(white(0.06)).cursor(rune::Cursor::Pointer)
+            .on_press(move |s: &mut App| *s.nav.tab = to)
+            .child(caps("View all", 0.6).a11y_hidden()))).child(body);
+    // A tab with no hits says so where its rows or cards would be.
     let or_none = |none: bool, body: El, what: &str| if none { ui::empty(&format!("No {what}")) } else { body };
+    let first = |items: &[Value], n: usize| items[..items.len().min(n)].to_vec();
+    let nothing = tracks.is_empty() && albums.is_empty() && artists.is_empty() && playlists.is_empty() && videos.is_empty();
     let body = match *s.nav.tab {
-        SearchTab::All | SearchTab::TopHits => col().w_full().gap(22.0)
-            .child(section("Tracks", or_none(tracks.is_empty(), track_rows(5), "tracks")))
-            .child(section("Albums", or_none(albums.is_empty(), grid(cards_for("sr-al", &albums)), "albums")))
-            .child(section("Artists", or_none(artists.is_empty(), grid(cards_for("sr-ar", &artists)), "artists")))
-            .child(section("Playlists", or_none(playlists.is_empty(), grid(cards_for("sr-pl", &playlists)), "playlists")))
-            .child(if videos.is_empty() { el() } else { section("Videos", grid(crate::video_ui::video_cards("sr-vid", &videos[..videos.len().min(4)], video_source.clone()))) }),
+        SearchTab::All if nothing => col().gap(6.0).py(40.0).w_full().items_center()
+            .child(text("No results found").font(t(17.0, 650.0)).color(white(0.9)))
+            .child(ui::empty("Try a different search term")),
+        SearchTab::All => {
+            let mut c = col().w_full().gap(22.0);
+            if !tracks.is_empty() {
+                c = c.child(section("Tracks", SearchTab::Tracks, track_rows(8)));
+            }
+            if !videos.is_empty() {
+                c = c.child(section("Videos", SearchTab::Videos, grid(crate::video_ui::video_cards("sr-vid", &videos[..videos.len().min(4)], video_source.clone()))));
+            }
+            if !playlists.is_empty() {
+                c = c.child(section("Playlists", SearchTab::Playlists, grid(cards_for("sr-pl", &first(&playlists, 6)))));
+            }
+            if !albums.is_empty() {
+                c = c.child(section("Albums", SearchTab::Albums, grid(cards_for("sr-al", &first(&albums, 6)))));
+            }
+            if !artists.is_empty() {
+                c = c.child(section("Artists", SearchTab::Artists, grid(cards_for("sr-ar", &first(&artists, 6)))));
+            }
+            c
+        }
+        SearchTab::TopHits => top_hits(&v["topHits"]),
         SearchTab::Tracks => or_none(tracks.is_empty(), track_rows(usize::MAX), "tracks"),
         SearchTab::Albums => or_none(albums.is_empty(), grid(cards_for("sr-al", &albums)), "albums"),
         SearchTab::Artists => or_none(artists.is_empty(), grid(cards_for("sr-ar", &artists)), "artists"),
@@ -1342,6 +1354,78 @@ fn search_page(s: &App, q: &str) -> El {
         SearchTab::Videos => or_none(videos.is_empty(), grid(crate::video_ui::video_cards("sr-vid", &videos, video_source.clone())), "videos"),
     };
     col().w_full().gap(16.0).child(heading(&format!("Results for \"{q}\""), theme::PAGE_TITLE)).child(tabs).child(body)
+}
+
+/// The Top Hits tab (SearchView TopHitsList): every kind in one list, in the server's order. A
+/// track's cover plays it and the rest of its row opens its album; an album, artist or
+/// playlist opens its page; a video plays. Each has More options.
+fn top_hits(hits: &Value) -> El {
+    let hits = hits.as_array().cloned().unwrap_or_default();
+    if hits.is_empty() {
+        return col().gap(6.0).py(40.0).w_full().items_center()
+            .child(text("No top hits").font(t(17.0, 650.0)).color(white(0.9)))
+            .child(ui::empty("Try the other tabs for more results"));
+    }
+    let mut c = col().w_full().gap(2.0);
+    for (i, hit) in hits.iter().enumerate() {
+        let kind = hit["hitType"].as_str().unwrap_or("");
+        let title = hit["title"].as_str().or(hit["name"].as_str()).unwrap_or("").to_string();
+        let artist = hit["artistName"].as_str().or(hit["track"]["artists"][0]["name"].as_str()).or(hit["video"]["artists"][0]["name"].as_str()).unwrap_or("").to_string();
+        let with = |k: &str| if artist.is_empty() { k.to_string() } else { format!("{k} · {artist}") };
+        let sub = match kind { "TRACKS" => with("Track"), "VIDEOS" => with("Video"), "ALBUMS" => with("Album"), "ARTISTS" => "Artist".into(), _ => "Playlist".into() };
+        let seed = hit["id"].as_u64().unwrap_or(i as u64 + 1);
+        let img = crate::art::item_url(hit, 48.0).or_else(|| crate::art::cover(hit["albumCover"].as_str(), 48.0));
+        let round = kind == "ARTISTS";
+        let thumb = if round { ui::with_image(ui::art(ui::hue(Some(seed)), 48.0, seed, 0.0), img, 48.0, 24.0) } else { ui::with_image(ui::tile(ui::hue(Some(seed)), 48.0, seed, 6.0), img, 48.0, 6.0) };
+        let key = format!("sr-top-{i}");
+        let more_key = format!("{key}-more");
+        let page = match kind {
+            "ALBUMS" => hit["id"].as_u64().map(Page::Album),
+            "ARTISTS" => hit["id"].as_u64().map(Page::Artist),
+            "PLAYLISTS" => hit["uuid"].as_str().map(|u| Page::Playlist(u.to_string())),
+            "TRACKS" => hit["albumId"].as_u64().or(hit["track"]["album"]["id"].as_u64()).map(Page::Album),
+            _ => None,
+        };
+        let mut r = theme::focusable_row(row().key(key.clone()).role("button").label(title.as_str())).w_full().h(60.0).px(10.0).gap(12.0).radius(8.0).items_center().hover(white(0.05)).cursor(rune::Cursor::Pointer);
+        let thumb = match kind {
+            "TRACKS" => {
+                let id = hit["id"].as_u64().unwrap_or(0);
+                el().key(format!("{key}-play")).role("button").label(format!("Play {title}")).cursor(rune::Cursor::Pointer)
+                    .on_press(move |_: &mut App| controller::send(Cmd::PlaySingleId(id))).child(thumb)
+            }
+            _ => thumb,
+        };
+        r = r.child(thumb)
+            .child(col().grow(1.0).min_w(0.0).gap(2.0).a11y_hidden()
+                .child(text(title.clone()).font(t(14.0, 600.0)).color(white(0.95)).truncate())
+                .child(text(sub).font(t(12.0, 400.0)).color(white(0.55)).truncate()));
+        if kind == "VIDEOS" {
+            let v = if hit["video"].is_object() { hit["video"].clone() } else { hit.clone() };
+            let tr = crate::video_ui::video_track(&v);
+            r = r.on_press(move |_: &mut App| controller::send(Cmd::PlayCollection { tracks: vec![tr.clone()], source: json!({"type": "search", "id": "top-hits", "name": "Search"}), album_mode: false, shuffle: false }));
+        } else if let Some(p) = page {
+            r = r.on_press(move |s: &mut App| go(s, p.clone()));
+        }
+        let menu: Option<(bool, Value)> = match kind {
+            "TRACKS" => Some((true, if hit["track"].is_object() { hit["track"].clone() } else { crate::interact::json_of_track(seed, &title, &artist) })),
+            "ALBUMS" => Some((false, json!({"type": "ALBUM", "data": {"id": hit["id"], "title": title, "cover": hit["cover"]}}))),
+            "ARTISTS" => Some((false, json!({"type": "ARTIST", "data": {"id": hit["id"], "name": title, "picture": hit["picture"]}}))),
+            "PLAYLISTS" => Some((false, json!({"type": "PLAYLIST", "data": {"uuid": hit["uuid"], "title": title, "image": hit["image"]}}))),
+            _ => None,
+        };
+        if let Some((track, item)) = menu {
+            let mk = more_key.clone();
+            r = r.child(icon::<App>(&more_key, "More options", G::More).on_press(move |s: &mut App| {
+                if track {
+                    crate::interact::open_track(s, item.clone(), None, crate::interact::Anchor::Below(mk.clone()))
+                } else {
+                    crate::interact::open_media(s, item.clone(), crate::interact::Anchor::Below(mk.clone()))
+                }
+            }));
+        }
+        c = c.child(r);
+    }
+    c
 }
 
 // ------------------------------------------------------------------ account menu, settings, queue
@@ -1676,7 +1760,7 @@ fn explore() -> El {
     c
 }
 
-fn pill_link(key: String, it: &Value) -> El {
+pub(crate) fn pill_link(key: String, it: &Value) -> El {
     let label = it["title"].as_str().or(it["name"].as_str()).unwrap_or("").to_string();
     let path = it["apiPath"].as_str().unwrap_or("").to_string();
     let t2 = label.clone();
@@ -1690,45 +1774,65 @@ fn pill_link(key: String, it: &Value) -> El {
 }
 
 /// An Explore sub-page: a genre/mood page (catalogue rows) or a view-all page (more links).
-fn explore_sub(path: &str, title: &str) -> El {
+///
+/// As ExploreSubPage: a page of nothing but links (All Genres) is one grid of them; otherwise
+/// each section is drawn as Home draws its sections (HomeSection): card rows with arrows and
+/// View all, compact grids, promotions, tracks and videos; a links section among them as links.
+fn explore_sub(s: &App, path: &str, title: &str) -> El {
     let v = match ready_or(Key::Page(path.to_string())) { Ok(v) => v, Err(e) => return e };
-    let mut c = col().w_full().gap(20.0).child(heading(title, theme::PAGE_TITLE));
-    for (si, sec) in v["sections"].as_array().cloned().unwrap_or_default().iter().enumerate() {
+    let mut c = col().w_full().gap(28.0).child(heading(title, theme::PAGE_TITLE));
+    let sections = v["sections"].as_array().cloned().unwrap_or_default();
+    // isNavLinkSection
+    let is_nav = |sec: &Value| {
+        matches!(sec["sectionType"].as_str(), Some("PAGE_LINKS_CLOUD" | "PAGE_LINKS"))
+            || sec["items"].as_array().and_then(|a| a.first()).is_some_and(|f| f.get("apiPath").is_some() && f.get("uuid").is_none() && f.get("id").is_none())
+    };
+    let links = |prefix: String, items: &[Value]| {
+        let mut pills = row().w_full().gap(8.0).flex_wrap();
+        for (i, it) in items.iter().enumerate() {
+            pills = pills.child(pill_link(format!("{prefix}-{i}"), it));
+        }
+        pills
+    };
+    if sections.is_empty() {
+        return c.child(ui::empty("No content found"));
+    }
+    if sections.iter().all(is_nav) {
+        let all: Vec<Value> = sections.iter().flat_map(|s| s["items"].as_array().cloned().unwrap_or_default()).collect();
+        return c.child(links("es-0".into(), &all));
+    }
+    let w = *s.nav.content_w;
+    if w <= 0.0 {
+        return c;
+    }
+    for (si, sec) in sections.iter().enumerate() {
+        let items = sec["items"].as_array().cloned().unwrap_or_default();
+        if items.is_empty() {
+            continue;
+        }
         let st = sec["title"].as_str().unwrap_or("").to_string();
-        let as_kind = sec["sectionType"].as_str().and_then(|t| t.strip_suffix("_LIST")).map(str::to_string);
-        let items: Vec<Value> = sec["items"].as_array().cloned().unwrap_or_default().into_iter()
-            .map(|it| match &as_kind { Some(k) if it.get("_itemType").is_none() => json!({"type": k, "data": it}), _ => it })
-            .collect();
-        let cards = cards_for(&format!("es-{si}"), &items);
-        let mut block = col().w_full().gap(10.0);
-        if !st.is_empty() && st != title {
-            block = block.child(heading(&st, theme::SECTION));
-        }
-        if !cards.is_empty() {
-            block = block.child(grid(cards));
-        } else if items.iter().any(|it| data::kind(it) == "TRACK") {
-            // ExploreSubPage renders HomeSection: playFromSource over the section's tracks with a
-            // home-section source, keeping the manual queue.
-            let all: Vec<Value> = items.iter().filter(|it| data::kind(it) == "TRACK").map(|it| data::data(it).clone()).collect();
-            let src = json!({"type": "home-section", "id": st, "name": st});
-            let mut rows = col().w_full().gap(2.0);
-            for (i, tr) in items.iter().enumerate() {
-                let id = data::data(tr)["id"].as_u64().unwrap_or(0);
-                let (all, src) = (all.clone(), src.clone());
-                rows = rows.child(track_row_with(format!("es-{si}-t{i}"), i + 1, data::data(tr), false, None, move |_: &mut App| {
-                    let index = all.iter().position(|t| t["id"].as_u64() == Some(id)).unwrap_or(0);
-                    controller::send(Cmd::PlayFrom { tracks: all.clone(), index, source: src.clone(), album_mode: false });
-                }));
+        if is_nav(sec) {
+            let mut block = col().w_full().gap(10.0);
+            if !st.is_empty() && st != title {
+                block = block.child(heading(&st, theme::SECTION));
             }
-            block = block.child(rows);
-        } else {
-            let mut pills = row().w_full().gap(8.0).flex_wrap();
-            for (i, it) in items.iter().enumerate() {
-                pills = pills.child(pill_link(format!("es-{si}-{i}"), it));
-            }
-            block = block.child(pills);
+            c = c.child(block.child(links(format!("es-{si}"), &items)));
+            continue;
         }
-        c = c.child(block);
+        // Page sections hold bare objects: give each its kind, promotions as Home's.
+        let st_kind = sec["sectionType"].as_str().unwrap_or("");
+        let as_kind = st_kind.strip_suffix("_LIST").map(str::to_string);
+        let typed: Vec<Value> = items.iter().map(|it| {
+            if st_kind.contains("PROMOTION") || data::data(it).get("artifactId").is_some() {
+                json!({"type": "MAGAZINE", "data": data::data(it).clone()})
+            } else {
+                crate::viewall::typed(it, as_kind.as_deref())
+            }
+        }).collect();
+        let shown = json!({"title": if st == title { String::new() } else { st }, "sectionType": st_kind, "items": typed, "apiPath": sec["apiPath"], "hasMore": sec["hasMore"]});
+        if let Some(e) = crate::home::section(si, &shown, w) {
+            c = c.child(e);
+        }
     }
     c
 }
@@ -1750,40 +1854,89 @@ fn days(date: &str) -> Option<i64> {
 fn feed() -> El {
     let v = match ready_or(Key::Feed) { Ok(v) => v, Err(e) => return e };
     let today = (std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0) / 86400) as i64;
-    let group = |date: &str| match days(date).map(|d| today - d) {
-        Some(0) => "Today",
-        Some(1..=6) => "This week",
-        _ => "Older",
-    };
+    let now_months = month_index(today);
     let mut c = col().w_full().gap(14.0).child(heading("Feed", theme::PAGE_TITLE));
     let items = v["items"].as_array().cloned().unwrap_or_default();
     if items.is_empty() {
-        return c.child(ui::empty("Nothing new from the artists you follow"));
+        return c.child(ui::empty("Nothing here yet"));
     }
-    let mut last = "";
-    for (i, it) in items.iter().enumerate() {
-        let g = group(it["occurredAt"].as_str().unwrap_or(""));
-        if g != last {
-            c = c.child(heading(g, 14.0));
-            last = g;
+    // groupFeedByPeriod: by calendar month, in fixed order; undated entries are left out.
+    for label in ["This month", "Last month", "Older"] {
+        let group: Vec<(usize, &Value)> = items.iter().enumerate().filter(|(_, it)| {
+            days(it["occurredAt"].as_str().unwrap_or("")).map(|d| feed_bucket(now_months - month_index(d))) == Some(label)
+        }).collect();
+        if group.is_empty() {
+            continue;
         }
-        let item = &it["item"];
-        let title = item["title"].as_str().unwrap_or("").to_string();
-        let kind = it["kind"].as_str().unwrap_or("").to_string();
-        let sub = data::artist_of(item);
-        let id = item["id"].clone();
-        let (t2, k2) = (title.clone(), kind.clone());
-        c = c.child(row().key(format!("feed-{i}")).w_full().h(64.0).px(10.0).gap(12.0).items_center().radius(10.0).hover(white(0.05))
-            .child(ui::with_image(ui::tile(ui::hue(Some(i as u64 + 60)), 48.0, i as u64 + 60, 8.0), crate::art::item_url(item, 48.0), 48.0, 8.0))
-            .child(col().grow(1.0).min_w(0.0).child(text(title.clone()).font(t(14.0, 600.0)).color(white(0.95)).truncate()).child(text(sub).font(t(12.0, 400.0)).color(white(0.55)).truncate()))
-            .child(icon::<App>(&format!("feed-{i}-play"), &format!("Play {title}"), G::Play).on_press(move |_: &mut App| play_feed_item(&k2, id.clone(), &t2)))
-            .child({
-                let (mk, menu_item) = (format!("feed-{i}-more"), json!({"type": kind.to_uppercase(), "data": item.clone()}));
-                icon::<App>(&mk, &format!("More options for {title}"), G::More)
-                    .on_press(move |s: &mut App| crate::interact::open_media(s, menu_item.clone(), crate::interact::Anchor::Below(mk.clone())))
-            }));
+        c = c.child(heading(label, 14.0));
+        for (i, it) in group {
+            c = c.child(feed_row(i, it));
+        }
     }
     c
+}
+
+/// Months since year 0 for a day count since 1970.
+fn month_index(days: i64) -> i64 {
+    // civil_from_days (Howard Hinnant)
+    let z = days + 719468;
+    let era = z.div_euclid(146097);
+    let doe = z - era * 146097;
+    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let y = yoe + era * 400 + if m <= 2 { 1 } else { 0 };
+    y * 12 + (m - 1)
+}
+
+fn feed_bucket(delta: i64) -> &'static str {
+    match delta {
+        ..=0 => "This month",
+        1 => "Last month",
+        _ => "Older",
+    }
+}
+
+/// A feed entry (FeedRow): it opens the album or mix, plays from its Play, has More options
+/// and right-click; an entry of a kind the app doesn't know is shown but inert.
+fn feed_row(i: usize, it: &Value) -> El {
+    let item = &it["item"];
+    let title = data::name(item);
+    let kind = it["kind"].as_str().unwrap_or("").to_string();
+    // "Single by Artist", "EP by Artist" for releases.
+    let sub = if kind == "album" {
+        let artists = data::artist_of(item);
+        let ty = item["type"].as_str().unwrap_or("");
+        let label = if ty == "EP" { "EP".to_string() } else { ty.chars().next().map(|c| format!("{c}{}", ty[1..].to_lowercase())).unwrap_or_default() };
+        if !label.is_empty() && !artists.is_empty() { format!("{label} by {artists}") } else { artists }
+    } else {
+        data::artist_of(item)
+    };
+    let id = item["id"].clone();
+    let mut r = row().key(format!("feed-{i}")).w_full().h(64.0).px(10.0).gap(12.0).items_center().radius(10.0)
+        .child(ui::with_image(ui::tile(ui::hue(Some(i as u64 + 60)), 48.0, i as u64 + 60, 8.0), crate::art::item_url(item, 48.0), 48.0, 8.0))
+        .child(col().grow(1.0).min_w(0.0).child(text(title.clone()).font(t(14.0, 600.0)).color(white(0.95)).truncate()).child(text(sub.clone()).font(t(12.0, 400.0)).color(white(0.55)).truncate()));
+    if kind != "album" && kind != "mix" {
+        return r;
+    }
+    let open = match kind.as_str() {
+        "album" => id.as_u64().map(Page::Album),
+        _ => Some(Page::Mix(id.as_str().map(str::to_string).unwrap_or_else(|| id.to_string()), title.clone(), sub.clone())),
+    };
+    let menu_item = json!({"type": if kind == "mix" { "MIX" } else { "ALBUM" }, "data": item.clone()});
+    let (t2, k2, m2) = (title.clone(), kind.clone(), menu_item.clone());
+    r = r.hover(white(0.05)).cursor(rune::Cursor::Pointer)
+        .on_secondary_press(move |s: &mut App, p, _| crate::interact::open_media(s, m2.clone(), crate::interact::Anchor::Point(p.x, p.y)));
+    if let Some(p) = open {
+        r = r.on_press(move |s: &mut App| go(s, p.clone()));
+    }
+    r.child(icon::<App>(&format!("feed-{i}-play"), &format!("Play {title}"), G::Play).on_press(move |_: &mut App| play_feed_item(&k2, id.clone(), &t2)))
+        .child({
+            let mk = format!("feed-{i}-more");
+            icon::<App>(&mk, &format!("More options for {title}"), G::More)
+                .on_press(move |s: &mut App| crate::interact::open_media(s, menu_item.clone(), crate::interact::Anchor::Below(mk.clone())))
+        })
 }
 
 pub(crate) fn play_feed_item(kind: &str, id: Value, title: &str) {
@@ -1799,10 +1952,8 @@ pub(crate) fn play_feed_item(kind: &str, id: Value, title: &str) {
             }
             "playlist" => {
                 let Some(uuid) = id.as_str().map(str::to_string) else { return };
-                if let Ok(p) = data::get(Key::Playlist(uuid.clone())).await {
-                    let tracks = p["tracks"]["items"].as_array().cloned().unwrap_or_default();
-                    controller::send(Cmd::PlayCollection { tracks, source: json!({"type": "playlist", "id": uuid, "name": title}), album_mode: false, shuffle: false });
-                }
+                // playableFromMedia: the whole playlist, paged in behind its first tracks.
+                crate::paged::play(crate::paged::PKey::Playlist { uuid: uuid.clone(), order: None, dir: None }, json!({"type": "playlist", "id": uuid, "name": title}), false, None, |_| true);
             }
             _ => {
                 let mid = id.as_str().map(str::to_string).unwrap_or_else(|| id.to_string());
@@ -1935,52 +2086,17 @@ pub fn splash() -> El {
 
 
 /// Suggested tracks: the current track's radio (React SuggestedTab: getMixItems(TRACK_MIX)).
-/// Loved tracks (React FavoritesView): Play and Shuffle, the filter, and the tracks, newest
-/// first (its first page of 100). Unloving one there takes it out of the list.
-fn loved_page(s: &App, v: &View) -> El {
-    let p = match ready_or(Key::LovedTracks) { Ok(v) => v, Err(e) => return e };
-    let tracks: Vec<Value> = p["items"].as_array().cloned().unwrap_or_default().into_iter()
-        .filter(|t| crate::interact::is_fav(crate::interact::Fav::Track, &data::data(t)["id"].as_u64().unwrap_or(0).to_string()) || !crate::interact::favorites_loaded())
-        .collect();
-    let total = p["totalNumberOfItems"].as_u64().unwrap_or(tracks.len() as u64);
-    let source = json!({"type": "favorites", "id": "favorites", "name": "Loved Tracks"});
-    let play = Cmd::PlayCollection { tracks: tracks.clone(), source: source.clone(), album_mode: false, shuffle: false };
-    let shuf = Cmd::PlayCollection { tracks: tracks.clone(), source: source.clone(), album_mode: false, shuffle: true };
-    let filter = text_input(&s.nav.filter, t(13.0, 500.0).lh(18.0))
-        .key("loved-filter").label("Filter on title, artist or album").single_line().w(320.0)
-        .color(white(0.95)).caret(white(0.95), white(0.25)).placeholder("Filter on title, artist or album", white(0.4))
-        .on_edit(|s: &mut App| &mut s.nav.filter);
-    let needle = s.nav.filter.text.clone();
-    let mut shown = Vec::new();
-    for (i, tr) in tracks.iter().enumerate() {
-        if !data::matches(&format!("{} {} {}", data::name(tr), data::artist_of(tr), data::data(tr)["album"]["title"].as_str().unwrap_or("")), &needle) {
-            continue;
-        }
-        shown.push(i);
-    }
-    let empty = shown.is_empty();
-    let rows = track_list("lv-t", Rc::new(tracks), shown, move |tracks, i| {
-        let (all, src) = (tracks.clone(), source.clone());
-        track_row(format!("lv-t{i}"), i + 1, &tracks[i], move |_: &mut App| {
-            controller::send(Cmd::PlayFrom { tracks: all.to_vec(), index: i, source: src.clone(), album_mode: false });
-        })
-    });
-    let art = loved_art(180.0, 14.0, 64.0);
-    let head = row().w_full().gap(24.0).items_end().child(art)
-        .child(col().gap(10.0).min_w(0.0).child(heading("Loved Tracks", theme::PAGE_TITLE))
-            .child(text(format!("{total} tracks")).font(t(13.0, 500.0)).color(white(0.6)))
-            .child(play_buttons(v, "Loved Tracks", play, shuf)));
-    col().w_full().gap(16.0)
-        .child(head)
-        .child(row().h(40.0).px(12.0).radius(10.0).items_center().fill(white(0.06)).child(filter))
-        .child(if !empty { rows } else { tracks_empty(s, "No loved tracks yet") })
-}
-
 /// A mix or radio (React MixPage): its tracks, with Play, Shuffle, Add, Share and More.
 fn mix_page(id: &str, title: &str, sub: &str, v: &View) -> El {
     let m = match ready_or(Key::Mix(id.to_string())) { Ok(v) => v, Err(e) => return e };
     let tracks: Vec<Value> = m["tracks"].as_array().or(m["items"].as_array()).cloned().unwrap_or_default();
-    let source = json!({"type": "mix", "id": id, "name": title});
+    // MixPage: what the link said, else what the mix says about itself; a track's radio plays
+    // as a "radio" source.
+    let radio = m["mixType"].as_str() == Some("TRACK_MIX");
+    let fetched_title = m["title"].as_str().filter(|x| !x.is_empty()).unwrap_or(if radio { "Track Radio" } else { "Mix" }).to_string();
+    let title = if title.is_empty() { fetched_title.as_str() } else { title };
+    let sub = if sub.is_empty() { m["subtitle"].as_str().unwrap_or("") } else { sub };
+    let source = json!({"type": if radio { "radio" } else { "mix" }, "id": id, "name": title});
     let play = Cmd::PlayCollection { tracks: tracks.clone(), source: source.clone(), album_mode: false, shuffle: false };
     let shuf = Cmd::PlayCollection { tracks: tracks.clone(), source: source.clone(), album_mode: false, shuffle: true };
     let (on, mid, l) = (crate::interact::is_fav(crate::interact::Fav::Mix, id), id.to_string(), title.to_string());
@@ -1997,7 +2113,19 @@ fn mix_page(id: &str, title: &str, sub: &str, v: &View) -> El {
         .child(header_btn("mix-more", "More options", "More", G::More, false)
             .on_press(move |s: &mut App| crate::interact::open_media(s, item.clone(), crate::interact::Anchor::Below("mix-more".into()))));
     let seed = id.bytes().fold(7u64, |h, b| h.wrapping_mul(31).wrapping_add(b as u64));
-    let art = tracks.first().and_then(|t| crate::art::item_url(t, 180.0));
+    let art = m["image"].as_str().filter(|u| u.starts_with("http")).map(str::to_string).or_else(|| tracks.first().and_then(|t| crate::art::item_url(t, 180.0)));
+    // "MIX" / "TRACK RADIO" over the title; "N TRACKS (m:ss)" under the subtitle.
+    let secs: u64 = tracks.iter().filter_map(|t| data::data(t)["duration"].as_u64()).sum();
+    let (m_, s_) = (secs / 60, secs % 60);
+    let count = format!("{} TRACK{}{}", tracks.len(), if tracks.len() == 1 { "" } else { "S" }, if secs > 0 { if secs >= 3600 { format!(" ({}:{:02}:{s_:02})", secs / 3600, m_ % 60) } else { format!(" ({m_}:{s_:02})") } } else { String::new() });
+    let sub_el = col().gap(4.0).min_w(0.0)
+        .child(text(if radio { "TRACK RADIO" } else { "MIX" }).font(t(11.0, 700.0).tracking(1.2)).color(white(0.55)))
+        .child(text(sub.to_string()).font(t(13.0, 500.0)).color(white(0.6)).truncate())
+        .child(text(count).font(t(11.0, 500.0).tracking(0.6)).color(white(0.45)));
+    if tracks.is_empty() {
+        return col().w_full().gap(16.0).child(hero_with(title, true, sub_el, seed, false, art, actions))
+            .child(col().gap(6.0).child(text(if radio { "No radio tracks found" } else { "This mix is empty" }).font(t(15.0, 650.0)).color(white(0.9))));
+    }
     let every = (0..tracks.len()).collect();
     let rows = track_list("mx-t", Rc::new(tracks), every, move |tracks, i| {
         let (all, src) = (tracks.clone(), source.clone());
@@ -2006,7 +2134,7 @@ fn mix_page(id: &str, title: &str, sub: &str, v: &View) -> El {
         })
     });
     col().w_full().gap(16.0)
-        .child(hero(title, true, sub, seed, false, art, actions))
+        .child(hero_with(title, true, sub_el, seed, false, art, actions))
         .child(rows)
 }
 
@@ -2017,4 +2145,20 @@ fn suggested(v: &View) -> El {
 /// Credits: what is playing, the contributors by role, then the main artist's bio (React CreditsTab).
 fn credits(v: &View) -> El {
     crate::drawer_tabs::credits(v)
+}
+
+#[cfg(test)]
+mod feed_tests {
+    use super::{days, feed_bucket, month_index};
+
+    #[test]
+    fn feed_groups_by_calendar_month() {
+        let m = |d: &str| month_index(days(d).unwrap());
+        assert_eq!(m("2024-01-15"), 2024 * 12);
+        assert_eq!(m("2023-12-31"), 2023 * 12 + 11);
+        // A December entry seen in January is last month, not older.
+        assert_eq!(feed_bucket(m("2024-01-02") - m("2023-12-31")), "Last month");
+        assert_eq!(feed_bucket(m("2024-03-01") - m("2024-03-31")), "This month");
+        assert_eq!(feed_bucket(m("2024-03-01") - m("2023-12-01")), "Older");
+    }
 }

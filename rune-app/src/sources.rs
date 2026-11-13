@@ -23,6 +23,9 @@ const PLAYLIST_PAGE: u32 = 100;
 pub enum Pager {
     Playlist(String),
     Artist(u64),
+    /// A collection page's own pager (paged.rs): a sorted playlist, Loved Tracks or Videos, an
+    /// artist's popular tracks or view-all list.
+    Paged(crate::paged::PKey),
 }
 
 /// A source's tracks as they load (usePlaySource's `take` / `fetchNext` state).
@@ -41,15 +44,35 @@ pub struct Loader {
     pages: usize,
     /// A page failed to load during the start batch.
     pub failed: bool,
+    /// A page's Shuffle button (playAllFromSource with `shuffle`), rather than shuffle mode.
+    pub play_shuffle: bool,
+    /// A clicked track to start from (usePlaySource `startAt`): the start batch stops once
+    /// it's in.
+    pub start_at: Option<u64>,
+    /// Items the source leaves out (usePlaySource `include`: tracks un-loved this session).
+    include: fn(&Value) -> bool,
+    /// The cursor a cursor-paged pager goes on from.
+    cursor: Option<String>,
 }
 
 impl Loader {
     fn new(meta: Value, loaded: Vec<Value>, pager: Option<Pager>, dedupe: bool, album_mode: bool) -> Loader {
         let offset = loaded.len() as u32;
-        let has_more = pager.is_some();
-        let mut l = Loader { meta, album_mode, pager, dedupe, seen: HashSet::new(), tracks: vec![], playable: 0, offset, has_more, pages: 0, failed: false };
+        Loader::with(meta, loaded, pager, offset, true, dedupe, album_mode, |_| true)
+    }
+
+    /// A source with `loaded` (what a page shows) going on from raw offset `offset` while
+    /// `has_more`, as a page's PlayableSource is (`nextOffset`, `hasMore`, `include`).
+    #[allow(clippy::too_many_arguments)]
+    pub fn with(meta: Value, loaded: Vec<Value>, pager: Option<Pager>, offset: u32, has_more: bool, dedupe: bool, album_mode: bool, include: fn(&Value) -> bool) -> Loader {
+        let has_more = has_more && pager.is_some();
+        let mut l = Loader { meta, album_mode, pager, dedupe, seen: HashSet::new(), tracks: vec![], playable: 0, offset, has_more, pages: 0, failed: false, play_shuffle: false, start_at: None, include, cursor: None };
         l.take(loaded, &|_| true);
         l
+    }
+
+    fn has_start(&self) -> bool {
+        self.start_at.is_some_and(|id| self.tracks.iter().any(|t| t["id"].as_u64() == Some(id)))
     }
 
     /// Adds `items` (skipping ids already seen when deduplicating); returns the new ones and
@@ -64,6 +87,9 @@ impl Loader {
                     continue;
                 }
                 new_ids += 1;
+            }
+            if !(self.include)(&t) {
+                continue;
             }
             if playable(&t) {
                 self.playable += 1;
@@ -80,7 +106,14 @@ impl Loader {
             self.has_more = false;
             return Ok(vec![]);
         };
-        let (items, more) = page(h, &pager, self.offset).await?;
+        let (items, more) = match &pager {
+            Pager::Paged(key) => {
+                let (items, _, cursor, more) = crate::paged::fetch_page(key, self.offset as usize, self.cursor.take()).await.map_err(SoneError::Parse)?;
+                self.cursor = cursor;
+                (items.iter().map(|v| crate::paged::playable_of(key, v)).collect(), more)
+            }
+            _ => page(h, &pager, self.offset).await?,
+        };
         self.pages += 1;
         self.offset += items.len() as u32;
         let n = items.len();
@@ -91,7 +124,7 @@ impl Loader {
 
     /// The start batch: pages until 50 playable tracks or the end. A failure ends paging.
     pub async fn start(&mut self, h: &AppHandle, playable: &(dyn Fn(&Value) -> bool + Sync)) {
-        while self.has_more && self.playable < START_BATCH {
+        while self.has_more && self.playable < START_BATCH && !self.has_start() {
             if let Err(e) = self.next_page(h, playable).await {
                 log::warn!("[rune] failed to load {} tracks: {e}", self.meta["type"].as_str().unwrap_or("source"));
                 self.has_more = false;
@@ -111,6 +144,8 @@ async fn page(h: &AppHandle, pager: &Pager, offset: u32) -> Result<(Vec<Value>, 
             let items = p.items.into_iter().filter_map(|t| serde_json::to_value(t).ok()).collect();
             Ok((items, more))
         }
+        // (paged in by next_page, with its cursor)
+        Pager::Paged(_) => Ok((vec![], false)),
         Pager::Artist(id) => {
             let raw = pages::get_artist_top_tracks_all(st(), h.clone(), *id, offset, ARTIST_PAGE).await?;
             let items: Vec<Value> = raw["items"].as_array().cloned().unwrap_or_default().into_iter()

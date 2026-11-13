@@ -39,10 +39,14 @@ pub enum Key {
     Mix(String),
     /// Every playlist of the user, for the Add to playlist submenu (React getAllPlaylists).
     AllPlaylists,
-    /// Loved tracks, first page (FavoritesView: 100, newest first).
-    LovedTracks,
     /// The signed-in user's full profile (React getProfile): ProfilePage and the account avatar.
     UserProfile,
+    /// A further batch of a playlist's recommended tracks (its Refresh), by api offset.
+    PlaylistRecs(String, u32),
+    /// Every playlist in every folder (LibraryViewAll's filter: getFlattenedPlaylists).
+    FlattenedPlaylists,
+    /// Every top-level folder, all pages (MoveToFolderMenu).
+    AllFolders,
 }
 
 #[derive(Clone)]
@@ -99,6 +103,17 @@ impl Drop for Frozen {
     fn drop(&mut self) {
         FROZEN.set(None);
     }
+}
+
+/// Bumps the catalogue version and returns the new one: for stores beside this cache (paged.rs)
+/// whose changes the panes must see, as they see this cache's.
+pub fn bump_version() -> u64 {
+    VERSION.fetch_add(1, Ordering::Relaxed) + 1
+}
+
+/// The version the view being built read ([`freeze`]), while it builds.
+pub fn frozen_version() -> Option<u64> {
+    FROZEN.get()
 }
 
 fn after_frozen(version: u64) -> bool {
@@ -190,12 +205,26 @@ pub async fn get(key: Key) -> Result<Value, String> {
 
 /// Forget a cached entry so the next ask fetches again (e.g. after signing in).
 pub fn forget(key: &Key) {
+    // A playlist forgotten after an edit (a track added or removed) takes its paged tracks
+    // with it, and the playlist folders take the library lists.
+    match key {
+        Key::Playlist(u) => crate::paged::forget_where(|k| matches!(k, crate::paged::PKey::Playlist { uuid, .. } if uuid == u)),
+        Key::Folders => crate::paged::forget_where(|k| matches!(k, crate::paged::PKey::Library { kind: crate::paged::Lib::Playlists, .. })),
+        Key::FavAlbums => crate::paged::forget_where(|k| matches!(k, crate::paged::PKey::Library { kind: crate::paged::Lib::Albums, .. })),
+        Key::FavArtists => crate::paged::forget_where(|k| matches!(k, crate::paged::PKey::Library { kind: crate::paged::Lib::Artists, .. })),
+        Key::FavMixes => crate::paged::forget_where(|k| matches!(k, crate::paged::PKey::Library { kind: crate::paged::Lib::Mixes, .. })),
+        _ => {}
+    }
     CACHE.lock().unwrap().remove(key);
     VERSION.fetch_add(1, Ordering::Relaxed);
 }
 
 /// Forget every cached entry, so everything shown is fetched again (Refresh app data).
 pub fn clear() {
+    // The paged collections and the playlist page's local overrides go too (paged.rs,
+    // playlist.rs), so Refresh fetches every list again.
+    crate::paged::forget_where(|_| true);
+    crate::playlist::clear_overrides();
     CACHE.lock().unwrap().clear();
     VERSION.fetch_add(1, Ordering::Relaxed);
 }
@@ -223,17 +252,31 @@ async fn fetch(key: &Key) -> Result<Value, String> {
         Key::Artist(id) => v!(pages::get_artist_page(st(), h.clone(), *id)),
         Key::ArtistTopTracks(id) => v!(pages::get_artist_top_tracks_all(st(), h.clone(), *id, 0, 50)),
         Key::Playlist(uuid) => {
-            // The React playlist page fires these three together.
-            let (d, t, r) = tokio::join!(
+            // The React playlist page fires these with its first page of tracks, which comes
+            // through paged.rs (the page goes on paging there).
+            let (d, r) = tokio::join!(
                 metadata::get_playlist_details(st(), uuid.clone()),
-                library::get_playlist_tracks_page(st(), h.clone(), uuid.clone(), 0, 100, None, None),
                 library::get_playlist_recommendations(st(), uuid.clone(), 0, 50)
             );
             let d = d.map_err(|e| e.to_string())?;
-            let t = serde_json::to_value(t.map_err(|e| e.to_string())?).map_err(|e| e.to_string())?;
             let r = r.ok().and_then(|x| serde_json::to_value(x).ok()).unwrap_or(Value::Null);
-            Ok(serde_json::json!({"details": d, "tracks": t, "recommendations": r}))
+            Ok(serde_json::json!({"details": d, "recommendations": r}))
         }
+        Key::FlattenedPlaylists => v!(library::get_all_flattened_playlists(st())),
+        Key::AllFolders => {
+            let mut out = vec![];
+            let mut cursor = String::new();
+            for _ in 0..40 {
+                let v = library::get_playlist_folders(st(), h.clone(), "root".into(), Some(String::new()), 0, 50, "DATE_UPDATED".into(), "DESC".into(), Some(cursor.clone())).await.map_err(|e| e.to_string())?;
+                out.extend(v["items"].as_array().cloned().unwrap_or_default().into_iter().filter(|it| it["itemType"].as_str() == Some("FOLDER")));
+                match v["cursor"].as_str().filter(|c| !c.is_empty()) {
+                    Some(c) => cursor = c.to_string(),
+                    None => break,
+                }
+            }
+            Ok(Value::Array(out))
+        }
+        Key::PlaylistRecs(uuid, offset) => v!(library::get_playlist_recommendations(st(), uuid.clone(), *offset, 50)),
         Key::FavAlbums => v!(library::get_favorite_albums(st(), h.clone(), user_id(), 0, 50, "DATE".into(), "DESC".into())),
         Key::FavArtists => v!(library::get_favorite_artists(st(), h.clone(), user_id(), 0, 50, "DATE".into(), "DESC".into())),
         Key::FavMixes => v!(library::get_favorite_mixes(st(), h.clone(), 0, 50, "DATE".into(), "DESC".into())),
@@ -245,7 +288,6 @@ async fn fetch(key: &Key) -> Result<Value, String> {
         Key::ArtistBio(id) => v!(pages::get_artist_bio(st(), h.clone(), *id)),
         Key::Mix(id) => v!(pages::get_mix_items(st(), id.clone())),
         Key::UserProfile => v!(tauri_app_lib::commands::profile::get_profile(st(), user_id())),
-        Key::LovedTracks => v!(library::get_favorite_tracks(st(), h.clone(), user_id(), 0, 100, "DATE".into(), "DESC".into())),
         Key::AllPlaylists => v!(library::get_all_playlists(st(), h.clone(), user_id(), 0, 500, "DATE_UPDATED".into(), "DESC".into())),
     })
 }
