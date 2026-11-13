@@ -87,6 +87,11 @@ pub enum Cmd {
     /// at the end (TrackContextMenu passes the row's item: a video in a playlist can't be
     /// fetched as a track).
     QueueItems { items: Vec<Value>, next: bool },
+    /// The menus' Play next / Add to queue (addToQueue / playNextInQueue): these tracks (or
+    /// videos) as the menu has them, each tagged with the collection it came from (`source`, the
+    /// "Playing from" once it plays), at the front of the manual queue in order (`next`) or at
+    /// its end. Blocked ones are left out, as the content filter says.
+    QueueTracks { tracks: Vec<Value>, source: Option<Value>, next: bool },
     /// Remove the item at this index of the upcoming list (queue panel).
     RemoveAt(usize),
     /// Clear the upcoming list (does not stop the current track).
@@ -1333,6 +1338,20 @@ impl Player {
                 }
             }
             Cmd::PlayNextIds(ids) => self.fetch_tracks(ids, "play_next", true),
+            Cmd::QueueTracks { tracks, source, next } => {
+                let stamped: Vec<Value> = tracks.into_iter().filter(|t| !self.is_blocked(t)).collect::<Vec<_>>().into_iter().map(|t| {
+                    let mut s = self.stamp(normalize(t));
+                    if let Some(src) = &source {
+                        s["_source"] = src.clone();
+                    }
+                    s
+                }).collect();
+                if next {
+                    self.manual.splice(0..0, stamped);
+                } else {
+                    self.manual.extend(stamped);
+                }
+            }
             Cmd::JumpTo(id) => {
                 if let Some(i) = self.upcoming().iter().position(|t| tid(t) == id) {
                     self.play_from_queue(i).await;

@@ -752,12 +752,12 @@ fn track_menu(track: &Value, playlist: Option<&InPlaylist>, c: &Ctx) -> El {
     };
     let mut m = panel("ctx-menu", 240.0)
         .child(mi("ctx-next", "Play next", G::ListEnd, false, ok, move |s, _| {
-            controller::send(if video { Cmd::QueueItems { items: vec![item1.clone()], next: true } } else { Cmd::PlayNextIds(vec![id]) });
+            queue_track(item1.clone(), true);
             toast(format!("\"{}\" will play next", clip(&t1, 28)), Kind::Success);
             close(s);
         }))
         .child(mi("ctx-queue", "Add to play queue", G::ListPlus, false, ok, move |s, _| {
-            controller::send(if video { Cmd::QueueItems { items: vec![item2.clone()], next: false } } else { Cmd::QueueIds(vec![id]) });
+            queue_track(item2.clone(), false);
             toast(format!("Added \"{}\" to queue", clip(&t2, 28)), Kind::Success);
             close(s);
         }))
@@ -818,6 +818,34 @@ fn track_menu(track: &Value, playlist: Option<&InPlaylist>, c: &Ctx) -> El {
     m
 }
 
+/// The album source a queued track plays from (TrackContextMenu's trackSource).
+fn album_source(t: &Value) -> Option<Value> {
+    let a = &t["album"];
+    a["id"].is_number().then(|| json!({"type": "album", "id": a["id"], "name": a["title"], "image": a["cover"]}))
+}
+
+/// TrackContextMenu's Play next / Add to queue: the track as the menu has it, tagged with its
+/// album. A track the menu knows only by id and title (the player bar's, a search hit) is
+/// fetched first; a playlist's video queues as itself.
+fn queue_track(t: Value, next: bool) {
+    let video = t["itemType"].as_str() == Some("video");
+    if video || t["duration"].is_number() {
+        let source = if video { None } else { album_source(&t) };
+        controller::send(Cmd::QueueTracks { tracks: vec![t], source, next });
+        return;
+    }
+    let id = track_id(&t);
+    sone_host_shim::async_runtime::spawn(async move {
+        match tauri_app_lib::commands::metadata::get_track(state(), id).await.ok().and_then(|t| serde_json::to_value(t).ok()) {
+            Some(full) => {
+                let source = album_source(&full);
+                controller::send(Cmd::QueueTracks { tracks: vec![full], source, next });
+            }
+            None => toast("Couldn't load tracks".into(), Kind::Error),
+        }
+    });
+}
+
 static PENDING_NAV: LazyLock<Mutex<Option<Page>>> = LazyLock::new(Default::default);
 
 /// A page an async action wants to show (track radio found after a fetch).
@@ -842,30 +870,12 @@ fn media_menu(item: &Value, kind: Media, c: &Ctx) -> El {
             close(s);
         }))
         .child(mi("ctx-next", "Play next", G::ListEnd, false, true, move |s, _| {
-            let (item, l) = (i2.clone(), l2.clone());
             close(s);
-            sone_host_shim::async_runtime::spawn(async move {
-                match media_track_ids(&item, kind).await {
-                    Some(ids) if !ids.is_empty() => {
-                        controller::send(Cmd::PlayNextIds(ids));
-                        toast(format!("\"{}\" will play next", clip(&l, 28)), Kind::Success);
-                    }
-                    _ => toast("Failed to play next".into(), Kind::Error),
-                }
-            });
+            queue_media(i2.clone(), kind, true, format!("\"{}\" will play next", clip(&l2, 28)), "Failed to play next");
         }))
         .child(mi("ctx-queue", "Add to play queue", G::ListPlus, false, true, move |s, _| {
-            let (item, l) = (i3.clone(), l3.clone());
             close(s);
-            sone_host_shim::async_runtime::spawn(async move {
-                match media_track_ids(&item, kind).await {
-                    Some(ids) if !ids.is_empty() => {
-                        controller::send(Cmd::QueueIds(ids));
-                        toast(format!("Added \"{}\" to queue", clip(&l, 28)), Kind::Success);
-                    }
-                    _ => toast("Failed to add to queue".into(), Kind::Error),
-                }
-            });
+            queue_media(i3.clone(), kind, false, format!("Added \"{}\" to queue", clip(&l3, 28)), "Failed to add to queue");
         }))
         .child(sep());
     // (a spinner in place of its icon while the item's tracks are fetched for it)
@@ -973,33 +983,71 @@ pub fn play_media(item: &Value, kind: Media) {
     }
 }
 
-fn ids_in(v: &Value) -> Vec<u64> {
-    v.as_array().map(|a| a.iter().filter_map(|t| {
-        let x = data::data(t);
-        x["id"].as_u64().or(t["item"]["id"].as_u64())
-    }).collect()).unwrap_or_default()
+/// The tracks (or a playlist's videos) in a page's list, as the queue takes them.
+fn tracks_in(v: &Value) -> Vec<Value> {
+    v.as_array().map(|a| a.iter().map(crate::paged::track_of).filter(|t| t["id"].is_number()).collect()).unwrap_or_default()
 }
 
-/// All of a media item's track ids (React fetchMediaTracks).
-async fn media_track_ids(item: &Value, kind: Media) -> Option<Vec<u64>> {
+/// All of a media item's tracks (React fetchMediaTracks): an album's, a playlist's (every page
+/// of it, not the first hundred), an artist's top tracks, a mix's. One request, or one per page
+/// of a playlist; never one per track.
+async fn media_tracks(item: &Value, kind: Media) -> Option<Vec<Value>> {
     let d = data::data(item);
     let v = match kind {
-        Media::Album => data::get(Key::Album(d["id"].as_u64()?)).await.ok().map(|p| ids_in(&p["page"]["tracks"])),
-        // Every page of it (getPlaylistTracks), not the first hundred.
-        Media::Playlist => crate::paged::fetch_all(&crate::paged::PKey::Playlist { uuid: d["uuid"].as_str()?.to_string(), order: None, dir: None }).await.ok().map(|items| ids_in(&Value::Array(items))),
+        Media::Album => data::get(Key::Album(d["id"].as_u64()?)).await.ok().map(|p| tracks_in(&p["page"]["tracks"])),
+        Media::Playlist => crate::paged::fetch_all(&crate::paged::PKey::Playlist { uuid: d["uuid"].as_str()?.to_string(), order: None, dir: None }).await.ok().map(|items| tracks_in(&Value::Array(items))),
         Media::Artist => data::get(Key::ArtistTopTracks(d["id"].as_u64()?)).await.ok().map(|p| {
-            let a = ids_in(&p["items"]);
-            if a.is_empty() { ids_in(&p) } else { a }
+            let a = tracks_in(&p["items"]);
+            if a.is_empty() { tracks_in(&p) } else { a }
         }),
         Media::Mix => {
             let mid = d["id"].as_str().map(str::to_string).unwrap_or_else(|| d["id"].to_string());
             data::get(Key::Mix(mid)).await.ok().map(|p| {
-                let a = ids_in(&p["tracks"]);
-                if a.is_empty() { ids_in(&p["items"]) } else { a }
+                let a = tracks_in(&p["tracks"]);
+                if a.is_empty() { tracks_in(&p["items"]) } else { a }
             })
         }
     };
     v
+}
+
+/// All of a media item's track ids, for Add to playlist.
+async fn media_track_ids(item: &Value, kind: Media) -> Option<Vec<u64>> {
+    media_tracks(item, kind).await.map(|t| t.iter().filter_map(|t| t["id"].as_u64()).collect())
+}
+
+/// The collection a media item's queued tracks play from (MediaContextMenu's manualSource);
+/// an artist's have none.
+fn media_source(item: &Value, kind: Media) -> Option<Value> {
+    let d = data::data(item);
+    let name = data::name(item);
+    match kind {
+        Media::Album => Some(json!({"type": "album", "id": d["id"], "name": name, "image": d["cover"]})),
+        Media::Playlist => Some(json!({"type": "playlist", "id": d["uuid"], "name": name, "image": d["squareImage"].as_str().or(d["image"].as_str())})),
+        Media::Mix => Some(json!({"type": "mix", "id": d["id"].as_str().or(d["mixId"].as_str()), "name": name, "image": crate::art::item_url(item, 160.0), "subtitle": data::artist_of(item)})),
+        Media::Artist => None,
+    }
+}
+
+/// MediaContextMenu's Play next / Add to queue: the item's tracks as fetched, tagged with the
+/// item as their source, blocked ones left out (all blocked: why, instead).
+fn queue_media(item: Value, kind: Media, next: bool, done: String, failed: &'static str) {
+    sone_host_shim::async_runtime::spawn(async move {
+        let Some(all) = media_tracks(&item, kind).await else {
+            toast(failed.into(), Kind::Error);
+            return;
+        };
+        let tracks: Vec<Value> = all.iter().filter(|t| !crate::content::blocked(t)).cloned().collect();
+        if tracks.is_empty() {
+            match all.first().and_then(crate::content::reason) {
+                Some(r) => toast(crate::content::message(r).into(), Kind::Info),
+                None => toast(failed.into(), Kind::Error),
+            }
+            return;
+        }
+        controller::send(Cmd::QueueTracks { tracks, source: media_source(&item, kind), next });
+        toast(done, Kind::Success);
+    });
 }
 
 // ------------------------------------------------------------------ submenus
