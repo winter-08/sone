@@ -1,0 +1,208 @@
+{
+ "args": {
+  "builds": [
+   "base=rune-app/target/baseline/release/sone-rune-wrapped"
+  ],
+  "build": [],
+  "runs": 1,
+  "modes": "software,gpu",
+  "gpu": false,
+  "software": false,
+  "keep": 2,
+  "settle": 1.0,
+  "big": 3000,
+  "big_limit": "all",
+  "rss_limit": 3000,
+  "states": "biglist_playing,biglist_scroll,biglist_paused",
+  "display": "1400x900",
+  "refresh": 60,
+  "timeout": 900,
+  "tag": "stress3000-base-guarded",
+  "out": null,
+  "collect": null
+ },
+ "builds": {
+  "base": {
+   "bin": "/home/winter/dev/sone/rune-app/target/baseline/release/sone-rune-wrapped",
+   "env": {}
+  }
+ },
+ "summary": {
+  "software": {
+   "base": {
+    "states": {},
+    "startup.backend_s": {
+     "median": 2.128,
+     "min": 2.128,
+     "max": 2.128,
+     "n": 1
+    },
+    "startup.ui_exposed_s": {
+     "median": 2.934,
+     "min": 2.934,
+     "max": 2.934,
+     "n": 1
+    },
+    "startup.home_content_s": {
+     "median": 3.062,
+     "min": 3.062,
+     "max": 3.062,
+     "n": 1
+    },
+    "startup.first_frame_s": {
+     "median": 2.913,
+     "min": 2.913,
+     "max": 2.913,
+     "n": 1
+    },
+    "quit.exit_s": null,
+    "quit.exited": 0,
+    "runs": 1
+   }
+  },
+  "gpu": {
+   "base": {
+    "states": {},
+    "startup.backend_s": {
+     "median": 2.145,
+     "min": 2.145,
+     "max": 2.145,
+     "n": 1
+    },
+    "startup.ui_exposed_s": {
+     "median": 2.76,
+     "min": 2.76,
+     "max": 2.76,
+     "n": 1
+    },
+    "startup.home_content_s": {
+     "median": 2.8,
+     "min": 2.8,
+     "max": 2.8,
+     "n": 1
+    },
+    "startup.first_frame_s": {
+     "median": 2.705,
+     "min": 2.705,
+     "max": 2.705,
+     "n": 1
+    },
+    "quit.exit_s": null,
+    "quit.exited": 0,
+    "runs": 1
+   }
+  }
+ },
+ "runs": {
+  "software": {
+   "base": [
+    {
+     "keep": 2,
+     "settle_s": 1.0,
+     "big": 3000,
+     "gpu": false,
+     "states": {},
+     "errors": [
+      "fatal: Traceback (most recent call last):\n  File \"/home/winter/dev/sone/verifier/bench/states_driver.py\", line 773, in main\n    r.run()\n    ~~~~~^^\n  File \"/home/winter/dev/sone/verifier/bench/states_driver.py\", line 740, in run\n    self.state(name, enter, expect, check, leave)\n    ~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/winter/dev/sone/verifier/bench/states_driver.py\", line 513, in state\n    ln = self.tail.next_line(i, timeout=30)\n  File \"/home/winter/dev/sone/verifier/bench/states_driver.py\", line 265, in next_line\n    raise TimeoutError(\"no perf line (is SONE_PERF=1 set, and is the app alive?)\")\nTimeoutError: no perf line (is SONE_PERF=1 set, and is the app alive?)\n",
+      "app killed by the RSS guard at 3006 MB"
+     ],
+     "startup": {
+      "backend_s": 2.128,
+      "ui_exposed_s": 2.934,
+      "home_content_s": 3.062,
+      "first_frame_s": 2.913,
+      "first_frame_method": "sway IPC window::new (the toplevel maps on its first buffer commit)"
+     },
+     "seat_after_keyboard": 2,
+     "play_ids": [
+      300001,
+      300002
+     ],
+     "guard": {
+      "killed_at_rss_mb": 3006,
+      "limit_mb": 3000,
+      "phase": "biglist_playing (entering)",
+      "t_since_launch_s": 11.6
+     },
+     "perf_all": [
+      {
+       "t": 7.13,
+       "line": "[perf] closed paused focused fx=on | frames 11.2/s (drawn 56, unchanged 0, skipped 0) views 1.0/s polls 14.4/s | cpu 119.4% rss 273 MB"
+      }
+     ],
+     "session": {
+      "wall_s": 101.2,
+      "loadavg_start": [
+       3.39,
+       4.08,
+       3.99
+      ],
+      "loadavg_end": [
+       3.09,
+       3.82,
+       3.91
+      ],
+      "rundir": "/home/winter/dev/sone/verifier/runs/states-2026-11-13-154847/software/base/run0",
+      "started": "15:48:47"
+     }
+    }
+   ]
+  },
+  "gpu": {
+   "base": [
+    {
+     "keep": 2,
+     "settle_s": 1.0,
+     "big": 3000,
+     "gpu": true,
+     "states": {},
+     "errors": [
+      "fatal: Traceback (most recent call last):\n  File \"/home/winter/dev/sone/verifier/bench/states_driver.py\", line 773, in main\n    r.run()\n    ~~~~~^^\n  File \"/home/winter/dev/sone/verifier/bench/states_driver.py\", line 740, in run\n    self.state(name, enter, expect, check, leave)\n    ~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/winter/dev/sone/verifier/bench/states_driver.py\", line 513, in state\n    ln = self.tail.next_line(i, timeout=30)\n  File \"/home/winter/dev/sone/verifier/bench/states_driver.py\", line 265, in next_line\n    raise TimeoutError(\"no perf line (is SONE_PERF=1 set, and is the app alive?)\")\nTimeoutError: no perf line (is SONE_PERF=1 set, and is the app alive?)\n",
+      "app killed by the RSS guard at 3131 MB"
+     ],
+     "startup": {
+      "backend_s": 2.145,
+      "ui_exposed_s": 2.76,
+      "home_content_s": 2.8,
+      "first_frame_s": 2.705,
+      "first_frame_method": "sway IPC window::new (the toplevel maps on its first buffer commit)"
+     },
+     "seat_after_keyboard": 2,
+     "play_ids": [
+      300001,
+      300002
+     ],
+     "guard": {
+      "killed_at_rss_mb": 3131,
+      "limit_mb": 3000,
+      "phase": "biglist_playing (entering)",
+      "t_since_launch_s": 11.7
+     },
+     "perf_all": [
+      {
+       "t": 7.16,
+       "line": "[perf] closed paused focused fx=on | frames 11.2/s (drawn 56, unchanged 0, skipped 0) views 1.0/s polls 14.8/s | cpu 14.4% rss 273 MB"
+      }
+     ],
+     "session": {
+      "wall_s": 102.8,
+      "loadavg_start": [
+       3.09,
+       3.82,
+       3.91
+      ],
+      "loadavg_end": [
+       3.26,
+       3.63,
+       3.83
+      ],
+      "rundir": "/home/winter/dev/sone/verifier/runs/states-2026-11-13-154847/gpu/base/run0",
+      "started": "15:50:28"
+     }
+    }
+   ]
+  }
+ },
+ "failures": [],
+ "total_s": 204
+}

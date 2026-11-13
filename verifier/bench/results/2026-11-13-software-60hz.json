@@ -1,0 +1,662 @@
+{
+ "runs": {
+  "base": [
+   {
+    "startup_backend_s": 2.14,
+    "startup_ui_s": 3.05,
+    "startup_home_s": 3.12,
+    "idle_home.rss_mb": 298.5,
+    "idle_home.pss_mb": 286.8,
+    "idle_home.processes": 1,
+    "idle_cpu_pct": 0.1,
+    "latency.open_album_s": 0.142,
+    "latency.open_artist_s": 0.213,
+    "latency.search_results_s": 0.188,
+    "after_browsing.rss_mb": 369.7,
+    "after_browsing.pss_mb": 357.7,
+    "after_browsing.processes": 1,
+    "playing_cpu_pct": 509.0,
+    "playing.rss_mb": 389.1,
+    "playing.pss_mb": 374.9,
+    "playing.processes": 1,
+    "playing_album_cpu_pct": 253.5,
+    "frames.refresh_hz": 60.0,
+    "frames.idle_fps": 0.0,
+    "frames.scroll.fps": 16.0,
+    "frames.scroll.median_gap_ms": 50.07,
+    "frames.scroll.worst_gap_ms": 52.0,
+    "frames.scroll.long_frames": 31,
+    "frames.modal.fps": 18.6,
+    "frames.modal.median_gap_ms": 38.09,
+    "frames.modal.worst_gap_ms": 160.6,
+    "frames.modal.long_frames": 15,
+    "frames.playing_fps": 1.2,
+    "frames.playing_album.fps": 62.2,
+    "frames.playing_album.median_gap_ms": 16.05,
+    "frames.playing_album.worst_gap_ms": 20.4,
+    "frames.playing_album.long_frames": 0
+   },
+   {
+    "startup_backend_s": 2.22,
+    "startup_ui_s": 3.03,
+    "startup_home_s": 3.1,
+    "idle_home.rss_mb": 296.9,
+    "idle_home.pss_mb": 285.3,
+    "idle_home.processes": 1,
+    "idle_cpu_pct": 0.1,
+    "latency.open_album_s": 0.142,
+    "latency.open_artist_s": 0.208,
+    "latency.search_results_s": 0.196,
+    "after_browsing.rss_mb": 400.8,
+    "after_browsing.pss_mb": 388.8,
+    "after_browsing.processes": 1,
+    "playing_cpu_pct": 504.3,
+    "playing.rss_mb": 410.5,
+    "playing.pss_mb": 396.3,
+    "playing.processes": 1,
+    "playing_album_cpu_pct": 252.2,
+    "frames.refresh_hz": 60.0,
+    "frames.idle_fps": 0.0,
+    "frames.scroll.fps": 16.0,
+    "frames.scroll.median_gap_ms": 50.07,
+    "frames.scroll.worst_gap_ms": 51.8,
+    "frames.scroll.long_frames": 31,
+    "frames.modal.fps": 18.6,
+    "frames.modal.median_gap_ms": 37.3,
+    "frames.modal.worst_gap_ms": 157.4,
+    "frames.modal.long_frames": 16,
+    "frames.playing_fps": 1.2,
+    "frames.playing_album.fps": 62.5,
+    "frames.playing_album.median_gap_ms": 16.03,
+    "frames.playing_album.worst_gap_ms": 21.1,
+    "frames.playing_album.long_frames": 0
+   },
+   {
+    "startup_backend_s": 2.17,
+    "startup_ui_s": 2.98,
+    "startup_home_s": 3.12,
+    "idle_home.rss_mb": 302.3,
+    "idle_home.pss_mb": 290.7,
+    "idle_home.processes": 1,
+    "idle_cpu_pct": 0.1,
+    "latency.open_album_s": 0.14,
+    "latency.open_artist_s": 0.166,
+    "latency.search_results_s": 0.187,
+    "after_browsing.rss_mb": 378.5,
+    "after_browsing.pss_mb": 366.6,
+    "after_browsing.processes": 1,
+    "playing_cpu_pct": 503.1,
+    "playing.rss_mb": 394.4,
+    "playing.pss_mb": 380.2,
+    "playing.processes": 1,
+    "playing_album_cpu_pct": 250.2,
+    "frames.refresh_hz": 60.0,
+    "frames.idle_fps": 0.0,
+    "frames.scroll.fps": 16.0,
+    "frames.scroll.median_gap_ms": 50.05,
+    "frames.scroll.worst_gap_ms": 52.0,
+    "frames.scroll.long_frames": 31,
+    "frames.modal.fps": 20.0,
+    "frames.modal.median_gap_ms": 34.9,
+    "frames.modal.worst_gap_ms": 145.4,
+    "frames.modal.long_frames": 16,
+    "frames.playing_fps": 1.2,
+    "frames.playing_album.fps": 62.5,
+    "frames.playing_album.median_gap_ms": 16.01,
+    "frames.playing_album.worst_gap_ms": 19.8,
+    "frames.playing_album.long_frames": 0
+   },
+   {
+    "startup_backend_s": 2.16,
+    "startup_ui_s": 2.97,
+    "startup_home_s": 3.12,
+    "idle_home.rss_mb": 304.6,
+    "idle_home.pss_mb": 292.8,
+    "idle_home.processes": 1,
+    "idle_cpu_pct": 0.1,
+    "latency.open_album_s": 0.142,
+    "latency.open_artist_s": 0.183,
+    "latency.search_results_s": 0.199,
+    "after_browsing.rss_mb": 458.9,
+    "after_browsing.pss_mb": 446.8,
+    "after_browsing.processes": 1,
+    "playing_cpu_pct": 498.9,
+    "playing.rss_mb": 470.0,
+    "playing.pss_mb": 455.7,
+    "playing.processes": 1,
+    "playing_album_cpu_pct": 247.0,
+    "frames.refresh_hz": 60.0,
+    "frames.idle_fps": 0.0,
+    "frames.scroll.fps": 16.0,
+    "frames.scroll.median_gap_ms": 50.16,
+    "frames.scroll.worst_gap_ms": 51.2,
+    "frames.scroll.long_frames": 31,
+    "frames.modal.fps": 18.6,
+    "frames.modal.median_gap_ms": 37.6,
+    "frames.modal.worst_gap_ms": 162.0,
+    "frames.modal.long_frames": 16,
+    "frames.playing_fps": 1.2,
+    "frames.playing_album.fps": 62.5,
+    "frames.playing_album.median_gap_ms": 16.04,
+    "frames.playing_album.worst_gap_ms": 18.7,
+    "frames.playing_album.long_frames": 0
+   },
+   {
+    "startup_backend_s": 2.22,
+    "startup_ui_s": 3.03,
+    "startup_home_s": 3.18,
+    "idle_home.rss_mb": 304.0,
+    "idle_home.pss_mb": 292.3,
+    "idle_home.processes": 1,
+    "idle_cpu_pct": 0.2,
+    "latency.open_album_s": 0.142,
+    "latency.open_artist_s": 0.211,
+    "latency.search_results_s": 0.198,
+    "after_browsing.rss_mb": 426.8,
+    "after_browsing.pss_mb": 414.8,
+    "after_browsing.processes": 1,
+    "playing_cpu_pct": 499.4,
+    "playing.rss_mb": 438.5,
+    "playing.pss_mb": 424.2,
+    "playing.processes": 1,
+    "playing_album_cpu_pct": 248.4,
+    "frames.refresh_hz": 60.0,
+    "frames.idle_fps": 0.0,
+    "frames.scroll.fps": 16.0,
+    "frames.scroll.median_gap_ms": 50.07,
+    "frames.scroll.worst_gap_ms": 51.4,
+    "frames.scroll.long_frames": 31,
+    "frames.modal.fps": 18.6,
+    "frames.modal.median_gap_ms": 37.21,
+    "frames.modal.worst_gap_ms": 153.4,
+    "frames.modal.long_frames": 15,
+    "frames.playing_fps": 1.2,
+    "frames.playing_album.fps": 62.5,
+    "frames.playing_album.median_gap_ms": 16.04,
+    "frames.playing_album.worst_gap_ms": 19.8,
+    "frames.playing_album.long_frames": 0
+   }
+  ],
+  "final": [
+   {
+    "startup_backend_s": 2.14,
+    "startup_ui_s": 3.71,
+    "startup_home_s": 3.76,
+    "idle_home.rss_mb": 320.2,
+    "idle_home.pss_mb": 305.5,
+    "idle_home.processes": 1,
+    "idle_cpu_pct": 0.0,
+    "latency.open_album_s": 0.225,
+    "latency.open_artist_s": 0.194,
+    "latency.search_results_s": 0.226,
+    "after_browsing.rss_mb": 392.9,
+    "after_browsing.pss_mb": 377.9,
+    "after_browsing.processes": 1,
+    "playing_cpu_pct": 492.6,
+    "playing.rss_mb": 399.1,
+    "playing.pss_mb": 382.1,
+    "playing.processes": 1,
+    "playing_album_cpu_pct": 200.3,
+    "frames.refresh_hz": 60.0,
+    "frames.idle_fps": 0.0,
+    "frames.scroll.fps": 16.0,
+    "frames.scroll.median_gap_ms": 50.2,
+    "frames.scroll.worst_gap_ms": 52.0,
+    "frames.scroll.long_frames": 31,
+    "frames.modal.fps": 25.0,
+    "frames.modal.median_gap_ms": 31.14,
+    "frames.modal.worst_gap_ms": 116.2,
+    "frames.modal.long_frames": 10,
+    "frames.playing_fps": 1.2,
+    "frames.playing_album.fps": 62.2,
+    "frames.playing_album.median_gap_ms": 16.01,
+    "frames.playing_album.worst_gap_ms": 19.7,
+    "frames.playing_album.long_frames": 0
+   },
+   {
+    "startup_backend_s": 2.14,
+    "startup_ui_s": 3.71,
+    "startup_home_s": 3.76,
+    "idle_home.rss_mb": 319.1,
+    "idle_home.pss_mb": 304.2,
+    "idle_home.processes": 1,
+    "idle_cpu_pct": 0.0,
+    "latency.open_album_s": 0.217,
+    "latency.open_artist_s": 0.203,
+    "latency.search_results_s": 0.225,
+    "after_browsing.rss_mb": 396.0,
+    "after_browsing.pss_mb": 380.8,
+    "after_browsing.processes": 1,
+    "playing_cpu_pct": 509.3,
+    "playing.rss_mb": 400.6,
+    "playing.pss_mb": 383.2,
+    "playing.processes": 1,
+    "playing_album_cpu_pct": 205.2,
+    "frames.refresh_hz": 60.0,
+    "frames.idle_fps": 0.0,
+    "frames.scroll.fps": 16.0,
+    "frames.scroll.median_gap_ms": 50.17,
+    "frames.scroll.worst_gap_ms": 52.6,
+    "frames.scroll.long_frames": 31,
+    "frames.modal.fps": 25.7,
+    "frames.modal.median_gap_ms": 30.74,
+    "frames.modal.worst_gap_ms": 114.7,
+    "frames.modal.long_frames": 9,
+    "frames.playing_fps": 1.2,
+    "frames.playing_album.fps": 62.5,
+    "frames.playing_album.median_gap_ms": 16.1,
+    "frames.playing_album.worst_gap_ms": 21.9,
+    "frames.playing_album.long_frames": 0
+   },
+   {
+    "startup_backend_s": 2.16,
+    "startup_ui_s": 3.69,
+    "startup_home_s": 3.75,
+    "idle_home.rss_mb": 317.9,
+    "idle_home.pss_mb": 303.1,
+    "idle_home.processes": 1,
+    "idle_cpu_pct": 0.1,
+    "latency.open_album_s": 0.219,
+    "latency.open_artist_s": 0.196,
+    "latency.search_results_s": 0.226,
+    "after_browsing.rss_mb": 391.5,
+    "after_browsing.pss_mb": 376.4,
+    "after_browsing.processes": 1,
+    "playing_cpu_pct": 510.7,
+    "playing.rss_mb": 401.9,
+    "playing.pss_mb": 384.7,
+    "playing.processes": 1,
+    "playing_album_cpu_pct": 206.1,
+    "frames.refresh_hz": 60.0,
+    "frames.idle_fps": 0.0,
+    "frames.scroll.fps": 16.0,
+    "frames.scroll.median_gap_ms": 50.02,
+    "frames.scroll.worst_gap_ms": 51.2,
+    "frames.scroll.long_frames": 31,
+    "frames.modal.fps": 24.3,
+    "frames.modal.median_gap_ms": 32.18,
+    "frames.modal.worst_gap_ms": 116.1,
+    "frames.modal.long_frames": 14,
+    "frames.playing_fps": 1.2,
+    "frames.playing_album.fps": 62.2,
+    "frames.playing_album.median_gap_ms": 16.07,
+    "frames.playing_album.worst_gap_ms": 19.4,
+    "frames.playing_album.long_frames": 0
+   },
+   {
+    "startup_backend_s": 2.16,
+    "startup_ui_s": 3.83,
+    "startup_home_s": 3.88,
+    "idle_home.rss_mb": 320.4,
+    "idle_home.pss_mb": 305.6,
+    "idle_home.processes": 1,
+    "idle_cpu_pct": 0.1,
+    "latency.open_album_s": 0.218,
+    "latency.open_artist_s": 0.206,
+    "latency.search_results_s": 0.232,
+    "after_browsing.rss_mb": 392.8,
+    "after_browsing.pss_mb": 377.7,
+    "after_browsing.processes": 1,
+    "playing_cpu_pct": 510.2,
+    "playing.rss_mb": 400.5,
+    "playing.pss_mb": 383.3,
+    "playing.processes": 1,
+    "playing_album_cpu_pct": 203.1,
+    "frames.refresh_hz": 60.0,
+    "frames.idle_fps": 0.0,
+    "frames.scroll.fps": 16.0,
+    "frames.scroll.median_gap_ms": 49.98,
+    "frames.scroll.worst_gap_ms": 51.0,
+    "frames.scroll.long_frames": 31,
+    "frames.modal.fps": 25.0,
+    "frames.modal.median_gap_ms": 31.61,
+    "frames.modal.worst_gap_ms": 114.5,
+    "frames.modal.long_frames": 9,
+    "frames.playing_fps": 1.2,
+    "frames.playing_album.fps": 62.2,
+    "frames.playing_album.median_gap_ms": 16.04,
+    "frames.playing_album.worst_gap_ms": 18.6,
+    "frames.playing_album.long_frames": 0
+   },
+   {
+    "startup_backend_s": 2.14,
+    "startup_ui_s": 3.67,
+    "startup_home_s": 3.81,
+    "idle_home.rss_mb": 316.9,
+    "idle_home.pss_mb": 302.1,
+    "idle_home.processes": 1,
+    "idle_cpu_pct": 0.0,
+    "latency.open_album_s": 0.214,
+    "latency.open_artist_s": 0.204,
+    "latency.search_results_s": 0.222,
+    "after_browsing.rss_mb": 392.3,
+    "after_browsing.pss_mb": 377.2,
+    "after_browsing.processes": 1,
+    "playing_cpu_pct": 511.4,
+    "playing.rss_mb": 398.0,
+    "playing.pss_mb": 380.8,
+    "playing.processes": 1,
+    "playing_album_cpu_pct": 208.1,
+    "frames.refresh_hz": 60.0,
+    "frames.idle_fps": 0.0,
+    "frames.scroll.fps": 16.0,
+    "frames.scroll.median_gap_ms": 50.17,
+    "frames.scroll.worst_gap_ms": 51.3,
+    "frames.scroll.long_frames": 31,
+    "frames.modal.fps": 25.0,
+    "frames.modal.median_gap_ms": 31.61,
+    "frames.modal.worst_gap_ms": 118.7,
+    "frames.modal.long_frames": 9,
+    "frames.playing_fps": 1.2,
+    "frames.playing_album.fps": 62.5,
+    "frames.playing_album.median_gap_ms": 16.05,
+    "frames.playing_album.worst_gap_ms": 18.1,
+    "frames.playing_album.long_frames": 0
+   }
+  ]
+ },
+ "summary": {
+  "base": {
+   "startup_backend_s": {
+    "median": 2.17,
+    "min": 2.14,
+    "max": 2.22,
+    "n": 5
+   },
+   "startup_ui_s": {
+    "median": 3.03,
+    "min": 2.97,
+    "max": 3.05,
+    "n": 5
+   },
+   "startup_home_s": {
+    "median": 3.12,
+    "min": 3.1,
+    "max": 3.18,
+    "n": 5
+   },
+   "idle_home.rss_mb": {
+    "median": 302.3,
+    "min": 296.9,
+    "max": 304.6,
+    "n": 5
+   },
+   "idle_home.pss_mb": {
+    "median": 290.7,
+    "min": 285.3,
+    "max": 292.8,
+    "n": 5
+   },
+   "idle_home.processes": {
+    "median": 1,
+    "min": 1,
+    "max": 1,
+    "n": 5
+   },
+   "after_browsing.pss_mb": {
+    "median": 388.8,
+    "min": 357.7,
+    "max": 446.8,
+    "n": 5
+   },
+   "playing.pss_mb": {
+    "median": 396.3,
+    "min": 374.9,
+    "max": 455.7,
+    "n": 5
+   },
+   "idle_cpu_pct": {
+    "median": 0.1,
+    "min": 0.1,
+    "max": 0.2,
+    "n": 5
+   },
+   "playing_cpu_pct": {
+    "median": 503.1,
+    "min": 498.9,
+    "max": 509.0,
+    "n": 5
+   },
+   "playing_album_cpu_pct": {
+    "median": 250.2,
+    "min": 247.0,
+    "max": 253.5,
+    "n": 5
+   },
+   "latency.open_album_s": {
+    "median": 0.142,
+    "min": 0.14,
+    "max": 0.142,
+    "n": 5
+   },
+   "latency.open_artist_s": {
+    "median": 0.208,
+    "min": 0.166,
+    "max": 0.213,
+    "n": 5
+   },
+   "latency.search_results_s": {
+    "median": 0.196,
+    "min": 0.187,
+    "max": 0.199,
+    "n": 5
+   },
+   "frames.idle_fps": {
+    "median": 0.0,
+    "min": 0.0,
+    "max": 0.0,
+    "n": 5
+   },
+   "frames.playing_fps": {
+    "median": 1.2,
+    "min": 1.2,
+    "max": 1.2,
+    "n": 5
+   },
+   "frames.playing_album.fps": {
+    "median": 62.5,
+    "min": 62.2,
+    "max": 62.5,
+    "n": 5
+   },
+   "frames.playing_album.worst_gap_ms": {
+    "median": 19.8,
+    "min": 18.7,
+    "max": 21.1,
+    "n": 5
+   },
+   "frames.scroll.fps": {
+    "median": 16.0,
+    "min": 16.0,
+    "max": 16.0,
+    "n": 5
+   },
+   "frames.scroll.median_gap_ms": {
+    "median": 50.07,
+    "min": 50.05,
+    "max": 50.16,
+    "n": 5
+   },
+   "frames.scroll.worst_gap_ms": {
+    "median": 51.8,
+    "min": 51.2,
+    "max": 52.0,
+    "n": 5
+   },
+   "frames.modal.fps": {
+    "median": 18.6,
+    "min": 18.6,
+    "max": 20.0,
+    "n": 5
+   },
+   "frames.modal.worst_gap_ms": {
+    "median": 157.4,
+    "min": 145.4,
+    "max": 162.0,
+    "n": 5
+   }
+  },
+  "final": {
+   "startup_backend_s": {
+    "median": 2.14,
+    "min": 2.14,
+    "max": 2.16,
+    "n": 5
+   },
+   "startup_ui_s": {
+    "median": 3.71,
+    "min": 3.67,
+    "max": 3.83,
+    "n": 5
+   },
+   "startup_home_s": {
+    "median": 3.76,
+    "min": 3.75,
+    "max": 3.88,
+    "n": 5
+   },
+   "idle_home.rss_mb": {
+    "median": 319.1,
+    "min": 316.9,
+    "max": 320.4,
+    "n": 5
+   },
+   "idle_home.pss_mb": {
+    "median": 304.2,
+    "min": 302.1,
+    "max": 305.6,
+    "n": 5
+   },
+   "idle_home.processes": {
+    "median": 1,
+    "min": 1,
+    "max": 1,
+    "n": 5
+   },
+   "after_browsing.pss_mb": {
+    "median": 377.7,
+    "min": 376.4,
+    "max": 380.8,
+    "n": 5
+   },
+   "playing.pss_mb": {
+    "median": 383.2,
+    "min": 380.8,
+    "max": 384.7,
+    "n": 5
+   },
+   "idle_cpu_pct": {
+    "median": 0.0,
+    "min": 0.0,
+    "max": 0.1,
+    "n": 5
+   },
+   "playing_cpu_pct": {
+    "median": 510.2,
+    "min": 492.6,
+    "max": 511.4,
+    "n": 5
+   },
+   "playing_album_cpu_pct": {
+    "median": 205.2,
+    "min": 200.3,
+    "max": 208.1,
+    "n": 5
+   },
+   "latency.open_album_s": {
+    "median": 0.218,
+    "min": 0.214,
+    "max": 0.225,
+    "n": 5
+   },
+   "latency.open_artist_s": {
+    "median": 0.203,
+    "min": 0.194,
+    "max": 0.206,
+    "n": 5
+   },
+   "latency.search_results_s": {
+    "median": 0.226,
+    "min": 0.222,
+    "max": 0.232,
+    "n": 5
+   },
+   "frames.idle_fps": {
+    "median": 0.0,
+    "min": 0.0,
+    "max": 0.0,
+    "n": 5
+   },
+   "frames.playing_fps": {
+    "median": 1.2,
+    "min": 1.2,
+    "max": 1.2,
+    "n": 5
+   },
+   "frames.playing_album.fps": {
+    "median": 62.2,
+    "min": 62.2,
+    "max": 62.5,
+    "n": 5
+   },
+   "frames.playing_album.worst_gap_ms": {
+    "median": 19.4,
+    "min": 18.1,
+    "max": 21.9,
+    "n": 5
+   },
+   "frames.scroll.fps": {
+    "median": 16.0,
+    "min": 16.0,
+    "max": 16.0,
+    "n": 5
+   },
+   "frames.scroll.median_gap_ms": {
+    "median": 50.17,
+    "min": 49.98,
+    "max": 50.2,
+    "n": 5
+   },
+   "frames.scroll.worst_gap_ms": {
+    "median": 51.3,
+    "min": 51.0,
+    "max": 52.6,
+    "n": 5
+   },
+   "frames.modal.fps": {
+    "median": 25.0,
+    "min": 24.3,
+    "max": 25.7,
+    "n": 5
+   },
+   "frames.modal.worst_gap_ms": {
+    "median": 116.1,
+    "min": 114.5,
+    "max": 118.7,
+    "n": 5
+   }
+  }
+ },
+ "sizes": {
+  "base": {
+   "binary_mb": 78.5
+  },
+  "final": {
+   "binary_mb": 75.6
+  }
+ },
+ "display": "1400x1800",
+ "n": 5,
+ "gpu": false,
+ "refresh": 60,
+ "builds": {
+  "base": {
+   "bin": "/home/winter/dev/sone/rune-app/target/baseline/release/sone-rune-wrapped",
+   "env": {}
+  },
+  "final": {
+   "bin": "/home/winter/dev/sone/rune-app/target/stage-final/release/sone-rune-wrapped",
+   "env": {}
+  }
+ }
+}

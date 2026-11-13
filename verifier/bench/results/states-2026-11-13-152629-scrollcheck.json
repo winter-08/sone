@@ -1,0 +1,2043 @@
+{
+ "args": {
+  "builds": [
+   "base=rune-app/target/baseline/release/sone-rune-wrapped",
+   "bump=rune-app/target/stage-bump/release/sone-rune-wrapped",
+   "perf=rune-app/target/stage-perf/release/sone-rune-wrapped",
+   "final=rune-app/target/stage-final/release/sone-rune-wrapped"
+  ],
+  "build": [],
+  "runs": 1,
+  "modes": "software,gpu",
+  "gpu": false,
+  "software": true,
+  "keep": 1,
+  "settle": 1.0,
+  "big": 3000,
+  "big_limit": "honor",
+  "rss_limit": 3000,
+  "states": "biglist_playing,biglist_scroll",
+  "display": "1400x900",
+  "refresh": 60,
+  "timeout": 900,
+  "tag": "scrollcheck",
+  "out": null,
+  "collect": null
+ },
+ "builds": {
+  "base": {
+   "bin": "/home/winter/dev/sone/rune-app/target/baseline/release/sone-rune-wrapped",
+   "env": {}
+  },
+  "bump": {
+   "bin": "/home/winter/dev/sone/rune-app/target/stage-bump/release/sone-rune-wrapped",
+   "env": {}
+  },
+  "perf": {
+   "bin": "/home/winter/dev/sone/rune-app/target/stage-perf/release/sone-rune-wrapped",
+   "env": {}
+  },
+  "final": {
+   "bin": "/home/winter/dev/sone/rune-app/target/stage-final/release/sone-rune-wrapped",
+   "env": {}
+  }
+ },
+ "summary": {
+  "software": {
+   "base": {
+    "states": {
+     "biglist_playing": {
+      "took": 1,
+      "runs": 1,
+      "notes": [],
+      "perf.frames": {
+       "median": 61.0,
+       "min": 61.0,
+       "max": 61.0,
+       "n": 1
+      },
+      "perf.unchanged_per_s": {
+       "median": 0.0,
+       "min": 0.0,
+       "max": 0.0,
+       "n": 1
+      },
+      "perf.skipped_per_s": {
+       "median": 0.0,
+       "min": 0.0,
+       "max": 0.0,
+       "n": 1
+      },
+      "perf.views": {
+       "median": 1.0,
+       "min": 1.0,
+       "max": 1.0,
+       "n": 1
+      },
+      "perf.polls": {
+       "median": 60.8,
+       "min": 60.8,
+       "max": 60.8,
+       "n": 1
+      },
+      "perf.regions": null,
+      "perf.cpu": {
+       "median": 238.2,
+       "min": 238.2,
+       "max": 238.2,
+       "n": 1
+      },
+      "ext.sway_cpu_pct": {
+       "median": 0.6,
+       "min": 0.6,
+       "max": 0.6,
+       "n": 1
+      },
+      "perf.rss": {
+       "median": 450.0,
+       "min": 450.0,
+       "max": 450.0,
+       "n": 1
+      },
+      "ext.pss_mb": {
+       "median": 436.6,
+       "min": 436.6,
+       "max": 436.6,
+       "n": 1
+      },
+      "gpu_mem_mib.app": null,
+      "ext.machine_busy_pct": {
+       "median": 21.6,
+       "min": 21.6,
+       "max": 21.6,
+       "n": 1
+      },
+      "perf.drawn": {
+       "median": 305.0,
+       "min": 305.0,
+       "max": 305.0,
+       "n": 1
+      },
+      "perf.drawn_per_s": {
+       "median": 61.0,
+       "min": 61.0,
+       "max": 61.0,
+       "n": 1
+      },
+      "perf.skipped": {
+       "median": 0.0,
+       "min": 0.0,
+       "max": 0.0,
+       "n": 1
+      },
+      "perf.unchanged": {
+       "median": 0.0,
+       "min": 0.0,
+       "max": 0.0,
+       "n": 1
+      },
+      "threads_pct": {
+       "llvmpipe-#": 215.6,
+       "sone-rune": 21.9
+      },
+      "nav_heading_s": {
+       "median": 0.216,
+       "min": 0.216,
+       "max": 0.216,
+       "n": 1
+      },
+      "count_lookup_s": {
+       "median": 0.072,
+       "min": 0.072,
+       "max": 0.072,
+       "n": 1
+      },
+      "enter_s": {
+       "median": 2.749,
+       "min": 2.749,
+       "max": 2.749,
+       "n": 1
+      }
+     },
+     "biglist_scroll": {
+      "took": 1,
+      "runs": 1,
+      "notes": [],
+      "perf.frames": {
+       "median": 20.0,
+       "min": 20.0,
+       "max": 20.0,
+       "n": 1
+      },
+      "perf.unchanged_per_s": {
+       "median": 0.0,
+       "min": 0.0,
+       "max": 0.0,
+       "n": 1
+      },
+      "perf.skipped_per_s": {
+       "median": 0.0,
+       "min": 0.0,
+       "max": 0.0,
+       "n": 1
+      },
+      "perf.views": {
+       "median": 19.6,
+       "min": 19.6,
+       "max": 19.6,
+       "n": 1
+      },
+      "perf.polls": {
+       "median": 20.0,
+       "min": 20.0,
+       "max": 20.0,
+       "n": 1
+      },
+      "perf.regions": null,
+      "perf.cpu": {
+       "median": 164.8,
+       "min": 164.8,
+       "max": 164.8,
+       "n": 1
+      },
+      "ext.sway_cpu_pct": {
+       "median": 0.2,
+       "min": 0.2,
+       "max": 0.2,
+       "n": 1
+      },
+      "perf.rss": {
+       "median": 451.0,
+       "min": 451.0,
+       "max": 451.0,
+       "n": 1
+      },
+      "ext.pss_mb": {
+       "median": 434.6,
+       "min": 434.6,
+       "max": 434.6,
+       "n": 1
+      },
+      "gpu_mem_mib.app": null,
+      "ext.machine_busy_pct": {
+       "median": 19.3,
+       "min": 19.3,
+       "max": 19.3,
+       "n": 1
+      },
+      "perf.drawn": {
+       "median": 100.0,
+       "min": 100.0,
+       "max": 100.0,
+       "n": 1
+      },
+      "perf.drawn_per_s": {
+       "median": 20.0,
+       "min": 20.0,
+       "max": 20.0,
+       "n": 1
+      },
+      "perf.skipped": {
+       "median": 0.0,
+       "min": 0.0,
+       "max": 0.0,
+       "n": 1
+      },
+      "perf.unchanged": {
+       "median": 0.0,
+       "min": 0.0,
+       "max": 0.0,
+       "n": 1
+      },
+      "threads_pct": {
+       "sone-rune": 96.1,
+       "llvmpipe-#": 69.5
+      },
+      "nav_heading_s": null,
+      "count_lookup_s": null,
+      "enter_s": {
+       "median": 0.524,
+       "min": 0.524,
+       "max": 0.524,
+       "n": 1
+      }
+     }
+    },
+    "startup.backend_s": {
+     "median": 2.149,
+     "min": 2.149,
+     "max": 2.149,
+     "n": 1
+    },
+    "startup.ui_exposed_s": {
+     "median": 2.944,
+     "min": 2.944,
+     "max": 2.944,
+     "n": 1
+    },
+    "startup.home_content_s": {
+     "median": 3.068,
+     "min": 3.068,
+     "max": 3.068,
+     "n": 1
+    },
+    "startup.first_frame_s": {
+     "median": 2.922,
+     "min": 2.922,
+     "max": 2.922,
+     "n": 1
+    },
+    "quit.exit_s": {
+     "median": 0.037,
+     "min": 0.037,
+     "max": 0.037,
+     "n": 1
+    },
+    "quit.exited": 1,
+    "runs": 1
+   },
+   "bump": {
+    "states": {
+     "biglist_playing": {
+      "took": 1,
+      "runs": 1,
+      "notes": [],
+      "perf.frames": {
+       "median": 60.8,
+       "min": 60.8,
+       "max": 60.8,
+       "n": 1
+      },
+      "perf.unchanged_per_s": {
+       "median": 0.0,
+       "min": 0.0,
+       "max": 0.0,
+       "n": 1
+      },
+      "perf.skipped_per_s": {
+       "median": 0.0,
+       "min": 0.0,
+       "max": 0.0,
+       "n": 1
+      },
+      "perf.views": {
+       "median": 1.0,
+       "min": 1.0,
+       "max": 1.0,
+       "n": 1
+      },
+      "perf.polls": {
+       "median": 61.0,
+       "min": 61.0,
+       "max": 61.0,
+       "n": 1
+      },
+      "perf.regions": null,
+      "perf.cpu": {
+       "median": 241.0,
+       "min": 241.0,
+       "max": 241.0,
+       "n": 1
+      },
+      "ext.sway_cpu_pct": {
+       "median": 0.6,
+       "min": 0.6,
+       "max": 0.6,
+       "n": 1
+      },
+      "perf.rss": {
+       "median": 494.0,
+       "min": 494.0,
+       "max": 494.0,
+       "n": 1
+      },
+      "ext.pss_mb": {
+       "median": 477.5,
+       "min": 477.5,
+       "max": 477.5,
+       "n": 1
+      },
+      "gpu_mem_mib.app": null,
+      "ext.machine_busy_pct": {
+       "median": 21.9,
+       "min": 21.9,
+       "max": 21.9,
+       "n": 1
+      },
+      "perf.drawn": {
+       "median": 304.0,
+       "min": 304.0,
+       "max": 304.0,
+       "n": 1
+      },
+      "perf.drawn_per_s": {
+       "median": 60.8,
+       "min": 60.8,
+       "max": 60.8,
+       "n": 1
+      },
+      "perf.skipped": {
+       "median": 0.0,
+       "min": 0.0,
+       "max": 0.0,
+       "n": 1
+      },
+      "perf.unchanged": {
+       "median": 0.0,
+       "min": 0.0,
+       "max": 0.0,
+       "n": 1
+      },
+      "threads_pct": {
+       "llvmpipe-#": 219.4,
+       "sone-rune": 21.8
+      },
+      "nav_heading_s": {
+       "median": 0.306,
+       "min": 0.306,
+       "max": 0.306,
+       "n": 1
+      },
+      "count_lookup_s": {
+       "median": 0.085,
+       "min": 0.085,
+       "max": 0.085,
+       "n": 1
+      },
+      "enter_s": {
+       "median": 2.847,
+       "min": 2.847,
+       "max": 2.847,
+       "n": 1
+      }
+     },
+     "biglist_scroll": {
+      "took": 1,
+      "runs": 1,
+      "notes": [],
+      "perf.frames": {
+       "median": 28.2,
+       "min": 28.2,
+       "max": 28.2,
+       "n": 1
+      },
+      "perf.unchanged_per_s": {
+       "median": 0.0,
+       "min": 0.0,
+       "max": 0.0,
+       "n": 1
+      },
+      "perf.skipped_per_s": {
+       "median": 0.0,
+       "min": 0.0,
+       "max": 0.0,
+       "n": 1
+      },
+      "perf.views": {
+       "median": 20.6,
+       "min": 20.6,
+       "max": 20.6,
+       "n": 1
+      },
+      "perf.polls": {
+       "median": 28.4,
+       "min": 28.4,
+       "max": 28.4,
+       "n": 1
+      },
+      "perf.regions": null,
+      "perf.cpu": {
+       "median": 188.2,
+       "min": 188.2,
+       "max": 188.2,
+       "n": 1
+      },
+      "ext.sway_cpu_pct": {
+       "median": 0.4,
+       "min": 0.4,
+       "max": 0.4,
+       "n": 1
+      },
+      "perf.rss": {
+       "median": 495.0,
+       "min": 495.0,
+       "max": 495.0,
+       "n": 1
+      },
+      "ext.pss_mb": {
+       "median": 475.5,
+       "min": 475.5,
+       "max": 475.5,
+       "n": 1
+      },
+      "gpu_mem_mib.app": null,
+      "ext.machine_busy_pct": {
+       "median": 20.4,
+       "min": 20.4,
+       "max": 20.4,
+       "n": 1
+      },
+      "perf.drawn": {
+       "median": 141.0,
+       "min": 141.0,
+       "max": 141.0,
+       "n": 1
+      },
+      "perf.drawn_per_s": {
+       "median": 28.2,
+       "min": 28.2,
+       "max": 28.2,
+       "n": 1
+      },
+      "perf.skipped": {
+       "median": 0.0,
+       "min": 0.0,
+       "max": 0.0,
+       "n": 1
+      },
+      "perf.unchanged": {
+       "median": 0.0,
+       "min": 0.0,
+       "max": 0.0,
+       "n": 1
+      },
+      "threads_pct": {
+       "llvmpipe-#": 100.6,
+       "sone-rune": 88.6
+      },
+      "nav_heading_s": null,
+      "count_lookup_s": null,
+      "enter_s": {
+       "median": 0.525,
+       "min": 0.525,
+       "max": 0.525,
+       "n": 1
+      }
+     }
+    },
+    "startup.backend_s": {
+     "median": 2.13,
+     "min": 2.13,
+     "max": 2.13,
+     "n": 1
+    },
+    "startup.ui_exposed_s": {
+     "median": 3.721,
+     "min": 3.721,
+     "max": 3.721,
+     "n": 1
+    },
+    "startup.home_content_s": {
+     "median": 3.759,
+     "min": 3.759,
+     "max": 3.759,
+     "n": 1
+    },
+    "startup.first_frame_s": {
+     "median": 3.634,
+     "min": 3.634,
+     "max": 3.634,
+     "n": 1
+    },
+    "quit.exit_s": {
+     "median": 0.037,
+     "min": 0.037,
+     "max": 0.037,
+     "n": 1
+    },
+    "quit.exited": 1,
+    "runs": 1
+   },
+   "perf": {
+    "states": {
+     "biglist_playing": {
+      "took": 1,
+      "runs": 1,
+      "notes": [],
+      "perf.frames": {
+       "median": 62.4,
+       "min": 62.4,
+       "max": 62.4,
+       "n": 1
+      },
+      "perf.unchanged_per_s": {
+       "median": 0.0,
+       "min": 0.0,
+       "max": 0.0,
+       "n": 1
+      },
+      "perf.skipped_per_s": {
+       "median": 0.0,
+       "min": 0.0,
+       "max": 0.0,
+       "n": 1
+      },
+      "perf.views": {
+       "median": 1.0,
+       "min": 1.0,
+       "max": 1.0,
+       "n": 1
+      },
+      "perf.polls": {
+       "median": 62.4,
+       "min": 62.4,
+       "max": 62.4,
+       "n": 1
+      },
+      "perf.regions": {
+       "median": 1.0,
+       "min": 1.0,
+       "max": 1.0,
+       "n": 1
+      },
+      "perf.cpu": {
+       "median": 243.8,
+       "min": 243.8,
+       "max": 243.8,
+       "n": 1
+      },
+      "ext.sway_cpu_pct": {
+       "median": 0.4,
+       "min": 0.4,
+       "max": 0.4,
+       "n": 1
+      },
+      "perf.rss": {
+       "median": 328.0,
+       "min": 328.0,
+       "max": 328.0,
+       "n": 1
+      },
+      "ext.pss_mb": {
+       "median": 311.0,
+       "min": 311.0,
+       "max": 311.0,
+       "n": 1
+      },
+      "gpu_mem_mib.app": null,
+      "ext.machine_busy_pct": {
+       "median": 21.5,
+       "min": 21.5,
+       "max": 21.5,
+       "n": 1
+      },
+      "perf.drawn": {
+       "median": 312.0,
+       "min": 312.0,
+       "max": 312.0,
+       "n": 1
+      },
+      "perf.drawn_per_s": {
+       "median": 62.4,
+       "min": 62.4,
+       "max": 62.4,
+       "n": 1
+      },
+      "perf.skipped": {
+       "median": 0.0,
+       "min": 0.0,
+       "max": 0.0,
+       "n": 1
+      },
+      "perf.unchanged": {
+       "median": 0.0,
+       "min": 0.0,
+       "max": 0.0,
+       "n": 1
+      },
+      "threads_pct": {
+       "llvmpipe-#": 227.9,
+       "sone-rune": 14.8
+      },
+      "nav_heading_s": {
+       "median": 0.138,
+       "min": 0.138,
+       "max": 0.138,
+       "n": 1
+      },
+      "count_lookup_s": {
+       "median": 0.02,
+       "min": 0.02,
+       "max": 0.02,
+       "n": 1
+      },
+      "enter_s": {
+       "median": 2.618,
+       "min": 2.618,
+       "max": 2.618,
+       "n": 1
+      }
+     },
+     "biglist_scroll": {
+      "took": 1,
+      "runs": 1,
+      "notes": [],
+      "perf.frames": {
+       "median": 62.2,
+       "min": 62.2,
+       "max": 62.2,
+       "n": 1
+      },
+      "perf.unchanged_per_s": {
+       "median": 0.2,
+       "min": 0.2,
+       "max": 0.2,
+       "n": 1
+      },
+      "perf.skipped_per_s": {
+       "median": 0.0,
+       "min": 0.0,
+       "max": 0.0,
+       "n": 1
+      },
+      "perf.views": {
+       "median": 1.0,
+       "min": 1.0,
+       "max": 1.0,
+       "n": 1
+      },
+      "perf.polls": {
+       "median": 62.4,
+       "min": 62.4,
+       "max": 62.4,
+       "n": 1
+      },
+      "perf.regions": {
+       "median": 1.0,
+       "min": 1.0,
+       "max": 1.0,
+       "n": 1
+      },
+      "perf.cpu": {
+       "median": 240.6,
+       "min": 240.6,
+       "max": 240.6,
+       "n": 1
+      },
+      "ext.sway_cpu_pct": {
+       "median": 0.4,
+       "min": 0.4,
+       "max": 0.4,
+       "n": 1
+      },
+      "perf.rss": {
+       "median": 330.0,
+       "min": 330.0,
+       "max": 330.0,
+       "n": 1
+      },
+      "ext.pss_mb": {
+       "median": 310.4,
+       "min": 310.4,
+       "max": 310.4,
+       "n": 1
+      },
+      "gpu_mem_mib.app": null,
+      "ext.machine_busy_pct": {
+       "median": 21.9,
+       "min": 21.9,
+       "max": 21.9,
+       "n": 1
+      },
+      "perf.drawn": {
+       "median": 311.0,
+       "min": 311.0,
+       "max": 311.0,
+       "n": 1
+      },
+      "perf.drawn_per_s": {
+       "median": 62.2,
+       "min": 62.2,
+       "max": 62.2,
+       "n": 1
+      },
+      "perf.skipped": {
+       "median": 0.0,
+       "min": 0.0,
+       "max": 0.0,
+       "n": 1
+      },
+      "perf.unchanged": {
+       "median": 1.0,
+       "min": 1.0,
+       "max": 1.0,
+       "n": 1
+      },
+      "threads_pct": {
+       "llvmpipe-#": 220.5,
+       "sone-rune": 19.4
+      },
+      "nav_heading_s": null,
+      "count_lookup_s": null,
+      "enter_s": {
+       "median": 0.531,
+       "min": 0.531,
+       "max": 0.531,
+       "n": 1
+      }
+     }
+    },
+    "startup.backend_s": {
+     "median": 2.124,
+     "min": 2.124,
+     "max": 2.124,
+     "n": 1
+    },
+    "startup.ui_exposed_s": {
+     "median": 3.647,
+     "min": 3.647,
+     "max": 3.647,
+     "n": 1
+    },
+    "startup.home_content_s": {
+     "median": 3.758,
+     "min": 3.758,
+     "max": 3.758,
+     "n": 1
+    },
+    "startup.first_frame_s": {
+     "median": 3.623,
+     "min": 3.623,
+     "max": 3.623,
+     "n": 1
+    },
+    "quit.exit_s": {
+     "median": 0.022,
+     "min": 0.022,
+     "max": 0.022,
+     "n": 1
+    },
+    "quit.exited": 1,
+    "runs": 1
+   },
+   "final": {
+    "states": {
+     "biglist_playing": {
+      "took": 1,
+      "runs": 1,
+      "notes": [],
+      "perf.frames": {
+       "median": 62.4,
+       "min": 62.4,
+       "max": 62.4,
+       "n": 1
+      },
+      "perf.unchanged_per_s": {
+       "median": 0.0,
+       "min": 0.0,
+       "max": 0.0,
+       "n": 1
+      },
+      "perf.skipped_per_s": {
+       "median": 0.0,
+       "min": 0.0,
+       "max": 0.0,
+       "n": 1
+      },
+      "perf.views": {
+       "median": 1.0,
+       "min": 1.0,
+       "max": 1.0,
+       "n": 1
+      },
+      "perf.polls": {
+       "median": 62.4,
+       "min": 62.4,
+       "max": 62.4,
+       "n": 1
+      },
+      "perf.regions": {
+       "median": 1.0,
+       "min": 1.0,
+       "max": 1.0,
+       "n": 1
+      },
+      "perf.cpu": {
+       "median": 242.0,
+       "min": 242.0,
+       "max": 242.0,
+       "n": 1
+      },
+      "ext.sway_cpu_pct": {
+       "median": 0.6,
+       "min": 0.6,
+       "max": 0.6,
+       "n": 1
+      },
+      "perf.rss": {
+       "median": 327.0,
+       "min": 327.0,
+       "max": 327.0,
+       "n": 1
+      },
+      "ext.pss_mb": {
+       "median": 310.4,
+       "min": 310.4,
+       "max": 310.4,
+       "n": 1
+      },
+      "gpu_mem_mib.app": null,
+      "ext.machine_busy_pct": {
+       "median": 21.7,
+       "min": 21.7,
+       "max": 21.7,
+       "n": 1
+      },
+      "perf.drawn": {
+       "median": 312.0,
+       "min": 312.0,
+       "max": 312.0,
+       "n": 1
+      },
+      "perf.drawn_per_s": {
+       "median": 62.4,
+       "min": 62.4,
+       "max": 62.4,
+       "n": 1
+      },
+      "perf.skipped": {
+       "median": 0.0,
+       "min": 0.0,
+       "max": 0.0,
+       "n": 1
+      },
+      "perf.unchanged": {
+       "median": 0.0,
+       "min": 0.0,
+       "max": 0.0,
+       "n": 1
+      },
+      "threads_pct": {
+       "llvmpipe-#": 227.7,
+       "sone-rune": 14.6
+      },
+      "nav_heading_s": {
+       "median": 0.163,
+       "min": 0.163,
+       "max": 0.163,
+       "n": 1
+      },
+      "count_lookup_s": {
+       "median": 0.028,
+       "min": 0.028,
+       "max": 0.028,
+       "n": 1
+      },
+      "enter_s": {
+       "median": 2.667,
+       "min": 2.667,
+       "max": 2.667,
+       "n": 1
+      }
+     },
+     "biglist_scroll": {
+      "took": 1,
+      "runs": 1,
+      "notes": [],
+      "perf.frames": {
+       "median": 62.4,
+       "min": 62.4,
+       "max": 62.4,
+       "n": 1
+      },
+      "perf.unchanged_per_s": {
+       "median": 0.0,
+       "min": 0.0,
+       "max": 0.0,
+       "n": 1
+      },
+      "perf.skipped_per_s": {
+       "median": 0.0,
+       "min": 0.0,
+       "max": 0.0,
+       "n": 1
+      },
+      "perf.views": {
+       "median": 1.0,
+       "min": 1.0,
+       "max": 1.0,
+       "n": 1
+      },
+      "perf.polls": {
+       "median": 62.4,
+       "min": 62.4,
+       "max": 62.4,
+       "n": 1
+      },
+      "perf.regions": {
+       "median": 1.0,
+       "min": 1.0,
+       "max": 1.0,
+       "n": 1
+      },
+      "perf.cpu": {
+       "median": 241.8,
+       "min": 241.8,
+       "max": 241.8,
+       "n": 1
+      },
+      "ext.sway_cpu_pct": {
+       "median": 0.6,
+       "min": 0.6,
+       "max": 0.6,
+       "n": 1
+      },
+      "perf.rss": {
+       "median": 329.0,
+       "min": 329.0,
+       "max": 329.0,
+       "n": 1
+      },
+      "ext.pss_mb": {
+       "median": 310.3,
+       "min": 310.3,
+       "max": 310.3,
+       "n": 1
+      },
+      "gpu_mem_mib.app": null,
+      "ext.machine_busy_pct": {
+       "median": 21.9,
+       "min": 21.9,
+       "max": 21.9,
+       "n": 1
+      },
+      "perf.drawn": {
+       "median": 312.0,
+       "min": 312.0,
+       "max": 312.0,
+       "n": 1
+      },
+      "perf.drawn_per_s": {
+       "median": 62.4,
+       "min": 62.4,
+       "max": 62.4,
+       "n": 1
+      },
+      "perf.skipped": {
+       "median": 0.0,
+       "min": 0.0,
+       "max": 0.0,
+       "n": 1
+      },
+      "perf.unchanged": {
+       "median": 0.0,
+       "min": 0.0,
+       "max": 0.0,
+       "n": 1
+      },
+      "threads_pct": {
+       "llvmpipe-#": 221.2,
+       "sone-rune": 19.8
+      },
+      "nav_heading_s": null,
+      "count_lookup_s": null,
+      "enter_s": {
+       "median": 0.526,
+       "min": 0.526,
+       "max": 0.526,
+       "n": 1
+      }
+     }
+    },
+    "startup.backend_s": {
+     "median": 2.103,
+     "min": 2.103,
+     "max": 2.103,
+     "n": 1
+    },
+    "startup.ui_exposed_s": {
+     "median": 3.628,
+     "min": 3.628,
+     "max": 3.628,
+     "n": 1
+    },
+    "startup.home_content_s": {
+     "median": 3.682,
+     "min": 3.682,
+     "max": 3.682,
+     "n": 1
+    },
+    "startup.first_frame_s": {
+     "median": 3.576,
+     "min": 3.576,
+     "max": 3.576,
+     "n": 1
+    },
+    "quit.exit_s": {
+     "median": 0.022,
+     "min": 0.022,
+     "max": 0.022,
+     "n": 1
+    },
+    "quit.exited": 1,
+    "runs": 1
+   }
+  }
+ },
+ "runs": {
+  "software": {
+   "base": [
+    {
+     "keep": 1,
+     "settle_s": 1.0,
+     "big": 3000,
+     "gpu": false,
+     "states": {
+      "biglist_playing": {
+       "expect": {
+        "flags": [
+         "closed",
+         "playing",
+         "focused"
+        ],
+        "visible": true
+       },
+       "notes": [],
+       "nav_heading_s": 0.216,
+       "rows_total_text": "3000 tracks",
+       "count_lookup_s": 0.072,
+       "enter_s": 2.749,
+       "sway_view": {
+        "pid": 286705,
+        "app_id": "sone-rune",
+        "visible": true,
+        "focused": true,
+        "fullscreen": 0,
+        "workspace": "1",
+        "output": "HEADLESS-1",
+        "scratchpad": false,
+        "inhibit_idle": false,
+        "rect": {
+         "x": 0,
+         "y": 0,
+         "width": 1400,
+         "height": 900
+        }
+       },
+       "window_s": 4.98,
+       "perf_lines": [
+        "[perf] closed playing focused fx=on | frames 61.0/s (drawn 305, unchanged 0, skipped 0) views 1.0/s polls 60.8/s | cpu 238.2% rss 450 MB"
+       ],
+       "perf": {
+        "frames": 61.0,
+        "drawn": 305.0,
+        "unchanged": 0.0,
+        "skipped": 0.0,
+        "views": 1.0,
+        "polls": 60.8,
+        "cpu": 238.2,
+        "rss": 450.0,
+        "drawn_per_s": 61.0,
+        "unchanged_per_s": 0.0,
+        "skipped_per_s": 0.0
+       },
+       "flags": [
+        "closed",
+        "playing",
+        "focused"
+       ],
+       "tags": {
+        "fx": "on"
+       },
+       "ext": {
+        "cpu_pct": 237.9,
+        "sway_cpu_pct": 0.6,
+        "threads_pct": {
+         "llvmpipe-#": 215.6,
+         "sone-rune": 21.9
+        },
+        "rss_mb": 450.9,
+        "pss_mb": 436.6,
+        "anonymous_mb": 267.2,
+        "machine_busy_pct": 21.6,
+        "load1_start": 3.39,
+        "load1_end": 3.52,
+        "log_bytes_per_s": 60
+       },
+       "visibility_log": [],
+       "took": true
+      },
+      "biglist_scroll": {
+       "expect": {
+        "flags": [
+         "closed",
+         "playing",
+         "focused"
+        ],
+        "visible": true
+       },
+       "notes": [],
+       "enter_s": 0.524,
+       "sway_view": {
+        "pid": 286705,
+        "app_id": "sone-rune",
+        "visible": true,
+        "focused": true,
+        "fullscreen": 0,
+        "workspace": "1",
+        "output": "HEADLESS-1",
+        "scratchpad": false,
+        "inhibit_idle": false,
+        "rect": {
+         "x": 0,
+         "y": 0,
+         "width": 1400,
+         "height": 900
+        }
+       },
+       "scroll_shots": {
+        "before": "c82fab1d07f3",
+        "during": [
+         "ef8b42e8d4cc",
+         "c40bed7aacad",
+         "4eff0c58cf19"
+        ]
+       },
+       "scroll_moved": true,
+       "window_s": 5.01,
+       "perf_lines": [
+        "[perf] closed playing focused fx=on | frames 20.0/s (drawn 100, unchanged 0, skipped 0) views 19.6/s polls 20.0/s | cpu 164.8% rss 451 MB"
+       ],
+       "perf": {
+        "frames": 20.0,
+        "drawn": 100.0,
+        "unchanged": 0.0,
+        "skipped": 0.0,
+        "views": 19.6,
+        "polls": 20.0,
+        "cpu": 164.8,
+        "rss": 451.0,
+        "drawn_per_s": 20.0,
+        "unchanged_per_s": 0.0,
+        "skipped_per_s": 0.0
+       },
+       "flags": [
+        "closed",
+        "playing",
+        "focused"
+       ],
+       "tags": {
+        "fx": "on"
+       },
+       "ext": {
+        "cpu_pct": 165.2,
+        "sway_cpu_pct": 0.2,
+        "threads_pct": {
+         "sone-rune": 96.1,
+         "llvmpipe-#": 69.5
+        },
+        "rss_mb": 451.4,
+        "pss_mb": 434.6,
+        "anonymous_mb": 267.6,
+        "machine_busy_pct": 19.3,
+        "load1_start": 3.36,
+        "load1_end": 3.33,
+        "log_bytes_per_s": 195
+       },
+       "visibility_log": [],
+       "took": true
+      }
+     },
+     "errors": [],
+     "startup": {
+      "backend_s": 2.149,
+      "ui_exposed_s": 2.944,
+      "home_content_s": 3.068,
+      "first_frame_s": 2.922,
+      "first_frame_method": "sway IPC window::new (the toplevel maps on its first buffer commit)"
+     },
+     "seat_after_keyboard": 2,
+     "play_ids": [
+      300001,
+      300002
+     ],
+     "fav_requests": [
+      {
+       "offset": 0,
+       "limit": 50,
+       "rows_served": 50,
+       "status": 200
+      },
+      {
+       "offset": 0,
+       "limit": 100,
+       "rows_served": 100,
+       "status": 200
+      }
+     ],
+     "wheel_notches": 215,
+     "perf_all": [
+      {
+       "t": 7.16,
+       "line": "[perf] closed paused focused fx=on | frames 11.0/s (drawn 55, unchanged 0, skipped 0) views 1.0/s polls 14.2/s | cpu 117.0% rss 272 MB"
+      },
+      {
+       "t": 12.17,
+       "line": "[perf] closed playing focused fx=on | frames 39.2/s (drawn 196, unchanged 0, skipped 0) views 1.2/s polls 41.2/s | cpu 225.8% rss 450 MB"
+      },
+      {
+       "t": 17.15,
+       "line": "[perf] closed playing focused fx=on | frames 61.0/s (drawn 305, unchanged 0, skipped 0) views 1.0/s polls 60.8/s | cpu 238.2% rss 450 MB"
+      },
+      {
+       "t": 22.16,
+       "line": "[perf] closed playing focused fx=on | frames 60.8/s (drawn 304, unchanged 0, skipped 0) views 1.0/s polls 61.0/s | cpu 237.2% rss 450 MB"
+      },
+      {
+       "t": 27.16,
+       "line": "[perf] closed playing focused fx=on | frames 26.0/s (drawn 130, unchanged 0, skipped 0) views 18.0/s polls 26.0/s | cpu 178.2% rss 451 MB"
+      },
+      {
+       "t": 32.17,
+       "line": "[perf] closed playing focused fx=on | frames 20.0/s (drawn 100, unchanged 0, skipped 0) views 19.6/s polls 20.0/s | cpu 164.8% rss 451 MB"
+      }
+     ],
+     "visibility_log_all": [],
+     "quit": {
+      "method": "swaymsg kill (xdg_toplevel.close)",
+      "exit_s": 0.037,
+      "exited": true
+     },
+     "session": {
+      "wall_s": 35.3,
+      "loadavg_start": [
+       3.79,
+       3.24,
+       3.29
+      ],
+      "loadavg_end": [
+       3.33,
+       3.18,
+       3.27
+      ],
+      "rundir": "/home/winter/dev/sone/verifier/runs/states-2026-11-13-152629/software/base/run0",
+      "started": "15:26:29"
+     }
+    }
+   ],
+   "bump": [
+    {
+     "keep": 1,
+     "settle_s": 1.0,
+     "big": 3000,
+     "gpu": false,
+     "states": {
+      "biglist_playing": {
+       "expect": {
+        "flags": [
+         "closed",
+         "playing",
+         "focused"
+        ],
+        "visible": true
+       },
+       "notes": [],
+       "nav_heading_s": 0.306,
+       "rows_total_text": "3000 tracks",
+       "count_lookup_s": 0.085,
+       "enter_s": 2.847,
+       "sway_view": {
+        "pid": 286993,
+        "app_id": "sone-rune",
+        "visible": true,
+        "focused": true,
+        "fullscreen": 0,
+        "workspace": "1",
+        "output": "HEADLESS-1",
+        "scratchpad": false,
+        "inhibit_idle": false,
+        "rect": {
+         "x": 0,
+         "y": 0,
+         "width": 1400,
+         "height": 900
+        }
+       },
+       "window_s": 5.01,
+       "perf_lines": [
+        "[perf] closed playing focused fx=on | frames 60.8/s (drawn 304, unchanged 0, skipped 0) views 1.0/s polls 61.0/s | cpu 241.0% rss 494 MB"
+       ],
+       "perf": {
+        "frames": 60.8,
+        "drawn": 304.0,
+        "unchanged": 0.0,
+        "skipped": 0.0,
+        "views": 1.0,
+        "polls": 61.0,
+        "cpu": 241.0,
+        "rss": 494.0,
+        "drawn_per_s": 60.8,
+        "unchanged_per_s": 0.0,
+        "skipped_per_s": 0.0
+       },
+       "flags": [
+        "closed",
+        "playing",
+        "focused"
+       ],
+       "tags": {
+        "fx": "on"
+       },
+       "ext": {
+        "cpu_pct": 241.5,
+        "sway_cpu_pct": 0.6,
+        "threads_pct": {
+         "llvmpipe-#": 219.4,
+         "sone-rune": 21.8
+        },
+        "rss_mb": 494.8,
+        "pss_mb": 477.5,
+        "anonymous_mb": 307.2,
+        "machine_busy_pct": 21.9,
+        "load1_start": 3.74,
+        "load1_end": 3.6,
+        "log_bytes_per_s": 59
+       },
+       "visibility_log": [],
+       "took": true
+      },
+      "biglist_scroll": {
+       "expect": {
+        "flags": [
+         "closed",
+         "playing",
+         "focused"
+        ],
+        "visible": true
+       },
+       "notes": [],
+       "enter_s": 0.525,
+       "sway_view": {
+        "pid": 286993,
+        "app_id": "sone-rune",
+        "visible": true,
+        "focused": true,
+        "fullscreen": 0,
+        "workspace": "1",
+        "output": "HEADLESS-1",
+        "scratchpad": false,
+        "inhibit_idle": false,
+        "rect": {
+         "x": 0,
+         "y": 0,
+         "width": 1400,
+         "height": 900
+        }
+       },
+       "scroll_shots": {
+        "before": "b4c9b27a417d",
+        "during": [
+         "c72684250664",
+         "321d096adce2",
+         "ea028814e347"
+        ]
+       },
+       "scroll_moved": true,
+       "window_s": 5.01,
+       "perf_lines": [
+        "[perf] closed playing focused fx=on | frames 28.2/s (drawn 141, unchanged 0, skipped 0) views 20.6/s polls 28.4/s | cpu 188.2% rss 495 MB"
+       ],
+       "perf": {
+        "frames": 28.2,
+        "drawn": 141.0,
+        "unchanged": 0.0,
+        "skipped": 0.0,
+        "views": 20.6,
+        "polls": 28.4,
+        "cpu": 188.2,
+        "rss": 495.0,
+        "drawn_per_s": 28.2,
+        "unchanged_per_s": 0.0,
+        "skipped_per_s": 0.0
+       },
+       "flags": [
+        "closed",
+        "playing",
+        "focused"
+       ],
+       "tags": {
+        "fx": "on"
+       },
+       "ext": {
+        "cpu_pct": 189.5,
+        "sway_cpu_pct": 0.4,
+        "threads_pct": {
+         "llvmpipe-#": 100.6,
+         "sone-rune": 88.6
+        },
+        "rss_mb": 495.2,
+        "pss_mb": 475.5,
+        "anonymous_mb": 307.6,
+        "machine_busy_pct": 20.4,
+        "load1_start": 5.88,
+        "load1_end": 5.89,
+        "log_bytes_per_s": 195
+       },
+       "visibility_log": [],
+       "took": true
+      }
+     },
+     "errors": [],
+     "startup": {
+      "backend_s": 2.13,
+      "ui_exposed_s": 3.721,
+      "home_content_s": 3.759,
+      "first_frame_s": 3.634,
+      "first_frame_method": "sway IPC window::new (the toplevel maps on its first buffer commit)"
+     },
+     "seat_after_keyboard": 2,
+     "play_ids": [
+      300001,
+      300002
+     ],
+     "fav_requests": [
+      {
+       "offset": 0,
+       "limit": 50,
+       "rows_served": 50,
+       "status": 200
+      },
+      {
+       "offset": 0,
+       "limit": 100,
+       "rows_served": 100,
+       "status": 200
+      }
+     ],
+     "wheel_notches": 215,
+     "perf_all": [
+      {
+       "t": 7.13,
+       "line": "[perf] closed paused focused fx=on | frames 1.0/s (drawn 5, unchanged 0, skipped 0) views 1.0/s polls 4.2/s | cpu 40.4% rss 299 MB"
+      },
+      {
+       "t": 12.14,
+       "line": "[perf] closed playing focused fx=on | frames 29.6/s (drawn 148, unchanged 0, skipped 0) views 1.4/s polls 31.8/s | cpu 172.0% rss 494 MB"
+      },
+      {
+       "t": 17.15,
+       "line": "[perf] closed playing focused fx=on | frames 60.8/s (drawn 304, unchanged 0, skipped 0) views 1.0/s polls 61.0/s | cpu 241.0% rss 494 MB"
+      },
+      {
+       "t": 22.13,
+       "line": "[perf] closed playing focused fx=on | frames 61.0/s (drawn 305, unchanged 0, skipped 0) views 1.0/s polls 60.8/s | cpu 241.8% rss 494 MB"
+      },
+      {
+       "t": 27.14,
+       "line": "[perf] closed playing focused fx=on | frames 32.4/s (drawn 162, unchanged 0, skipped 0) views 18.6/s polls 32.4/s | cpu 197.2% rss 495 MB"
+      },
+      {
+       "t": 32.15,
+       "line": "[perf] closed playing focused fx=on | frames 28.2/s (drawn 141, unchanged 0, skipped 0) views 20.6/s polls 28.4/s | cpu 188.2% rss 495 MB"
+      }
+     ],
+     "visibility_log_all": [],
+     "quit": {
+      "method": "swaymsg kill (xdg_toplevel.close)",
+      "exit_s": 0.037,
+      "exited": true
+     },
+     "session": {
+      "wall_s": 35.2,
+      "loadavg_start": [
+       3.33,
+       3.18,
+       3.27
+      ],
+      "loadavg_end": [
+       5.89,
+       3.8,
+       3.47
+      ],
+      "rundir": "/home/winter/dev/sone/verifier/runs/states-2026-11-13-152629/software/bump/run0",
+      "started": "15:27:04"
+     }
+    }
+   ],
+   "perf": [
+    {
+     "keep": 1,
+     "settle_s": 1.0,
+     "big": 3000,
+     "gpu": false,
+     "states": {
+      "biglist_playing": {
+       "expect": {
+        "flags": [
+         "closed",
+         "playing",
+         "focused"
+        ],
+        "visible": true
+       },
+       "notes": [],
+       "nav_heading_s": 0.138,
+       "rows_total_text": "3000 tracks",
+       "count_lookup_s": 0.02,
+       "enter_s": 2.618,
+       "sway_view": {
+        "pid": 287279,
+        "app_id": "sone-rune",
+        "visible": true,
+        "focused": true,
+        "fullscreen": 0,
+        "workspace": "1",
+        "output": "HEADLESS-1",
+        "scratchpad": false,
+        "inhibit_idle": false,
+        "rect": {
+         "x": 0,
+         "y": 0,
+         "width": 1400,
+         "height": 900
+        }
+       },
+       "window_s": 5.01,
+       "perf_lines": [
+        "[perf] closed playing focused fx=on | frames 62.4/s (drawn 312, unchanged 0, skipped 0) views 1.0/s polls 62.4/s | cpu 243.8% rss 328 MB | regions 1.0/s"
+       ],
+       "perf": {
+        "frames": 62.4,
+        "drawn": 312.0,
+        "unchanged": 0.0,
+        "skipped": 0.0,
+        "views": 1.0,
+        "polls": 62.4,
+        "cpu": 243.8,
+        "rss": 328.0,
+        "regions": 1.0,
+        "drawn_per_s": 62.4,
+        "unchanged_per_s": 0.0,
+        "skipped_per_s": 0.0
+       },
+       "flags": [
+        "closed",
+        "playing",
+        "focused"
+       ],
+       "tags": {
+        "fx": "on"
+       },
+       "ext": {
+        "cpu_pct": 243.7,
+        "sway_cpu_pct": 0.4,
+        "threads_pct": {
+         "llvmpipe-#": 227.9,
+         "sone-rune": 14.8
+        },
+        "rss_mb": 328.3,
+        "pss_mb": 311.0,
+        "anonymous_mb": 156.5,
+        "machine_busy_pct": 21.5,
+        "load1_start": 5.19,
+        "load1_end": 4.85,
+        "log_bytes_per_s": 66
+       },
+       "visibility_log": [],
+       "took": true
+      },
+      "biglist_scroll": {
+       "expect": {
+        "flags": [
+         "closed",
+         "playing",
+         "focused"
+        ],
+        "visible": true
+       },
+       "notes": [],
+       "enter_s": 0.531,
+       "sway_view": {
+        "pid": 287279,
+        "app_id": "sone-rune",
+        "visible": true,
+        "focused": true,
+        "fullscreen": 0,
+        "workspace": "1",
+        "output": "HEADLESS-1",
+        "scratchpad": false,
+        "inhibit_idle": false,
+        "rect": {
+         "x": 0,
+         "y": 0,
+         "width": 1400,
+         "height": 900
+        }
+       },
+       "scroll_shots": {
+        "before": "b4c9b27a417d",
+        "during": [
+         "cf355d7fff3f",
+         "bf00d7403b71",
+         "62c74ebde902"
+        ]
+       },
+       "scroll_moved": true,
+       "window_s": 5.0,
+       "perf_lines": [
+        "[perf] closed playing focused fx=on | frames 62.2/s (drawn 311, unchanged 1, skipped 0) views 1.0/s polls 62.4/s | cpu 240.6% rss 330 MB | regions 1.0/s"
+       ],
+       "perf": {
+        "frames": 62.2,
+        "drawn": 311.0,
+        "unchanged": 1.0,
+        "skipped": 0.0,
+        "views": 1.0,
+        "polls": 62.4,
+        "cpu": 240.6,
+        "rss": 330.0,
+        "regions": 1.0,
+        "drawn_per_s": 62.2,
+        "unchanged_per_s": 0.2,
+        "skipped_per_s": 0.0
+       },
+       "flags": [
+        "closed",
+        "playing",
+        "focused"
+       ],
+       "tags": {
+        "fx": "on"
+       },
+       "ext": {
+        "cpu_pct": 241.0,
+        "sway_cpu_pct": 0.4,
+        "threads_pct": {
+         "llvmpipe-#": 220.5,
+         "sone-rune": 19.4
+        },
+        "rss_mb": 330.1,
+        "pss_mb": 310.4,
+        "anonymous_mb": 158.3,
+        "machine_busy_pct": 21.9,
+        "load1_start": 4.66,
+        "load1_end": 4.37,
+        "log_bytes_per_s": 201
+       },
+       "visibility_log": [],
+       "took": true
+      }
+     },
+     "errors": [],
+     "startup": {
+      "backend_s": 2.124,
+      "ui_exposed_s": 3.647,
+      "home_content_s": 3.758,
+      "first_frame_s": 3.623,
+      "first_frame_method": "sway IPC window::new (the toplevel maps on its first buffer commit)"
+     },
+     "seat_after_keyboard": 2,
+     "play_ids": [
+      300001,
+      300002
+     ],
+     "fav_requests": [
+      {
+       "offset": 0,
+       "limit": 50,
+       "rows_served": 50,
+       "status": 200
+      },
+      {
+       "offset": 0,
+       "limit": 100,
+       "rows_served": 100,
+       "status": 200
+      }
+     ],
+     "wheel_notches": 215,
+     "perf_all": [
+      {
+       "t": 7.13,
+       "line": "[perf] closed paused focused fx=on | frames 1.0/s (drawn 5, unchanged 0, skipped 0) views 1.0/s polls 4.2/s | cpu 40.0% rss 305 MB | regions 2.8/s"
+      },
+      {
+       "t": 12.14,
+       "line": "[perf] closed playing focused fx=on | frames 31.2/s (drawn 156, unchanged 0, skipped 0) views 1.2/s polls 33.6/s | cpu 128.2% rss 328 MB | regions 2.8/s"
+      },
+      {
+       "t": 17.14,
+       "line": "[perf] closed playing focused fx=on | frames 62.4/s (drawn 312, unchanged 0, skipped 0) views 1.0/s polls 62.4/s | cpu 243.8% rss 328 MB | regions 1.0/s"
+      },
+      {
+       "t": 22.12,
+       "line": "[perf] closed playing focused fx=on | frames 62.4/s (drawn 312, unchanged 0, skipped 0) views 1.0/s polls 62.4/s | cpu 241.6% rss 328 MB | regions 1.0/s"
+      },
+      {
+       "t": 27.13,
+       "line": "[perf] closed playing focused fx=on | frames 62.4/s (drawn 312, unchanged 0, skipped 0) views 1.0/s polls 62.4/s | cpu 245.4% rss 330 MB | regions 1.0/s"
+      },
+      {
+       "t": 32.13,
+       "line": "[perf] closed playing focused fx=on | frames 62.2/s (drawn 311, unchanged 1, skipped 0) views 1.0/s polls 62.4/s | cpu 240.6% rss 330 MB | regions 1.0/s"
+      }
+     ],
+     "visibility_log_all": [],
+     "quit": {
+      "method": "swaymsg kill (xdg_toplevel.close)",
+      "exit_s": 0.022,
+      "exited": true
+     },
+     "session": {
+      "wall_s": 35.1,
+      "loadavg_start": [
+       5.89,
+       3.8,
+       3.47
+      ],
+      "loadavg_end": [
+       4.37,
+       3.65,
+       3.43
+      ],
+      "rundir": "/home/winter/dev/sone/verifier/runs/states-2026-11-13-152629/software/perf/run0",
+      "started": "15:27:39"
+     }
+    }
+   ],
+   "final": [
+    {
+     "keep": 1,
+     "settle_s": 1.0,
+     "big": 3000,
+     "gpu": false,
+     "states": {
+      "biglist_playing": {
+       "expect": {
+        "flags": [
+         "closed",
+         "playing",
+         "focused"
+        ],
+        "visible": true
+       },
+       "notes": [],
+       "nav_heading_s": 0.163,
+       "rows_total_text": "3000 tracks",
+       "count_lookup_s": 0.028,
+       "enter_s": 2.667,
+       "sway_view": {
+        "pid": 287566,
+        "app_id": "sone-rune",
+        "visible": true,
+        "focused": true,
+        "fullscreen": 0,
+        "workspace": "1",
+        "output": "HEADLESS-1",
+        "scratchpad": false,
+        "inhibit_idle": false,
+        "rect": {
+         "x": 0,
+         "y": 0,
+         "width": 1400,
+         "height": 900
+        }
+       },
+       "window_s": 5.01,
+       "perf_lines": [
+        "[perf] closed playing focused fx=on | frames 62.4/s (drawn 312, unchanged 0, skipped 0) views 1.0/s polls 62.4/s | cpu 242.0% rss 327 MB | regions 1.0/s"
+       ],
+       "perf": {
+        "frames": 62.4,
+        "drawn": 312.0,
+        "unchanged": 0.0,
+        "skipped": 0.0,
+        "views": 1.0,
+        "polls": 62.4,
+        "cpu": 242.0,
+        "rss": 327.0,
+        "regions": 1.0,
+        "drawn_per_s": 62.4,
+        "unchanged_per_s": 0.0,
+        "skipped_per_s": 0.0
+       },
+       "flags": [
+        "closed",
+        "playing",
+        "focused"
+       ],
+       "tags": {
+        "fx": "on"
+       },
+       "ext": {
+        "cpu_pct": 242.7,
+        "sway_cpu_pct": 0.6,
+        "threads_pct": {
+         "llvmpipe-#": 227.7,
+         "sone-rune": 14.6
+        },
+        "rss_mb": 327.6,
+        "pss_mb": 310.4,
+        "anonymous_mb": 155.9,
+        "machine_busy_pct": 21.7,
+        "load1_start": 4.04,
+        "load1_end": 4.04,
+        "log_bytes_per_s": 66
+       },
+       "visibility_log": [],
+       "took": true
+      },
+      "biglist_scroll": {
+       "expect": {
+        "flags": [
+         "closed",
+         "playing",
+         "focused"
+        ],
+        "visible": true
+       },
+       "notes": [],
+       "enter_s": 0.526,
+       "sway_view": {
+        "pid": 287566,
+        "app_id": "sone-rune",
+        "visible": true,
+        "focused": true,
+        "fullscreen": 0,
+        "workspace": "1",
+        "output": "HEADLESS-1",
+        "scratchpad": false,
+        "inhibit_idle": false,
+        "rect": {
+         "x": 0,
+         "y": 0,
+         "width": 1400,
+         "height": 900
+        }
+       },
+       "scroll_shots": {
+        "before": "b4c9b27a417d",
+        "during": [
+         "a6b6ff1f23fa",
+         "4c02f38f57e8",
+         "ea028814e347"
+        ]
+       },
+       "scroll_moved": true,
+       "window_s": 5.0,
+       "perf_lines": [
+        "[perf] closed playing focused fx=on | frames 62.4/s (drawn 312, unchanged 0, skipped 0) views 1.0/s polls 62.4/s | cpu 241.8% rss 329 MB | regions 1.0/s"
+       ],
+       "perf": {
+        "frames": 62.4,
+        "drawn": 312.0,
+        "unchanged": 0.0,
+        "skipped": 0.0,
+        "views": 1.0,
+        "polls": 62.4,
+        "cpu": 241.8,
+        "rss": 329.0,
+        "regions": 1.0,
+        "drawn_per_s": 62.4,
+        "unchanged_per_s": 0.0,
+        "skipped_per_s": 0.0
+       },
+       "flags": [
+        "closed",
+        "playing",
+        "focused"
+       ],
+       "tags": {
+        "fx": "on"
+       },
+       "ext": {
+        "cpu_pct": 241.8,
+        "sway_cpu_pct": 0.6,
+        "threads_pct": {
+         "llvmpipe-#": 221.2,
+         "sone-rune": 19.8
+        },
+        "rss_mb": 329.9,
+        "pss_mb": 310.3,
+        "anonymous_mb": 158.2,
+        "machine_busy_pct": 21.9,
+        "load1_start": 4.04,
+        "load1_end": 3.8,
+        "log_bytes_per_s": 201
+       },
+       "visibility_log": [],
+       "took": true
+      }
+     },
+     "errors": [],
+     "startup": {
+      "backend_s": 2.103,
+      "ui_exposed_s": 3.628,
+      "home_content_s": 3.682,
+      "first_frame_s": 3.576,
+      "first_frame_method": "sway IPC window::new (the toplevel maps on its first buffer commit)"
+     },
+     "seat_after_keyboard": 2,
+     "play_ids": [
+      300001,
+      300002
+     ],
+     "fav_requests": [
+      {
+       "offset": 0,
+       "limit": 50,
+       "rows_served": 50,
+       "status": 200
+      },
+      {
+       "offset": 0,
+       "limit": 100,
+       "rows_served": 100,
+       "status": 200
+      }
+     ],
+     "wheel_notches": 214,
+     "perf_all": [
+      {
+       "t": 7.11,
+       "line": "[perf] closed paused focused fx=on | frames 1.0/s (drawn 5, unchanged 0, skipped 0) views 1.0/s polls 4.2/s | cpu 39.0% rss 303 MB | regions 2.8/s"
+      },
+      {
+       "t": 12.12,
+       "line": "[perf] closed playing focused fx=on | frames 30.8/s (drawn 154, unchanged 0, skipped 0) views 1.2/s polls 33.2/s | cpu 126.2% rss 327 MB | regions 2.8/s"
+      },
+      {
+       "t": 17.13,
+       "line": "[perf] closed playing focused fx=on | frames 62.4/s (drawn 312, unchanged 0, skipped 0) views 1.0/s polls 62.4/s | cpu 242.0% rss 327 MB | regions 1.0/s"
+      },
+      {
+       "t": 22.13,
+       "line": "[perf] closed playing focused fx=on | frames 62.4/s (drawn 312, unchanged 0, skipped 0) views 1.0/s polls 62.4/s | cpu 241.8% rss 327 MB | regions 1.0/s"
+      },
+      {
+       "t": 27.11,
+       "line": "[perf] closed playing focused fx=on | frames 62.4/s (drawn 312, unchanged 0, skipped 0) views 1.0/s polls 62.4/s | cpu 243.8% rss 329 MB | regions 1.0/s"
+      },
+      {
+       "t": 32.12,
+       "line": "[perf] closed playing focused fx=on | frames 62.4/s (drawn 312, unchanged 0, skipped 0) views 1.0/s polls 62.4/s | cpu 241.8% rss 329 MB | regions 1.0/s"
+      }
+     ],
+     "visibility_log_all": [],
+     "quit": {
+      "method": "swaymsg kill (xdg_toplevel.close)",
+      "exit_s": 0.022,
+      "exited": true
+     },
+     "session": {
+      "wall_s": 35.1,
+      "loadavg_start": [
+       4.37,
+       3.65,
+       3.43
+      ],
+      "loadavg_end": [
+       3.8,
+       3.59,
+       3.42
+      ],
+      "rundir": "/home/winter/dev/sone/verifier/runs/states-2026-11-13-152629/software/final/run0",
+      "started": "15:28:14"
+     }
+    }
+   ]
+  }
+ },
+ "failures": [],
+ "total_s": 141
+}

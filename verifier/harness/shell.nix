@@ -14,6 +14,8 @@ in
 pkgs.mkShell {
   # bench/wheel.py generates its virtual-pointer bindings from this XML
   SPIKE_WLR_PROTOCOLS = "${pkgs.wlr-protocols}/share/wlr-protocols";
+  # bench/cover.py (a plain xdg-shell window that covers or unfocuses the app) uses xdg-shell
+  SPIKE_WAYLAND_PROTOCOLS = "${pkgs.wayland-protocols}/share/wayland-protocols";
   # channels/keyboard.py compiles its virtual keyboard's keymap with this
   SPIKE_XKBCOMMON = "${pkgs.libxkbcommon}/lib/libxkbcommon.so.0";
   packages = [
