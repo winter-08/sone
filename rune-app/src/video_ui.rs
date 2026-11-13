@@ -41,6 +41,7 @@ fn image_url(id: &str, pt: f32) -> Option<String> {
 
 /// A 16:9 card; pressing it plays the video with the rest of `list` queued after it (React
 /// SearchView handlePlayVideo: videos play through the queue so prev/next walk the grid).
+/// With `source` null (Home's cards: useMediaPlay) the video plays alone instead (playSingle).
 pub fn video_card(key: String, d: &Value, list: &[Value], idx: usize, source: Value) -> El {
     const W: f32 = 220.0;
     const H: f32 = 124.0;
@@ -54,7 +55,11 @@ pub fn video_card(key: String, d: &Value, list: &[Value], idx: usize, source: Va
     }
     let tracks: Vec<Value> = list.iter().map(video_track).collect();
     let play = move |_: &mut App| {
-        controller::send(Cmd::PlayFrom { tracks: tracks.clone(), index: idx, source: source.clone(), album_mode: false });
+        if source.is_null() {
+            controller::send(Cmd::PlaySingle(tracks[idx].clone()));
+        } else {
+            controller::send(Cmd::PlayFrom { tracks: tracks.clone(), index: idx, source: source.clone(), album_mode: false });
+        }
     };
     let on = interact::is_fav(Fav::Video, &id.to_string());
     let (fid, fl) = (id.to_string(), title.clone());

@@ -313,6 +313,10 @@ fn track_row_with(key: String, n: usize, tr: &Value, actions: bool, pl: Option<c
     let unavailable = !active && d["itemType"].as_str() != Some("video") && crate::content::unavailable(d);
     let mut title_row = row().min_w(0.0).gap(6.0).items_center()
         .child(text(title.clone()).font(t(14.0, 500.0)).color(if active { accent_c } else { white(0.95) }).truncate().shrink());
+    // TrackList: a music video in a playlist says so before its other badges
+    if d["itemType"].as_str() == Some("video") {
+        title_row = title_row.child(crate::content::video_badge());
+    }
     if let Some(b) = crate::content::badges_for(tr) {
         title_row = title_row.child(b);
     }

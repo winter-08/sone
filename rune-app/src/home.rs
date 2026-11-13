@@ -320,7 +320,6 @@ fn card_row(si: usize, title: &str, items: &[Value], w: f32) -> Option<El> {
             }
         }));
     let tracks = section_tracks(items);
-    let videos: Vec<Value> = items.iter().filter(|it| data::kind(it) == "VIDEO").cloned().collect();
     let mut n = 0;
     for (i, it) in items.iter().enumerate() {
         let ck = format!("home-{si}-{i}");
@@ -330,9 +329,9 @@ fn card_row(si: usize, title: &str, items: &[Value], w: f32) -> Option<El> {
         } else if kind == "TRACK" {
             Some(track_card(ck, it, cw, title, &tracks))
         } else if kind == "VIDEO" {
-            let idx = videos.iter().position(|v| v == it).unwrap_or(0);
-            let list: Vec<Value> = videos.iter().map(|v| data::data(v).clone()).collect();
-            Some(crate::video_ui::video_card(ck, data::data(it), &list, idx, json!({"type": "home-section", "id": title, "name": title})))
+            // HomeSection plays a video card alone (useMediaPlay: playSingle), not the row's videos
+            let d = data::data(it).clone();
+            Some(crate::video_ui::video_card(ck, &d, std::slice::from_ref(&d), 0, Value::Null))
         } else {
             views::item_page(it).map(|page| {
                 let seed = data::data(it)["id"].as_u64().unwrap_or(i as u64 + 1);

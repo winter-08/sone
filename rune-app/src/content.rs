@@ -131,6 +131,12 @@ pub fn ai_badge() -> El {
         .child(text("AI").font(t(9.0, 700.0).tracking(0.6)).color(white(theme::TEXT_MUTED)).label("AI-generated"))
 }
 
+/// TrackList's "VIDEO" plate on a music video's row, named for assistive technology.
+pub fn video_badge() -> El {
+    rune::el().h(15.0).px(4.0).radius(3.0).fill(white(0.12)).items_center().justify_center()
+        .child(text("VIDEO").font(t(9.0, 700.0).tracking(0.6)).color(white(theme::TEXT_MUTED)).label("Music video"))
+}
+
 /// The badges a track's title carries, in React's order (explicit, then AI); None for neither.
 pub fn badges(explicit: bool, ai: bool) -> Option<El> {
     if !explicit && !ai {
