@@ -150,6 +150,10 @@ fn poll(s: &mut App, t: f64, tx: &mut Tx) -> bool {
 fn lyric_tick(s: &mut App, tx: &mut Tx) -> bool {
     let drawer = s.nav.drawer == Some(views::Drawer::Lyrics);
     let full = s.nav.full.open && s.nav.full.lyrics;
+    // LyricsTab forgets a manual scroll for each new track, and whenever it is shown again.
+    if LYRICS_TAB.with(|l| l.shown(drawer.then(|| controller::now_playing().0).flatten())) && *Tracked::untracked(&s.nav.lyrics_scrolled) {
+        *s.nav.lyrics_scrolled = false;
+    }
     let lines = (drawer || full)
         .then(|| controller::now_playing().0).flatten()
         .and_then(views::synced_lyrics);
@@ -186,6 +190,23 @@ fn lyric_tick(s: &mut App, tx: &mut Tx) -> bool {
         moved = true;
     }
     moved
+}
+
+/// Which track the drawer's Lyrics tab shows (None while it is hidden). In React each new track
+/// (or reopening the tab) starts a fresh LyricsTab, with `userScrolled` false again.
+#[derive(Default)]
+struct LyricsTab(std::cell::Cell<Option<u64>>);
+
+impl LyricsTab {
+    /// Records what the tab shows now; whether that is a new track on a shown tab.
+    fn shown(&self, track: Option<u64>) -> bool {
+        let was = self.0.replace(track);
+        track.is_some() && was != track
+    }
+}
+
+thread_local! {
+    static LYRICS_TAB: LyricsTab = LyricsTab::default();
 }
 
 /// Clears the drawer's lyric line; whether it had one. Writes only then: every poll calls it.
@@ -418,5 +439,20 @@ fn main() {
     });
     app.run();
     controller::flush_snapshot();
+}
+
+#[cfg(test)]
+mod lyrics_tab_tests {
+    use super::LyricsTab;
+
+    #[test]
+    fn a_manual_scroll_lasts_one_track() {
+        let tab = LyricsTab::default();
+        assert!(tab.shown(Some(1)), "opening the tab starts fresh");
+        assert!(!tab.shown(Some(1)), "the same track keeps the user's scroll");
+        assert!(tab.shown(Some(2)), "a new track follows again");
+        assert!(!tab.shown(None), "a hidden tab resets nothing");
+        assert!(tab.shown(Some(2)), "showing the tab again follows again");
+    }
 }
 
