@@ -11,7 +11,7 @@ use crate::theme;
 use rune::{Align, Color, El, Spring, TextStyle, col, el, oklch, oklcha, row, spacer, text};
 
 pub fn white(a: f32) -> Color {
-    oklcha(0.985, 0.0, 0.0, a)
+    oklcha(theme::fg_lightness(), 0.0, 0.0, a)
 }
 pub fn base(h: f32) -> Color {
     theme::surface(0.155, h)

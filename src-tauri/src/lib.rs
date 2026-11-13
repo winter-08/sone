@@ -21,7 +21,7 @@ mod rate_gate;
 mod scrobble;
 mod signal_path;
 mod pipeline_probe;
-mod theme_config;
+pub mod theme_config;
 #[cfg(target_os = "linux")]
 mod tray;
 pub mod tidal_api;

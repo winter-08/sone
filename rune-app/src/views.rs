@@ -1923,7 +1923,7 @@ fn wordmark() -> El {
 /// The sign-in screen's window: its background, `c` centred (the window buttons are the title
 /// bar's, shell.rs).
 fn login_frame(c: El) -> El {
-    col().key("login-root").w_full().h_full().fill(ui::base(270.0))
+    col().key("login-root").w_full().h_full().fill(theme::ground())
         .child(col().grow(1.0).w_full().items_center().justify_center().child(c))
 }
 

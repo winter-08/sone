@@ -1,8 +1,10 @@
 //! Design tokens: the colours, radii and type sizes the views share, and the one surface every
-//! floating layer is drawn on. Plain values on purpose: there is one (dark) theme.
+//! floating layer is drawn on, in the theme Settings → Themes picked (React's themes: a preset
+//! or a custom accent and background, kept in `theme.json`; see [`set`] and [`init`]).
 //!
-//! Text and fills on the dark ground are `ui::white(alpha)`; `TEXT` and `TEXT_MUTED` below are
-//! the two text levels new code should pick from.
+//! Text and fills on the ground are `ui::white(alpha)`, the foreground: near white on a dark
+//! theme, near black on a light one ([`fg_lightness`]). `TEXT` and `TEXT_MUTED` below are the two
+//! text levels new code should pick from.
 
 use crate::ui::white;
 use rune::{Color, El, oklch, oklcha};
@@ -22,6 +24,10 @@ const TINT: f32 = 0.025;
 
 thread_local! {
     static AMBIENT: std::cell::Cell<f32> = const { std::cell::Cell::new(HUE) };
+    /// This frame draws in the picked theme (the main window; see [`begin_themed`]).
+    static THEMED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    /// This frame's foreground is dark (a light theme, outside the players over artwork).
+    static LIGHT: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     /// Backdrop blurs [`overlay_surface`] may still hand out this frame (see [`take_glass`]).
     static GLASS_LEFT: std::cell::Cell<usize> = const { std::cell::Cell::new(rune::MAX_BACKDROP_BLURS) };
 }
@@ -32,6 +38,31 @@ thread_local! {
 pub fn set_ambient(hue: f32) {
     AMBIENT.with(|a| a.set(hue));
     GLASS_LEFT.with(|g| g.set(rune::MAX_BACKDROP_BLURS));
+    THEMED.with(|t| t.set(false));
+    LIGHT.with(|t| t.set(false));
+}
+
+/// After [`set_ambient`], for the main window: its surfaces take the picked theme's background
+/// (the default theme keeps the hue of what's playing) and, in a light theme, its foreground
+/// turns dark.
+pub fn begin_themed() {
+    let p = palette();
+    THEMED.with(|t| t.set(!p.ambient));
+    LIGHT.with(|t| t.set(p.light));
+}
+
+/// Draws what `f` builds on a dark foreground whatever the theme: the full-screen and video
+/// players sit over artwork and video, which stay dark.
+pub fn dark<T>(f: impl FnOnce() -> T) -> T {
+    let was = LIGHT.with(|t| t.replace(false));
+    let out = f();
+    LIGHT.with(|t| t.set(was));
+    out
+}
+
+/// The foreground's lightness: `ui::white` is this at an alpha.
+pub fn fg_lightness() -> f32 {
+    if LIGHT.with(|t| t.get()) { 0.2 } else { 0.985 }
 }
 
 /// A surface at lightness `l` in hue `h`.
@@ -40,7 +71,18 @@ pub fn surface(l: f32, h: f32) -> Color {
 }
 
 fn ambient(l: f32) -> Color {
+    if THEMED.with(|t| t.get()) {
+        let p = palette();
+        return oklch(surface_l(p.l, p.light, l), p.c, p.h);
+    }
     surface(l, AMBIENT.with(|a| a.get()))
+}
+
+/// The lightness a surface drawn at `l` in the default dark ground (0.155) takes over a theme
+/// background of lightness `bg`: as much lighter on a dark one, darker on a light one (React
+/// deriveTheme's lightness shifts).
+fn surface_l(bg: f32, light: bool, l: f32) -> f32 {
+    if light { (bg - (l - 0.155).abs()).clamp(0.0, 1.0) } else { (bg + (l - 0.155)).clamp(0.0, 1.0) }
 }
 
 // ---- surfaces, darkest to lightest
@@ -67,7 +109,7 @@ pub fn overlay_bg() -> Color {
 }
 /// Ink on a light fill: the primary pill, a selected chip, the accent play buttons.
 pub fn ink() -> Color {
-    oklch(0.18, 0.02, HUE)
+    if LIGHT.with(|t| t.get()) { oklch(0.98, 0.01, HUE) } else { oklch(0.18, 0.02, HUE) }
 }
 /// Black at `a`, for scrims, shadows and the dark discs behind icons over artwork.
 pub fn black(a: f32) -> Color {
@@ -82,7 +124,7 @@ pub fn scrim() -> Color {
 
 /// The React accent (`text-th-accent`): loved hearts, "in library", selection marks.
 pub fn accent() -> Color {
-    oklch(0.75, 0.13, 250.0)
+    palette().accent
 }
 /// Destructive actions and error text.
 pub fn danger() -> Color {
@@ -187,6 +229,13 @@ fn opaque_surface(e: El) -> El {
 fn glass_surface(e: El, kind: Overlay) -> El {
     let (sigma, l, a) = glass(kind);
     let hue = AMBIENT.with(|h| h.get());
+    if THEMED.with(|t| t.get()) {
+        let p = palette();
+        let l = if p.light { (p.l + 0.02).min(0.99) } else { surface_l(p.l, false, l) };
+        return e.radius(RADIUS_OVERLAY).backdrop_blur(sigma).fill(oklcha(l, p.c, p.h, a))
+            .gradient(white(0.035), white(0.0)).border_gradient(1.0, white(0.24), white(0.06))
+            .shadow(10.0, 30.0, black(0.45)).shadow(1.0, 3.0, black(0.25));
+    }
     e.radius(RADIUS_OVERLAY)
         .backdrop_blur(sigma)
         .fill(oklcha(l, TINT, hue, a))
@@ -232,4 +281,342 @@ pub fn focusable(e: El) -> El {
 /// scroll view or menu around it doesn't clip it.
 pub fn focusable_row(e: El) -> El {
     e.focusable(true).focus_ring(2.0, -2.0, white(0.6))
+}
+
+// ------------------------------------------------------------------ themes (React lib/theme.ts)
+
+/// A theme as React keeps it: a name ("Custom" or a preset's) and two `#RRGGBB` colours.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Theme {
+    pub name: String,
+    pub accent: String,
+    pub bg: String,
+}
+
+/// React's PRESET_THEMES, in its order; the first is the default.
+pub const PRESETS: [(&str, &str, &str); 15] = [
+    ("Violet Night", "#A855F7", "#130F1A"),
+    ("Cyberpunk", "#FCE300", "#18180C"),
+    ("Forest", "#22C55E", "#0E1410"),
+    ("Ocean", "#3B82F6", "#0E1118"),
+    ("Midnight Cyan", "#00FFFF", "#121212"),
+    ("Sakura", "#F9A8D4", "#140F12"),
+    ("Rose", "#F43F5E", "#140E0F"),
+    ("Ember", "#F97316", "#151010"),
+    ("Copper", "#E8915A", "#12100E"),
+    ("Noir", "#FFFFFF", "#020202"),
+    ("Daylight", "#2563EB", "#F5F3EE"),
+    ("Snowfall", "#0891B2", "#F8FAFC"),
+    ("Paper", "#7C3AED", "#FAF5FF"),
+    ("Meadow", "#16A34A", "#F2F6EE"),
+    ("Blossom", "#E11D48", "#FEF3F2"),
+];
+
+impl Theme {
+    pub fn preset(i: usize) -> Theme {
+        let (n, a, b) = PRESETS[i];
+        Theme { name: n.into(), accent: a.into(), bg: b.into() }
+    }
+    pub fn default_theme() -> Theme {
+        Theme::preset(0)
+    }
+    /// The preset with these colours, if one has them (ThemesTab's activePreset).
+    pub fn matching_preset(&self) -> Option<usize> {
+        PRESETS.iter().position(|(_, a, b)| a.eq_ignore_ascii_case(&self.accent) && b.eq_ignore_ascii_case(&self.bg))
+    }
+}
+
+/// `#RGB` or `#RRGGBB` to uppercase `#RRGGBB` (normalizeHex).
+pub fn normalize_hex(s: &str) -> Option<String> {
+    let d = s.trim().strip_prefix('#')?;
+    let d: String = match d.len() {
+        3 => d.chars().flat_map(|c| [c, c]).collect(),
+        6 => d.to_string(),
+        _ => return None,
+    };
+    d.chars().all(|c| c.is_ascii_hexdigit()).then(|| format!("#{}", d.to_ascii_uppercase()))
+}
+
+/// sRGB channels 0..1 of a `#RRGGBB`.
+pub fn rgb(hex: &str) -> Option<[f32; 3]> {
+    let h = normalize_hex(hex)?;
+    let ch = |i: usize| u8::from_str_radix(&h[1 + 2 * i..3 + 2 * i], 16).ok().map(|v| v as f32 / 255.0);
+    Some([ch(0)?, ch(1)?, ch(2)?])
+}
+
+/// A `#RRGGBB` in OKLCH: (lightness, chroma, hue in degrees).
+pub fn hex_oklch(hex: &str) -> Option<(f32, f32, f32)> {
+    let [r, g, b] = rgb(hex)?;
+    let lin = |c: f32| if c <= 0.04045 { c / 12.92 } else { ((c + 0.055) / 1.055).powf(2.4) };
+    let (r, g, b) = (lin(r), lin(g), lin(b));
+    let l = (0.412_221_47 * r + 0.536_332_55 * g + 0.051_445_995 * b).cbrt();
+    let m = (0.211_903_5 * r + 0.680_699_5 * g + 0.107_396_96 * b).cbrt();
+    let s = (0.088_302_46 * r + 0.281_718_85 * g + 0.629_978_7 * b).cbrt();
+    let ll = 0.210_454_26 * l + 0.793_617_8 * m - 0.004_072_047 * s;
+    let a = 1.977_998_5 * l - 2.428_592_2 * m + 0.450_593_7 * s;
+    let bb = 0.025_904_037 * l + 0.782_771_77 * m - 0.808_675_77 * s;
+    Some((ll, a.hypot(bb), bb.atan2(a).to_degrees().rem_euclid(360.0)))
+}
+
+/// A colour of a theme, as Rune draws it.
+pub fn color_of(hex: &str) -> Color {
+    let (l, c, h) = hex_oklch(hex).unwrap_or((0.5, 0.0, 0.0));
+    oklch(l, c, h)
+}
+
+/// React deriveTheme's isDark, negated: the background's HSL lightness at 50% or more.
+pub fn is_light(bg: &str) -> bool {
+    rgb(bg).map(|[r, g, b]| (r.max(g).max(b) + r.min(g).min(b)) / 2.0 >= 0.5).unwrap_or(false)
+}
+
+/// A surface of a theme that isn't the one in use (the presets' cards, the preview): the
+/// background drawn at `l` as [`ambient`] draws the theme in use.
+pub fn surface_of(bg: &str, l: f32) -> Color {
+    let (bl, c, h) = hex_oklch(bg).unwrap_or((0.155, TINT, HUE));
+    oklch(surface_l(bl, is_light(bg), l), c.min(0.06), h)
+}
+
+/// What the views draw with, worked out from the theme once.
+#[derive(Clone, Copy)]
+struct Palette {
+    accent: Color,
+    /// The background in OKLCH (its chroma kept low enough to read as a tint).
+    l: f32,
+    c: f32,
+    h: f32,
+    light: bool,
+    /// The default theme: surfaces follow what's playing, as the app always has.
+    ambient: bool,
+}
+
+fn palette_of(t: &Theme) -> Palette {
+    let (l, c, h) = hex_oklch(&t.bg).unwrap_or((0.155, TINT, HUE));
+    let default = Theme::default_theme();
+    let ambient = t.accent.eq_ignore_ascii_case(&default.accent) && t.bg.eq_ignore_ascii_case(&default.bg);
+    Palette { accent: color_of(&t.accent), l, c: c.min(0.06), h, light: is_light(&t.bg), ambient }
+}
+
+static CURRENT: std::sync::LazyLock<std::sync::RwLock<(Theme, Palette)>> = std::sync::LazyLock::new(|| {
+    let t = Theme::default_theme();
+    let p = palette_of(&t);
+    std::sync::RwLock::new((t, p))
+});
+static VERSION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+fn palette() -> Palette {
+    CURRENT.read().unwrap().1
+}
+
+/// The theme in use.
+pub fn current() -> Theme {
+    CURRENT.read().unwrap().0.clone()
+}
+
+/// Bumped on every theme change; the main window's panes take it as an input.
+pub fn version() -> u64 {
+    VERSION.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// Use `t` from the next frame on (nothing saved). Whether it changed anything.
+fn apply(t: Theme) -> bool {
+    let mut cur = CURRENT.write().unwrap();
+    if cur.0.accent.eq_ignore_ascii_case(&t.accent) && cur.0.bg.eq_ignore_ascii_case(&t.bg) && cur.0.name == t.name {
+        return false;
+    }
+    let p = palette_of(&t);
+    *cur = (t, p);
+    drop(cur);
+    VERSION.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    publish_overlay_css();
+    crate::controller::bump();
+    true
+}
+
+/// Settings → Themes: use `t` now. `save` writes it to `theme.json` too (React's write-through,
+/// which Settings debounces while a colour is dragged).
+pub fn set(t: Theme, save_now: bool) {
+    if apply(t.clone()) && save_now {
+        save(&t);
+    }
+}
+
+/// Write the theme in use to `theme.json`.
+pub fn save_current() {
+    save(&current());
+}
+
+/// themeToFile: a preset's name when the theme is one (by name and colours), else "custom".
+pub fn to_file(t: &Theme) -> tauri_app_lib::theme_config::ThemeFile {
+    let accent = normalize_hex(&t.accent).unwrap_or_else(|| t.accent.to_uppercase());
+    let bg = normalize_hex(&t.bg).unwrap_or_else(|| t.bg.to_uppercase());
+    let preset = PRESETS.iter().any(|(n, a, b)| *n == t.name && a.eq_ignore_ascii_case(&accent) && b.eq_ignore_ascii_case(&bg));
+    tauri_app_lib::theme_config::ThemeFile {
+        version: Some(1),
+        preset: if preset { t.name.clone() } else { "custom".into() },
+        custom: tauri_app_lib::theme_config::ThemeCustom { accent, background: bg },
+    }
+}
+
+/// resolveThemeFile: the file's preset, or its custom colours.
+pub fn from_file(f: &tauri_app_lib::theme_config::ThemeFile) -> Option<Theme> {
+    if f.version.is_some_and(|v| v != 1) {
+        return None;
+    }
+    let accent = normalize_hex(&f.custom.accent)?;
+    let bg = normalize_hex(&f.custom.background)?;
+    if f.preset == "custom" {
+        return Some(Theme { name: "Custom".into(), accent, bg });
+    }
+    PRESETS.iter().position(|(n, _, _)| *n == f.preset).map(Theme::preset)
+}
+
+fn save(t: &Theme) {
+    if let Err(e) = tauri_app_lib::theme_config::theme_file_set(to_file(t)) {
+        log::warn!("[theme] theme.json unavailable: {e}");
+    }
+}
+
+/// At launch (React bootstrapThemeFile): the theme in `theme.json`; with no file, the default
+/// is written there; an invalid file is left alone (the user may be editing it).
+pub fn init() {
+    match tauri_app_lib::theme_config::theme_file_get() {
+        Ok(Some(f)) => {
+            if let Some(t) = from_file(&f) {
+                apply(t);
+            }
+        }
+        Ok(None) => save(&current()),
+        Err(e) => log::warn!("[theme] not using theme.json: {e}"),
+    }
+    publish_overlay_css();
+}
+
+/// The backend's watcher saw `theme.json` change (`theme-file-changed`): apply it, or, deleted
+/// while running, write it back from the theme in use.
+pub fn on_file_changed(payload: &str) {
+    match serde_json::from_str::<Option<tauri_app_lib::theme_config::ThemeFile>>(payload) {
+        Ok(Some(f)) => {
+            if let Some(t) = from_file(&f) {
+                apply(t);
+            }
+        }
+        Ok(None) => save(&current()),
+        Err(e) => log::warn!("[theme] theme-file-changed: {e}"),
+    }
+}
+
+// ---- React deriveTheme's HSL arithmetic, for the OBS overlay's stylesheet
+
+fn hex_hsl(hex: &str) -> (f32, f32, f32) {
+    let [r, g, b] = rgb(hex).unwrap_or([0.0; 3]);
+    let (mx, mn) = (r.max(g).max(b), r.min(g).min(b));
+    let l = (mx + mn) / 2.0;
+    if mx == mn {
+        return (0.0, 0.0, l * 100.0);
+    }
+    let d = mx - mn;
+    let s = if l > 0.5 { d / (2.0 - mx - mn) } else { d / (mx + mn) };
+    let h = if mx == r { (g - b) / d + if g < b { 6.0 } else { 0.0 } } else if mx == g { (b - r) / d + 2.0 } else { (r - g) / d + 4.0 };
+    (h * 60.0, s * 100.0, l * 100.0)
+}
+
+fn hsl_hex(h: f32, s: f32, l: f32) -> String {
+    let (s, l) = (s / 100.0, l / 100.0);
+    let c = (1.0 - (2.0 * l - 1.0).abs()) * s;
+    let x = c * (1.0 - ((h / 60.0) % 2.0 - 1.0).abs());
+    let m = l - c / 2.0;
+    let (r, g, b) = match h {
+        h if h < 60.0 => (c, x, 0.0),
+        h if h < 120.0 => (x, c, 0.0),
+        h if h < 180.0 => (0.0, c, x),
+        h if h < 240.0 => (0.0, x, c),
+        h if h < 300.0 => (x, 0.0, c),
+        _ => (c, 0.0, x),
+    };
+    let to = |v: f32| ((v + m) * 255.0).round().clamp(0.0, 255.0) as u8;
+    format!("#{:02x}{:02x}{:02x}", to(r), to(g), to(b))
+}
+
+fn shift(hex: &str, d: f32) -> String {
+    let (h, s, l) = hex_hsl(hex);
+    hsl_hex(h, s, (l + d).clamp(0.0, 100.0))
+}
+
+/// The CSS variables the OBS overlay reads (useOverlayBridge OVERLAY_VARS), for `t`.
+pub fn overlay_css(t: &Theme) -> String {
+    let dark = !is_light(&t.bg);
+    let dir = if dark { 1.0 } else { -1.0 };
+    let (h, s, l) = hex_hsl(&t.accent);
+    let vars = [
+        ("--th-bg-base", t.bg.clone()),
+        ("--th-bg-elevated", shift(&t.bg, 2.5 * dir)),
+        ("--th-bg-inset", shift(&t.bg, 7.0 * dir)),
+        ("--th-accent", t.accent.clone()),
+        ("--th-accent-hover", hsl_hex(h, s, (l * 0.88).clamp(0.0, 100.0))),
+        ("--th-on-accent", if dark { "#000000" } else { "#ffffff" }.into()),
+        ("--th-text-primary", if dark { "#ffffff" } else { "#111111" }.into()),
+        ("--th-text-secondary", if dark { "#b3b3b3" } else { "#444444" }.into()),
+        ("--th-text-muted", if dark { "#a6a6a6" } else { "#666666" }.into()),
+        ("--th-text-faint", "#666666".into()),
+        ("--th-border-subtle", if dark { "rgba(255,255,255,0.06)" } else { "rgba(0,0,0,0.08)" }.into()),
+        ("--th-slider-fill", if dark { "rgba(255,255,255,0.65)" } else { "rgba(0,0,0,0.45)" }.into()),
+        ("--th-slider-track", if dark { "rgba(255,255,255,0.15)" } else { "rgba(0,0,0,0.15)" }.into()),
+    ];
+    let lines: Vec<String> = vars.iter().map(|(k, v)| format!("  {k}: {v};")).collect();
+    format!(":root {{\n{}\n}}", lines.join("\n"))
+}
+
+/// Hand the overlay server the theme's stylesheet (React useOverlayBridge's theme effect).
+fn publish_overlay_css() {
+    let css = overlay_css(&current());
+    sone_host_shim::async_runtime::spawn(async move {
+        use sone_host_shim::Manager;
+        let _ = tauri_app_lib::commands::overlay::overlay_publish_theme(crate::host().state::<tauri_app_lib::AppState>(), css).await;
+    });
+}
+
+#[cfg(test)]
+mod theme_tests {
+    use super::*;
+
+    #[test]
+    fn hex_is_normalised() {
+        assert_eq!(normalize_hex("#abc").as_deref(), Some("#AABBCC"));
+        assert_eq!(normalize_hex(" #a855f7 ").as_deref(), Some("#A855F7"));
+        assert_eq!(normalize_hex("#12345"), None);
+        assert_eq!(normalize_hex("123456"), None);
+    }
+
+    #[test]
+    fn files_round_trip() {
+        for (i, p) in PRESETS.iter().enumerate() {
+            let t = Theme::preset(i);
+            assert_eq!(from_file(&to_file(&t)), Some(t.clone()));
+            assert_eq!(to_file(&t).preset, p.0);
+        }
+        let custom = Theme { name: "Custom".into(), accent: "#112233".into(), bg: "#010203".into() };
+        assert_eq!(to_file(&custom).preset, "custom");
+        assert_eq!(from_file(&to_file(&custom)), Some(custom));
+        // a custom theme that lands on a preset's colours stays custom
+        let lookalike = Theme { name: "Custom".into(), accent: "#A855F7".into(), bg: "#130F1A".into() };
+        assert_eq!(to_file(&lookalike).preset, "custom");
+    }
+
+    #[test]
+    fn light_and_dark_backgrounds() {
+        assert!(!is_light("#130F1A"));
+        assert!(is_light("#F5F3EE"));
+        let (l, _, _) = hex_oklch("#FFFFFF").unwrap();
+        assert!((l - 1.0).abs() < 0.01);
+        let (l, c, _) = hex_oklch("#000000").unwrap();
+        assert!(l.abs() < 0.01 && c < 0.01);
+    }
+
+    #[test]
+    fn overlay_css_derives_like_react() {
+        let css = overlay_css(&Theme::preset(0));
+        assert!(css.contains("--th-bg-base: #130F1A;"));
+        assert!(css.contains("--th-on-accent: #000000;"));
+        assert_eq!(shift("#000000", 10.0), "#1a1a1a");
+    }
 }

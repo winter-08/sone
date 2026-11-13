@@ -165,6 +165,14 @@ pub struct Form {
     pub profile_edit: Option<crate::profile::Edit>,
     /// The sign-in screen's custom credentials view (login.rs), while shown.
     pub custom_login: Option<crate::login::Custom>,
+    // Themes
+    th_accent: TextEdit,
+    th_bg: TextEdit,
+    pick: Option<Pick>,
+    /// The picker's colour as hue, saturation, value (kept while dragging, as React's hsv).
+    hsv: (f32, f32, f32),
+    /// theme.json's debounced write while a colour is being picked.
+    theme_due: Option<Instant>,
 }
 
 type Apply = Box<dyn FnOnce(&mut Form) + Send>;
@@ -187,7 +195,7 @@ fn later(after: Duration) -> Option<Instant> {
 
 /// Whether a debounced save is waiting (the poll keeps waking until it's written).
 pub fn due(s: &App) -> bool {
-    s.nav.set.discord_due.is_some() || s.nav.set.proxy_due.is_some() || !RESULTS.lock().unwrap().is_empty()
+    s.nav.set.discord_due.is_some() || s.nav.set.proxy_due.is_some() || s.nav.set.theme_due.is_some() || !RESULTS.lock().unwrap().is_empty()
 }
 
 /// Fill the form from what's saved and ask the servers how they are (as the React tabs do on
@@ -227,6 +235,7 @@ pub fn load_setting_fields(s: &mut App) {
     f.ov_error = None;
     f.pending_off = None;
     f.copied = None;
+    load_theme_fields(f);
     refresh_scrobble(f, true);
     run(async { mcp::mcp_get_connection_info(st()).await.ok().and_then(|i| serde_json::to_value(i).ok()) }, |f, v| {
         if let Some(v) = v {
@@ -325,6 +334,10 @@ pub fn flush_settings(s: &mut App) {
     let now = Instant::now();
     if f.copied.is_some_and(|(_, until)| now >= until) {
         f.copied = None;
+    }
+    if f.theme_due.is_some_and(|t| now >= t) {
+        f.theme_due = None;
+        theme::save_current();
     }
     if f.discord_due.is_some_and(|t| now >= t) {
         f.discord_due = None;
@@ -1287,22 +1300,209 @@ fn overlay_tab(s: &App) -> El {
 
 // ------------------------------------------------------------------ Themes
 
-fn themes_tab(_s: &App) -> El {
-    let mut presets = row().w_full().gap(8.0).flex_wrap();
-    for (i, name) in ["Midnight Cyan", "Violet Night", "Cyberpunk", "Noir", "Ocean", "Forest", "Ember", "Rose", "Copper", "Sakura", "Blossom", "Meadow", "Snowfall", "Daylight", "Paper"].iter().enumerate() {
-        presets = presets.child(row().key(format!("th-{i}")).role("button").label(*name).h(34.0).px(12.0).radius(10.0).items_center().fill(white(0.07)).cursor(rune::Cursor::Pointer)
-            .child(text(name.to_string()).font(t(12.0, 600.0)).color(white(0.85)).a11y_hidden()));
+/// Which colour the picker edits (ThemesTab PickerTarget).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Pick {
+    Accent,
+    Bg,
+}
+
+/// hsvToHex.
+fn hsv_hex(h: f32, s: f32, v: f32) -> String {
+    let c = v * s;
+    let x = c * (1.0 - ((h / 60.0) % 2.0 - 1.0).abs());
+    let m = v - c;
+    let (r, g, b) = match h {
+        h if h < 60.0 => (c, x, 0.0),
+        h if h < 120.0 => (x, c, 0.0),
+        h if h < 180.0 => (0.0, c, x),
+        h if h < 240.0 => (0.0, x, c),
+        h if h < 300.0 => (x, 0.0, c),
+        _ => (c, 0.0, x),
+    };
+    let to = |n: f32| ((n + m) * 255.0).round().clamp(0.0, 255.0) as u8;
+    format!("#{:02X}{:02X}{:02X}", to(r), to(g), to(b))
+}
+
+/// hexToHsv.
+fn hex_hsv(hex: &str) -> (f32, f32, f32) {
+    let [r, g, b] = theme::rgb(hex).unwrap_or([0.0; 3]);
+    let (mx, mn) = (r.max(g).max(b), r.min(g).min(b));
+    let d = mx - mn;
+    let mut h = 0.0;
+    if d > 0.0 {
+        h = if mx == r { ((g - b) / d).rem_euclid(6.0) } else if mx == g { (b - r) / d + 2.0 } else { (r - g) / d + 4.0 } * 60.0;
+    }
+    (h, if mx > 0.0 { d / mx } else { 0.0 }, mx)
+}
+
+/// The theme's colour fields, from the theme in use.
+fn load_theme_fields(f: &mut Form) {
+    let t = theme::current();
+    f.th_accent = TextEdit::new(&t.accent);
+    f.th_bg = TextEdit::new(&t.bg);
+    f.pick = None;
+}
+
+/// A colour edit (picker or hex field): the theme becomes Custom at once, and is written to
+/// theme.json shortly after the last change.
+fn custom_color(f: &mut Form, which: Pick, hex: String) {
+    let cur = theme::current();
+    let (accent, bg) = match which { Pick::Accent => (hex, cur.bg), Pick::Bg => (cur.accent, hex) };
+    theme::set(theme::Theme { name: "Custom".into(), accent, bg }, false);
+    f.theme_due = later(Duration::from_millis(150));
+}
+
+fn pick_preset(s: &mut App, t: theme::Theme) {
+    theme::set(t, true);
+    load_theme_fields(&mut s.nav.set);
+}
+
+/// The colour picker (ColorPicker): a saturation/brightness square and a hue strip, dragged.
+fn color_picker(f: &Form, which: Pick) -> El {
+    let (h, sat, val) = f.hsv;
+    let (w, sq_h) = (240.0, 150.0);
+    let hue_color = theme::color_of(&hsv_hex(h, 1.0, 1.0));
+    let knob = |x: f32, y: f32| el().absolute(x - 7.0, y - 7.0).size(14.0, 14.0).radius(7.0).border(2.0, rune::Color::WHITE).shadow(1.0, 3.0, theme::black(0.5));
+    let square = el().key("th-sv").role("slider").label("Saturation and brightness").size(w, sq_h).radius(8.0).fill(hue_color)
+        .linear_gradient(std::f32::consts::FRAC_PI_2, [(0.0, rune::Color::WHITE), (1.0, rune::Color::WHITE.alpha(0.0))])
+        .gradient(rune::Color::BLACK.alpha(0.0), rune::Color::BLACK)
+        .cursor(rune::Cursor::Crosshair)
+        .on_drag(move |s: &mut App, d: &mut rune::Drag, _| {
+            let f = &mut s.nav.set;
+            let sat = (d.x / d.w.max(1.0)).clamp(0.0, 1.0);
+            let val = 1.0 - (d.y / d.h.max(1.0)).clamp(0.0, 1.0);
+            f.hsv = (f.hsv.0, sat, val);
+            let hex = hsv_hex(f.hsv.0, sat, val);
+            set_field(f, which, &hex);
+            custom_color(f, which, hex);
+        })
+        .child(knob(sat * w, (1.0 - val) * sq_h));
+    let stops: Vec<(f32, rune::Color)> = (0..=6).map(|i| (i as f32 / 6.0, theme::color_of(&hsv_hex((i as f32 * 60.0).min(359.9), 1.0, 1.0)))).collect();
+    let strip = el().key("th-hue").role("slider").label("Hue").range_value(h as f64, 0.0, 360.0).size(w, 14.0).radius(7.0)
+        .linear_gradient(std::f32::consts::FRAC_PI_2, stops).cursor(rune::Cursor::Pointer)
+        .on_drag(move |s: &mut App, d: &mut rune::Drag, _| {
+            let f = &mut s.nav.set;
+            let h = (d.x / d.w.max(1.0)).clamp(0.0, 1.0) * 359.9;
+            f.hsv = (h, f.hsv.1, f.hsv.2);
+            let hex = hsv_hex(h, f.hsv.1, f.hsv.2);
+            set_field(f, which, &hex);
+            custom_color(f, which, hex);
+        })
+        .child(knob(h / 360.0 * w, 7.0));
+    col().key("th-picker").gap(12.0).padding(12.0).radius(12.0).fill(white(0.05)).border(1.0, white(0.1)).child(square).child(strip)
+}
+
+fn set_field(f: &mut Form, which: Pick, hex: &str) {
+    match which {
+        Pick::Accent => f.th_accent = TextEdit::new(hex),
+        Pick::Bg => f.th_bg = TextEdit::new(hex),
+    }
+}
+
+/// A hex field: a full `#RRGGBB` applies at once (ThemesTab's inputs).
+fn hex_changed(s: &mut App, which: Pick) {
+    let f = &mut s.nav.set;
+    let text = match which { Pick::Accent => f.th_accent.text.clone(), Pick::Bg => f.th_bg.text.clone() };
+    let t = text.trim();
+    if t.len() == 7 && let Some(hex) = theme::normalize_hex(t) {
+        f.hsv = hex_hsv(&hex);
+        custom_color(f, which, hex);
+    }
+}
+
+/// The app in miniature, in `accent` over `bg` (ThemeMiniPreview).
+fn mini_preview(accent: &str, bg: &str) -> El {
+    let light = theme::is_light(bg);
+    let fg = |a: f32| if light { theme::black(a) } else { rune::Color::WHITE.alpha(a) };
+    let ac = theme::color_of(accent);
+    let surf = |l: f32| theme::surface_of(bg, l);
+    let bar = |w: f32, h: f32, c: rune::Color| el().size(w, h).radius(h / 2.0).fill(c);
+    let side = col().w(74.0).h_full().padding(9.0).gap(7.0).fill(surf(0.13))
+        .child(el().size(20.0, 20.0).radius(6.0).fill(ac))
+        .child(bar(48.0, 6.0, ac)).child(bar(52.0, 6.0, fg(0.13))).child(bar(50.0, 6.0, fg(0.13)))
+        .child(el().w_full().h(1.0).fill(fg(0.08)))
+        .child(bar(46.0, 5.0, fg(0.09))).child(bar(40.0, 5.0, fg(0.09))).child(bar(44.0, 5.0, fg(0.09)));
+    let card = |hl: bool| col().gap(5.0).child(el().size(52.0, 52.0).radius(6.0).fill(if hl { ac } else { surf(0.2) })).child(bar(40.0, 5.0, fg(0.5))).child(bar(28.0, 4.0, fg(0.25)));
+    let main = col().grow(1.0).min_w(0.0).padding(12.0).gap(10.0)
+        .child(row().gap(7.0).items_center().child(el().size(13.0, 13.0).radius(6.5).fill(fg(0.09))).child(el().size(116.0, 15.0).radius(8.0).fill(surf(0.195)).border(1.0, fg(0.08))).child(spacer()).child(el().size(15.0, 15.0).radius(7.5).fill(ac)))
+        .child(bar(78.0, 9.0, fg(0.72)))
+        .child(row().gap(9.0).child(card(true)).child(card(false)).child(card(false)).child(card(false)));
+    let now = row().w_full().h(30.0).px(10.0).gap(8.0).items_center().fill(surf(0.19))
+        .child(el().size(18.0, 18.0).radius(4.0).fill(surf(0.25))).child(bar(60.0, 5.0, fg(0.5))).child(spacer())
+        .child(el().size(14.0, 14.0).radius(7.0).fill(fg(0.9))).child(spacer()).child(bar(40.0, 4.0, fg(0.2)));
+    col().key("th-preview").w_full().h(214.0).radius(13.0).clip_rounded(13.0).fill(theme::color_of(bg)).border(1.0, fg(0.08)).a11y_hidden()
+        .child(row().w_full().grow(1.0).min_h(0.0).child(side).child(main))
+        .child(now)
+}
+
+fn themes_tab(s: &App) -> El {
+    let f = &s.nav.set;
+    let cur = theme::current();
+    let active = if cur.name == "Custom" { None } else { cur.matching_preset() };
+    // React's presets grid, five to a row.
+    let mut grid = col().w_full().gap(10.0);
+    for chunk in 0..3 {
+        let mut r = row().w_full().gap(10.0);
+        for i in chunk * 5..chunk * 5 + 5 {
+            let th = theme::Theme::preset(i);
+            let on = active == Some(i);
+            let light = theme::is_light(&th.bg);
+            let ac = theme::color_of(&th.accent);
+            let name_color = if light { theme::black(0.85) } else { rune::Color::WHITE.alpha(0.92) };
+            let mut card = theme::focusable(col().key(format!("th-{i}")).role("button").label(th.name.clone())).grow(1.0).min_w(0.0).h(52.0).px(11.0).py(9.0).radius(10.0)
+                .justify_between().fill(theme::surface_of(&th.bg, 0.195)).border(if on { 1.5 } else { 1.0 }, if on { ac } else { white(0.08) }).cursor(rune::Cursor::Pointer)
+                .on_press({
+                    let th = th.clone();
+                    move |s: &mut App| pick_preset(s, th.clone())
+                })
+                .child(row().gap(6.0).child(el().size(15.0, 15.0).radius(7.5).fill(ac)).child(el().size(15.0, 15.0).radius(7.5).fill(theme::color_of(&th.bg)).border(1.0, white(0.12))))
+                .child(text(th.name.clone()).font(t(11.0, 500.0)).color(name_color).truncate().a11y_hidden());
+            if on {
+                card = card.child(el().absolute(0.0, 0.0).w_full().child(row().w_full().justify_end().child(el().size(15.0, 15.0).radius(7.5).fill(ac).items_center().justify_center()
+                    .child(crate::glyph::glyph(G::Check, 9.0, if light { rune::Color::WHITE } else { rune::Color::BLACK })))));
+            }
+            r = r.child(card);
+        }
+        grid = grid.child(r);
+    }
+    let swatch_row = |label: &str, key: &'static str, name: &str, which: Pick, edit: &TextEdit, hex: &str, get: fn(&mut App) -> &mut TextEdit| {
+        let open = f.pick == Some(which);
+        let hex_owned = hex.to_string();
+        let swatch = theme::focusable(el().key(key).role("button").label(name)).size(34.0, 34.0).radius(9.0).fill(theme::color_of(hex)).border(1.0, if open { theme::accent() } else { white(0.15) }).cursor(rune::Cursor::Pointer)
+            .on_press(move |s: &mut App| {
+                let f = &mut s.nav.set;
+                if f.pick == Some(which) {
+                    f.pick = None;
+                } else {
+                    f.pick = Some(which);
+                    f.hsv = hex_hsv(&hex_owned);
+                }
+            });
+        let field = text_input(edit, ui::tnum(t(12.5, 500.0)).lh(17.0)).key(format!("{key}-hex")).label(format!("{label} hex")).single_line().w(112.0).color(white(0.92)).caret(white(0.95), white(0.25))
+            .on_edit(get).on_input_change(move |s: &mut App, _| hex_changed(s, which));
+        row().gap(11.0).items_center()
+            .child(text(label.to_string()).font(t(12.5, 500.0)).color(white(0.65)).w(92.0))
+            .child(swatch)
+            .child(row().h(34.0).px(11.0).radius(9.0).items_center().fill(white(0.06)).border(1.0, white(0.08)).child(field))
+    };
+    let mut custom = col().w_full().gap(11.0)
+        .child(swatch_row("Accent", "th-accent", "Pick accent color", Pick::Accent, &f.th_accent, &cur.accent, |s: &mut App| &mut s.nav.set.th_accent));
+    if f.pick == Some(Pick::Accent) {
+        custom = custom.child(color_picker(f, Pick::Accent));
+    }
+    custom = custom.child(swatch_row("Background", "th-bg", "Pick background color", Pick::Bg, &f.th_bg, &cur.bg, |s: &mut App| &mut s.nav.set.th_bg));
+    if f.pick == Some(Pick::Bg) {
+        custom = custom.child(color_picker(f, Pick::Bg));
     }
     col().w_full().gap(12.0)
-        .child(heading("PREVIEW", 11.0))
-        .child(el().w_full().h(60.0).radius(12.0).fill(ui::base(270.0)))
         .child(heading("PRESETS", 11.0))
-        .child(presets)
-        .child(heading("CUSTOM", 11.0))
-        .child(row().gap(8.0)
-            .child(button::<App>("th-accent", "Pick accent color", None, false))
-            .child(button::<App>("th-bg", "Pick background color", None, false))
-            .child(button::<App>("th-reset", "Reset to default", None, false)))
+        .child(grid)
+        .child(heading("CUSTOM", 11.0).pt(18.0))
+        .child(custom)
+        .child(heading("PREVIEW", 11.0).pt(18.0))
+        .child(mini_preview(&cur.accent, &cur.bg))
+        .child(row().pt(6.0).child(button::<App>("th-reset", "Reset to default", None, false).on_press(|s: &mut App| pick_preset(s, theme::Theme::default_theme()))))
 }
 
 // ------------------------------------------------------------------ Utilities

@@ -310,8 +310,9 @@ fn view(s: &App, cx: &mut Cx<App>) -> El {
     let (data_version, _frozen) = data::freeze();
     let now_playing = controller::now_playing();
     views::set_now_playing(now_playing);
-    let stores = (data_version, interact::version(), home::version(), now_playing, art::failures());
+    let stores = (data_version, interact::version(), home::version(), now_playing, art::failures(), theme::version());
     theme::set_ambient(ui::hue(now_playing.0));
+    theme::begin_themed();
     // The root fills the window, so its width is the window's.
     let shell = cx.layout_with("root", |r| views::Shell::for_width(r[2])).unwrap_or_else(|| views::Shell::for_width(initial_size().0));
     // Until the saved sign-in has been checked (about 0.6 s, the keyring among it), neither the
@@ -326,7 +327,7 @@ fn view(s: &App, cx: &mut Cx<App>) -> El {
     // The panes are regions: each builds again only when something it read changed (a `Tracked`
     // field of `App`), or its inputs did (the window's width bands, the stores outside `App`).
     // A clock tick changes only `pos`, which only the player bar reads.
-    let header = pane("header", &s.nav.search, || views::header(s));
+    let header = pane("header", (&s.nav.search, theme::version()), || views::header(s));
     // Settings reads the backend's settings directly, so it builds every time.
     let page = if *Tracked::untracked(&s.nav.page) == views::Page::Settings {
         views::page(s, &s.ctl)
@@ -371,7 +372,7 @@ fn view(s: &App, cx: &mut Cx<App>) -> El {
     }
     // (under the context menus: its More button opens the track menu over it)
     let win_h = cx.layout_with("root", |r| r[3].round()).unwrap_or(initial_size().1);
-    if let Some(p) = full_ui::overlay(s, &v, (win_w, win_h)) {
+    if let Some(p) = theme::dark(|| full_ui::overlay(s, &v, (win_w, win_h))) {
         root = root.child(p);
     }
     // (the quality badge's panel opens from the bar and from the full-screen player, over both)
@@ -381,7 +382,7 @@ fn view(s: &App, cx: &mut Cx<App>) -> El {
     for o in interact::overlay(s) {
         root = root.child(o);
     }
-    if let Some(p) = video_ui::overlay(s, &v) {
+    if let Some(p) = theme::dark(|| video_ui::overlay(s, &v)) {
         root = root.child(p);
     }
     if let Some(t) = interact::toast_layer() {
@@ -430,8 +431,15 @@ fn main() {
     let handle = AppHandle::new();
     let _ = HOST.set(handle.clone());
     // Route every backend event to the controller before anything can emit.
-    handle.listen_any(|ev| controller::on_backend_event(ev.event(), ev.payload()));
+    handle.listen_any(|ev| {
+        if ev.event() == "theme-file-changed" {
+            theme::on_file_changed(ev.payload());
+        }
+        controller::on_backend_event(ev.event(), ev.payload())
+    });
     backend::setup_core(&handle);
+    // The theme in theme.json (Settings → Themes), before the first frame.
+    theme::init();
     controller::start(handle.clone());
 
     let spec = AppSpec::<App> {
