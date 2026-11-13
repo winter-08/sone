@@ -217,7 +217,7 @@ pub enum Kind {
 #[derive(Clone)]
 enum ToastAction {
     /// Re-add tracks the server skipped as duplicates ("Add anyway").
-    AddAgain { playlist: String, label: String, ids: Vec<u64> },
+    AddAgain { playlist: String, label: String, ids: Vec<u64>, requested: usize },
 }
 
 struct Toast {
@@ -349,7 +349,7 @@ pub fn toast_layer() -> Option<El> {
 
 fn run_toast_action(a: ToastAction) {
     match a {
-        ToastAction::AddAgain { playlist, label, ids } => add_to_playlist(playlist, label, ids, true),
+        ToastAction::AddAgain { playlist, label, ids, requested } => add_to_playlist(playlist, label, ids, Some(requested)),
     }
 }
 
@@ -952,7 +952,7 @@ fn add_menu(ids: &[u64], all: bool, query: &TextEdit, anchor: &str, below: bool)
             .hover(white(0.06)).cursor(rune::Cursor::Pointer)
             .on_press(move |s: &mut App| {
                 close(s);
-                add_to_playlist(u.clone(), l.clone(), ids.clone(), false);
+                add_to_playlist(u.clone(), l.clone(), ids.clone(), None);
             });
         if detailed {
             r = r.child(crate::ui::with_image(crate::ui::tile(crate::ui::hue(Some(i as u64 + 20)), 40.0, i as u64 + 20, 6.0), crate::art::item_url(p, 40.0), 40.0, 6.0))
@@ -1013,39 +1013,76 @@ fn add_menu(ids: &[u64], all: bool, query: &TextEdit, anchor: &str, below: bool)
     m
 }
 
-/// Add tracks to a playlist (AddToPlaylistMenu.handleAdd): skip duplicates first; offer to add
-/// them anyway.
-fn add_to_playlist(uuid: String, label: String, ids: Vec<u64>, again: bool) {
-    {
-        let mut r = RECENT.lock().unwrap();
-        r.retain(|u| *u != uuid);
-        r.insert(0, uuid.clone());
-        r.truncate(8);
+/// Ids requested but not added, keeping repeats: one removal per added id
+/// (AddToPlaylistMenu.skippedIds). The backend returns the ids it ADDED.
+fn skipped_ids(requested: &[u64], added: &[u64]) -> Vec<u64> {
+    let mut pending = added.to_vec();
+    requested.iter().copied().filter(|id| match pending.iter().position(|p| p == id) {
+        Some(i) => {
+            pending.remove(i);
+            false
+        }
+        None => true,
+    }).collect()
+}
+
+fn tracks_label(n: usize) -> String {
+    if n == 1 { "1 track".into() } else { format!("{n} tracks") }
+}
+
+/// The toast after a first (skip-duplicates) add: the message, and the action offered when some
+/// ids were skipped as already there.
+fn add_result_toast(requested: usize, added: usize, skipped: usize, l: &str) -> (String, Option<&'static str>) {
+    if skipped == 0 {
+        (if requested > 1 { format!("Added {requested} tracks to \"{l}\"") } else { format!("Added to \"{l}\"") }, None)
+    } else if added == 0 {
+        (format!("Already in \"{l}\""), Some("Add anyway"))
+    } else {
+        (format!("Added {} to \"{l}\" · {skipped} already there", tracks_label(added)), Some("Add them too"))
     }
+}
+
+/// The toast after "Add anyway": `requested` is the size of the first request.
+fn add_again_toast(requested: usize, skipped: usize, l: &str) -> String {
+    if requested > 1 { format!("Added {} again to \"{l}\"", tracks_label(skipped)) } else { format!("Added to \"{l}\" again") }
+}
+
+/// Add tracks to a playlist (AddToPlaylistMenu.handleAddToPlaylist): skip duplicates first; offer
+/// to add the skipped ones anyway. `again` is the size of the first request when this is that
+/// "Add anyway".
+fn add_to_playlist(uuid: String, label: String, ids: Vec<u64>, again: Option<usize>) {
     sone_host_shim::async_runtime::spawn(async move {
-        let dupes = if again { tauri_app_lib::tidal_api::OnDupes::Add } else { tauri_app_lib::tidal_api::OnDupes::Skip };
+        let dupes = if again.is_some() { tauri_app_lib::tidal_api::OnDupes::Add } else { tauri_app_lib::tidal_api::OnDupes::Skip };
         let l = clip(&label, 23);
-        match library::add_tracks_to_playlist(state(), uuid.clone(), ids.clone(), dupes).await {
-            Ok(skipped) => {
-                data::forget(&Key::Playlist(uuid.clone()));
-                data::forget(&Key::AllPlaylists);
-                let n = ids.len();
-                let added = n.saturating_sub(skipped.len());
-                if again {
-                    toast(if n == 1 { format!("Added to \"{l}\" again") } else { format!("Added {n} tracks again to \"{l}\"") }, Kind::Success);
-                } else if skipped.is_empty() {
-                    toast(if n == 1 { format!("Added to \"{l}\"") } else { format!("Added {n} tracks to \"{l}\"") }, Kind::Success);
-                } else {
-                    let (msg, act) = if n == 1 {
-                        (format!("Already in \"{l}\""), "Add anyway")
-                    } else {
-                        (format!("Added {added} tracks to \"{l}\" · {} already there", skipped.len()), "Add them too")
-                    };
-                    push_toast(msg, Kind::Info, Duration::from_millis(6000),
-                        Some((act.into(), ToastAction::AddAgain { playlist: uuid, label, ids: skipped })));
+        let res = library::add_tracks_to_playlist(state(), uuid.clone(), ids.clone(), dupes).await;
+        if res.is_ok() {
+            data::forget(&Key::Playlist(uuid.clone()));
+            data::forget(&Key::AllPlaylists);
+        }
+        let failed = || toast(if ids.len() > 1 { "Failed to add tracks".into() } else { "Failed to add track".into() }, Kind::Error);
+        if let Some(requested) = again {
+            match res {
+                Ok(_) => toast(add_again_toast(requested, ids.len(), &l), Kind::Success),
+                Err(_) => failed(),
+            }
+            return;
+        }
+        match res {
+            Ok(added) => {
+                {
+                    let mut r = RECENT.lock().unwrap();
+                    r.retain(|u| *u != uuid);
+                    r.insert(0, uuid.clone());
+                    r.truncate(8);
+                }
+                let skipped = skipped_ids(&ids, &added);
+                match add_result_toast(ids.len(), added.len(), skipped.len(), &l) {
+                    (msg, None) => toast(msg, Kind::Success),
+                    (msg, Some(act)) => push_toast(msg, Kind::Info, Duration::from_millis(6000),
+                        Some((act.into(), ToastAction::AddAgain { playlist: uuid, label, ids: skipped, requested: ids.len() }))),
                 }
             }
-            Err(_) => toast(if ids.len() == 1 { "Failed to add track".into() } else { "Failed to add tracks".into() }, Kind::Error),
+            Err(_) => failed(),
         }
     });
 }
@@ -1206,4 +1243,30 @@ pub fn settle_create(s: &mut App) {
 
 pub fn json_of_track(id: u64, title: &str, artist: &str) -> Value {
     json!({"id": id, "title": title, "artist": {"name": artist}})
+}
+
+#[cfg(test)]
+mod add_to_playlist_tests {
+    use super::*;
+
+    #[test]
+    fn skipped_is_what_was_not_added() {
+        assert_eq!(skipped_ids(&[1, 2, 3], &[1, 2, 3]), Vec::<u64>::new());
+        assert_eq!(skipped_ids(&[1, 2, 3], &[2]), vec![1, 3]);
+        assert_eq!(skipped_ids(&[7], &[]), vec![7]);
+        // repeats: one removal per added id
+        assert_eq!(skipped_ids(&[5, 5, 6], &[5, 6]), vec![5]);
+    }
+
+    #[test]
+    fn toasts_follow_the_react_menu() {
+        // everything added: a plain success with no action
+        assert_eq!(add_result_toast(1, 1, 0, "Mix"), ("Added to \"Mix\"".into(), None));
+        assert_eq!(add_result_toast(3, 3, 0, "Mix"), ("Added 3 tracks to \"Mix\"".into(), None));
+        // the real duplicate case
+        assert_eq!(add_result_toast(1, 0, 1, "Mix"), ("Already in \"Mix\"".into(), Some("Add anyway")));
+        assert_eq!(add_result_toast(3, 2, 1, "Mix"), ("Added 2 tracks to \"Mix\" · 1 already there".into(), Some("Add them too")));
+        assert_eq!(add_again_toast(1, 1, "Mix"), "Added to \"Mix\" again");
+        assert_eq!(add_again_toast(3, 1, "Mix"), "Added 1 track again to \"Mix\"");
+    }
 }
