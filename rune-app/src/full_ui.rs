@@ -381,7 +381,7 @@ fn lyrics(s: &App, v: &View, id: u64, w: f32, h: f32) -> El {
     let l = match data::want(Key::Lyrics(id)) {
         data::Load::Ready(l) => l,
         data::Load::Failed(_) => return no_lyrics(),
-        data::Load::Loading => return col().grow(1.0).justify_center().child(crate::views::loading()),
+        data::Load::Loading => return col().key("full-lyrics-loading").busy(true).grow(1.0).justify_center().child(crate::views::loading()),
     };
     let provider = l["lyricsProvider"].as_str().filter(|p| !p.is_empty()).map(|p| text(format!("Lyrics provided by {p}")).font(t(11.0, 400.0)).color(white(0.5)).pt(12.0));
     let Some(lines) = crate::views::synced_lyrics(id) else {

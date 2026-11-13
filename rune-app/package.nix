@@ -56,7 +56,7 @@ rustPlatform.buildRustPackage {
   # fetchCargoVendor, not cargoLock: Rune builds its own tiny-skia-path 0.11.4 from its repo
   # beside resvg's crates.io copy, and cargoLock can't vendor two crates of one name and version.
   # Update the hash whenever Cargo.lock changes.
-  cargoHash = "sha256-2qE7bPJtZB0mDsOQGFXunnWM89+qfb/1tLtePxwwaAQ=";
+  cargoHash = "sha256-3kJwO7lFUqcJ8CeM+n+gWtmNSVB+VWnz8hHGY8wOWjs=";
 
   nativeBuildInputs = [ pkg-config makeWrapper copyDesktopItems ];
   buildInputs = runtime ++ gst ++ [ openssl glib ];

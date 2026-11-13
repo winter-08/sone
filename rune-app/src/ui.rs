@@ -400,6 +400,7 @@ pub fn nowbar<S: 'static>(v: &View, track_actions: El, extras: El, on_cover: Opt
         .child(row().key("nowbar-extras").gap(6.0).items_center().child(extras).child(volume::<S>(v, "bar-volume", 90.0)));
     row()
         .key("nowbar")
+        .role("complementary")
         .w_full()
         .h(84.0)
         .px(PAD)
@@ -505,6 +506,8 @@ pub fn smooth_wheel<S: 'static>(e: El, key: String) -> El {
                 st.target = Some(to);
                 st.last = std::time::Instant::now();
                 tx.scroll_to_with(k_wheel.clone(), 0.0, to, WHEEL_SPRING);
+                // (it changes nothing the view reads: no view run per notch)
+                tx.live_only();
                 true
             })
         })

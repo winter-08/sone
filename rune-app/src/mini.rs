@@ -22,6 +22,8 @@ use std::time::{Duration, Instant};
 
 static WINDOW: OnceLock<rune::WindowHandle> = OnceLock::new();
 static OPEN: AtomicBool = AtomicBool::new(false);
+/// The window is open and on screen (not minimised, hidden or covered whole).
+static SHOWN: AtomicBool = AtomicBool::new(false);
 
 const SIZE: (f32, f32) = (372.0, 196.0);
 const MIN: (f32, f32) = (244.0, 88.0);
@@ -39,10 +41,18 @@ pub fn mini_open() -> bool {
 /// Open or close the miniplayer window.
 pub fn set_mini(open: bool) {
     OPEN.store(open, Ordering::Relaxed);
+    set_shown(open);
     if let Some(w) = WINDOW.get() {
         if open { w.open() } else { w.close() }
     }
     controller::bump();
+}
+
+/// Whether the miniplayer is on screen: its tick runs, and it keeps the controller's position
+/// poll going while the main window is away.
+fn set_shown(shown: bool) {
+    SHOWN.store(shown, Ordering::Relaxed);
+    controller::set_clock_shown(controller::MINI, shown);
 }
 
 /// Adds the miniplayer to `app` as a second, hidden window; [`set_mini`] shows it.
@@ -59,7 +69,14 @@ pub fn attach<S: 'static>(app: &mut rune::App<S>) {
     let options = rune::WindowOptions { borderless: true, always_on_top: true, resizable: true, visible: false, min_size: Some(MIN), max_size: Some(MAX), ..Default::default() };
     let mini = rune::App::new(spec).on_close(|_, _| {
         OPEN.store(false, Ordering::Relaxed);
+        set_shown(false);
         controller::bump(); // the main window's miniplayer button says "Open" again
+    })
+    // Minimised, hidden or covered whole, and back: showing it draws a frame, whose poll
+    // restarts the tick.
+    .on_visibility(|_, shown, _| {
+        log::info!("[rune] miniplayer {}", if shown { "on screen" } else { "off screen" });
+        set_shown(shown && mini_open());
     });
     let (_, window) = app.window(rune::WindowSpec::from_app("mini", mini).options(options));
     let _ = WINDOW.set(window);
@@ -67,6 +84,8 @@ pub fn attach<S: 'static>(app: &mut rune::App<S>) {
 
 pub struct Mini {
     seen: (u64, u64, u64),
+    /// When the 150 ms tick's next wake is due (Rune's clock).
+    tick_at: f64,
     /// The window's size as last laid out. The view writes it; the resize grip reads it when
     /// a drag starts.
     size: Cell<(f32, f32)>,
@@ -83,15 +102,21 @@ pub struct Mini {
 
 impl Mini {
     fn new() -> Mini {
-        Mini { seen: (0, 0, 0), size: Cell::new(SIZE), grab: None, seek_drag: None, keyboard: false, unmuted: 0.7 }
+        Mini { seen: (0, 0, 0), tick_at: 0.0, size: Cell::new(SIZE), grab: None, seek_drag: None, keyboard: false, unmuted: 0.7 }
     }
 }
 
-fn poll(s: &mut Mini, _: f64, tx: &mut Tx) -> bool {
+fn poll(s: &mut Mini, t: f64, tx: &mut Tx) -> bool {
     let (state, ticks) = controller::versions();
     // (favourites too: a heart toggled in the main window shows here)
     let v = (state, ticks, interact::version());
-    tx.wake_after(Duration::from_millis(150));
+    // One 150 ms tick, asked for again only by the poll it wakes (a fresh wake_after from every
+    // poll starts another endless chain each time, as in main::poll), and only while the window
+    // is on screen: hidden, it still polls on its timer.
+    if t >= s.tick_at && SHOWN.load(Ordering::Relaxed) {
+        s.tick_at = t + 0.15;
+        tx.wake_after(Duration::from_millis(150));
+    }
     let changed = v != s.seen;
     let dragging = s.seek_drag.is_some_and(|t| t.elapsed() < Duration::from_millis(250));
     if changed && ((v.0, v.2) == (s.seen.0, s.seen.2) || dragging) {
@@ -470,8 +495,10 @@ fn volume(v: &View) -> El {
             if ev.dy == 0.0 {
                 return false;
             }
-            // a notch is 5%; a trackpad moves it in proportion
-            let step = if ev.precise { ev.dy * 0.004 } else { ev.dy.signum() * 0.05 };
+            // a notch is 5%; a trackpad moves it in proportion, 0.4% a Wayland axis unit, which
+            // Rune now reports as 12 pt (Chromium's kWheelDelta / kAxisValueScale) where it was 1
+            const PER_POINT: f32 = if cfg!(target_os = "linux") { 0.004 / 12.0 } else { 0.004 };
+            let step = if ev.precise { ev.dy * PER_POINT } else { ev.dy.signum() * 0.05 };
             send(Cmd::SetVolume((vol + step).clamp(0.0, 1.0)));
             true
         })

@@ -237,12 +237,60 @@ pub fn toast(msg: String, kind: Kind) {
 
 fn push_toast(msg: String, kind: Kind, life: Duration, action: Option<(String, ToastAction)>) {
     let id = NEXT_TOAST.fetch_add(1, Ordering::Relaxed);
-    TOASTS.lock().unwrap().push(Toast { id, msg, kind, until: Instant::now() + life, action });
+    // A toast raised while the window is away starts its time when the window comes back.
+    let from = TOASTS_HELD.lock().unwrap().unwrap_or_else(Instant::now);
+    TOASTS.lock().unwrap().push(Toast { id, msg, kind, until: from + life, action });
     bump();
 }
 
-/// Drop expired toasts; how long until the next one expires (for the poll's wake).
+/// Since when the main window has been off screen, while it is: the toasts' time stands still
+/// meanwhile, as Sonner holds its toasts while `document.hidden`, so none expires unseen.
+static TOASTS_HELD: Mutex<Option<Instant>> = Mutex::new(None);
+
+/// The main window went off screen (`held`) or came back: holds the toasts' time while it's
+/// away, and gives each back what it had left when it returns.
+pub fn hold_toasts(held: bool) {
+    let mut since = TOASTS_HELD.lock().unwrap();
+    if held {
+        since.get_or_insert_with(Instant::now);
+    } else if let Some(at) = since.take() {
+        let away = at.elapsed();
+        for t in TOASTS.lock().unwrap().iter_mut() {
+            t.until += away;
+        }
+    }
+}
+
+/// Has a screen reader say the new track ("Title by Artist", politely) once per track change:
+/// not on every poll, not when repeat starts the same track again, and not for the track a
+/// launch restores (nothing changed for the listener). Costs one lock per poll otherwise.
+pub fn announce_track(tx: &mut Tx) {
+    // None until the restored session is known; then the track announced last.
+    static SAID: Mutex<Option<Option<u64>>> = Mutex::new(None);
+    let (id, _) = controller::now_playing();
+    let mut said = SAID.lock().unwrap();
+    if *said == Some(id) {
+        return;
+    }
+    let v = controller::view();
+    if !v.auth_known {
+        return;
+    }
+    let restored = said.is_none();
+    *said = Some(id);
+    if restored || id.is_none() || v.title.is_empty() {
+        return;
+    }
+    let words = if v.artist.is_empty() { v.title } else { format!("{} by {}", v.title, v.artist) };
+    tx.announce(words, rune::LiveRegion::Polite);
+}
+
+/// Drop expired toasts; how long until the next one expires (for the poll's wake). Nothing
+/// expires while [`hold_toasts`] holds them.
 pub fn toast_tick() -> Option<Duration> {
+    if TOASTS_HELD.lock().unwrap().is_some() {
+        return None;
+    }
     let mut v = TOASTS.lock().unwrap();
     let before = v.len();
     let now = Instant::now();
@@ -935,13 +983,13 @@ fn add_menu(ids: &[u64], all: bool, query: &TextEdit, anchor: &str, below: bool)
             shown = pls.iter().take(8).collect();
         }
         if pls.is_empty() && data::peek(&Key::AllPlaylists).is_none() {
-            m = m.child(row().px(14.0).h(36.0).items_center().child(glyph(G::Loader, 16.0, white(0.5))));
+            m = m.busy(true).child(row().px(14.0).h(36.0).items_center().child(glyph(G::Loader, 16.0, white(0.5))));
         }
         for (i, p) in shown.into_iter().take(8).enumerate() {
             m = m.child(row_for(i, p, false));
         }
     } else {
-        let q = query.text.to_lowercase();
+        let q = query.text.clone();
         m = m.child(theme::focusable_row(row().key("atp-back").role("button").label("← Back")).radius(MENU_ROW_R).px(14.0).h(32.0).items_center().hover(white(0.06)).cursor(rune::Cursor::Pointer)
                 .on_press(|s: &mut App| if let Some(Ctx { sub: Some(Sub::AddToPlaylist { all, .. }), .. }) = &mut s.nav.ctx { *all = false })
                 .child(text("← Back").font(t(13.0, 500.0)).color(white(0.6)).a11y_hidden()))
@@ -952,7 +1000,7 @@ fn add_menu(ids: &[u64], all: bool, query: &TextEdit, anchor: &str, below: bool)
                         Some(Ctx { sub: Some(Sub::AddToPlaylist { query, .. }), .. }) => query,
                         _ => unreachable!("the find field only shows with its submenu"),
                     })));
-        let hits: Vec<&Value> = pls.iter().filter(|p| q.is_empty() || data::name(p).to_lowercase().contains(&q)).collect();
+        let hits: Vec<&Value> = pls.iter().filter(|p| data::matches(&data::name(p), &q)).collect();
         if hits.is_empty() {
             m = m.child(ui::empty(if pls.is_empty() { "No playlists yet" } else { "No playlists found" }).px(14.0).py(10.0));
         }
@@ -1060,14 +1108,14 @@ fn confirm_delete(c: &Ctx) -> El {
     let title = data::name(item);
     let uuid = data::data(item)["uuid"].as_str().unwrap_or("").to_string();
     let body = col().gap(18.0)
-        .child(text(format!("Are you sure you want to delete \"{title}\"? This can't be undone.")).font(t(14.0, 400.0)).color(white(0.75)).wrap())
+        .child(text(format!("Are you sure you want to delete \"{title}\"? This can't be undone.")).key("del-msg").font(t(14.0, 400.0)).color(white(0.75)).wrap())
         .child(row().gap(10.0).child(spacer())
             .child(ui::pill("del-cancel", "Cancel", None, ui::Pill::Secondary).on_press(|s: &mut App| close(s)))
-            .child(ui::pill("del-ok", "Delete", None, ui::Pill::Danger).on_press(move |s: &mut App| {
+            .child(ui::pill("del-ok", "Delete", None, ui::Pill::Danger).described_by("del-msg").on_press(move |s: &mut App| {
                 close(s);
                 if s.nav.page == Page::Playlist(uuid.clone()) {
                     // React replaces the current history entry with Home
-                    s.nav.page = Page::Home;
+                    *s.nav.page = Page::Home;
                 }
                 let (u, l) = (uuid.clone(), title.clone());
                 sone_host_shim::async_runtime::spawn(async move {
@@ -1096,17 +1144,17 @@ fn create_modal(cr: &Create) -> El {
                 .on_edit(|s: &mut App| &mut s.nav.create.as_mut().expect("the field shows with its dialog").title)))
         .child(col().gap(4.0)
             .child(row().h(88.0).px(12.0).py(10.0).radius(10.0).fill(white(0.06))
-                .child(text_input(&cr.desc, t(13.0, 400.0).lh(18.0)).key("cp-desc").label("Write a description").grow(1.0).color(white(0.9)).placeholder("Write a description", white(0.4))
+                .child(text_input(&cr.desc, t(13.0, 400.0).lh(18.0)).key("cp-desc").label("Write a description").described_by("cp-desc-count").grow(1.0).color(white(0.9)).placeholder("Write a description", white(0.4))
                     .on_edit(|s: &mut App| &mut s.nav.create.as_mut().expect("the field shows with its dialog").desc)))
-            .child(text(format!("{}/500 characters", cr.desc.text.chars().count())).font(t(11.0, 400.0)).color(white(0.45))))
-        .child(theme::focusable(row().key("cp-public").role("switch").label("Make it public")).checked(cr.public).gap(10.0).items_center().cursor(rune::Cursor::Pointer)
+            .child(text(format!("{}/500 characters", cr.desc.text.chars().count())).key("cp-desc-count").font(t(11.0, 400.0)).color(white(0.45))))
+        .child(theme::focusable(row().key("cp-public").role("switch").label("Make it public")).described_by("cp-public-note").checked(cr.public).gap(10.0).items_center().cursor(rune::Cursor::Pointer)
             .on_press(|s: &mut App| if let Some(c) = &mut s.nav.create { c.public = !c.public })
             .child(col().grow(1.0).a11y_hidden()
                 .child(text("Make it public").font(t(14.0, 600.0)).color(white(0.92)))
-                .child(text("Your playlist will be visible on your Profile and accessible by anyone.").font(t(12.0, 400.0)).color(white(0.5)).wrap()))
+                .child(text("Your playlist will be visible on your Profile and accessible by anyone.").key("cp-public-note").font(t(12.0, 400.0)).color(white(0.5)).wrap()))
             .child(ui::switch_mark(cr.public)))
         .child(row().child(spacer()).child(
-            ui::pill("cp-save", "Save", saving.then_some(G::Loader), ui::Pill::Primary).on_press(|s: &mut App| save_playlist(s))));
+            ui::pill("cp-save", "Save", saving.then_some(G::Loader), ui::Pill::Primary).busy(saving).on_press(|s: &mut App| save_playlist(s))));
     dialog_frame("cp-dialog", "Create playlist", "Close", body, |s| s.nav.create = None)
 }
 

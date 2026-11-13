@@ -11,8 +11,9 @@ use crate::glyph::{G, glyph};
 use crate::theme::{self, accent};
 use crate::ui::{self, caps, t, white};
 use crate::App;
-use rune::{El, ScrollSpec, TextEdit, Tx, col, el, oklch, row, spacer, text, text_input};
+use rune::{El, ScrollSpec, TextEdit, Tracked, Tx, col, el, oklch, row, spacer, text, text_input};
 use serde_json::{Value, json};
+use std::rc::Rc;
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Page {
@@ -65,20 +66,25 @@ pub enum SearchTab {
     Videos,
 }
 
+/// The window's UI state. What the panes read is `Tracked`, so their regions (main::view)
+/// build again when it's written, and only then; assign to it only when the value changes. The
+/// search and filter fields aren't: Rune borrows a field's `TextEdit` mutably on every commit,
+/// which would count as a write, so they're inputs of the regions that show them instead (a
+/// `TextEdit` hashes its text, selection, composition and focus).
 pub struct Nav {
-    pub page: Page,
-    pub back: Vec<Page>,
-    pub fwd: Vec<Page>,
+    pub page: Tracked<Page>,
+    pub back: Tracked<Vec<Page>>,
+    pub fwd: Tracked<Vec<Page>>,
     pub search: TextEdit,
-    pub lib: LibTab,
-    pub tab: SearchTab,
+    pub lib: Tracked<LibTab>,
+    pub tab: Tracked<SearchTab>,
     pub filter: TextEdit,
     pub queue_open: bool,
     /// When the debounced suggestions fetch for the current search text is due.
     pub suggest_due: Option<std::time::Instant>,
     pub menu_open: bool,
     pub settings_tab: SettingsTab,
-    pub drawer: Option<Drawer>,
+    pub drawer: Tracked<Option<Drawer>>,
     pub login_mode: LoginMode,
     /// Settings is a modal over the current page (React SettingsModal).
     pub settings_open: bool,
@@ -96,8 +102,8 @@ pub struct Nav {
     pub ctx: Option<crate::interact::Ctx>,
     pub create: Option<crate::interact::Create>,
     /// Synced lyrics: the active line, and whether the user scrolled away from it.
-    pub lyric_line: Option<usize>,
-    pub lyrics_scrolled: bool,
+    pub lyric_line: Tracked<Option<usize>>,
+    pub lyrics_scrolled: Tracked<bool>,
     /// The search dropdown is open (typing opens it; a pick, Enter, Escape or a click
     /// elsewhere closes it), and the entry ↑/↓ highlighted.
     pub search_open: bool,
@@ -107,10 +113,10 @@ pub struct Nav {
     /// The full-screen now-playing player (full_ui.rs).
     pub full: crate::full_ui::Full,
     /// Home: the feed tab ("static" is For you) and how many further pages of it to show.
-    pub home_tab: String,
-    pub home_pages: usize,
+    pub home_tab: Tracked<String>,
+    pub home_pages: Tracked<usize>,
     /// The page content's width inside its padding (measured; Home sizes grids and cards by it).
-    pub content_w: f32,
+    pub content_w: Tracked<f32>,
     /// The sign-in screen's PKCE field: the redirect URL pasted back from the browser.
     pub pkce_paste: TextEdit,
 }
@@ -125,23 +131,23 @@ pub enum Dialog {
 
 impl Default for Nav {
     fn default() -> Self {
-        Nav { page: Page::Home, back: vec![], fwd: vec![], search: TextEdit::new(""), lib: LibTab::Playlists, tab: SearchTab::All, filter: TextEdit::new(""), queue_open: false, suggest_due: None, menu_open: false, settings_tab: SettingsTab::Playback, drawer: None, login_mode: LoginMode::Pkce, settings_open: false, dialog: None,
+        Nav { page: Page::Home.into(), back: Tracked::default(), fwd: Tracked::default(), search: TextEdit::new(""), lib: LibTab::Playlists.into(), tab: SearchTab::All.into(), filter: TextEdit::new(""), queue_open: false, suggest_due: None, menu_open: false, settings_tab: SettingsTab::Playback, drawer: None.into(), login_mode: LoginMode::Pkce, settings_open: false, dialog: None,
             discord_status: TextEdit::new(""), lb_token: TextEdit::new(""), overlay_host: TextEdit::new(""), proxy_user: TextEdit::new(""),
-            discord_due: None, proxy_due: None, lb_status: None, ctx: None, create: None, lyric_line: None, lyrics_scrolled: false, search_open: false, search_sel: None,
-            video: Default::default(), full: Default::default(), home_tab: "static".into(), home_pages: 0, content_w: 0.0, pkce_paste: TextEdit::new("") }
+            discord_due: None, proxy_due: None, lb_status: None, ctx: None, create: None, lyric_line: None.into(), lyrics_scrolled: false.into(), search_open: false, search_sel: None,
+            video: Default::default(), full: Default::default(), home_tab: String::from("static").into(), home_pages: 0.into(), content_w: 0.0.into(), pkce_paste: TextEdit::new("") }
     }
 }
 
 pub fn go(s: &mut App, p: Page) {
-    if s.nav.page != p {
-        let old = std::mem::replace(&mut s.nav.page, p);
+    if *s.nav.page != p {
+        let old = std::mem::replace(&mut *s.nav.page, p);
         s.nav.back.push(old);
         s.nav.fwd.clear();
         // One filter field serves every playlist and Loved Tracks; it belongs to the page it
         // was typed on.
         s.nav.filter = TextEdit::new("");
     }
-    if !matches!(s.nav.page, Page::Search(_)) {
+    if !matches!(*s.nav.page, Page::Search(_)) {
         s.nav.search.focused = false;
     }
     if s.nav.page == Page::Feed {
@@ -244,6 +250,17 @@ pub(crate) fn card_w(w: f32, key: String, title: &str, sub: &str, seed: u64, rou
         .child(text(sub.to_string()).font(t(11.0, 400.0)).color(white(0.55)).truncate())
 }
 
+thread_local! {
+    /// The track playing and whether it plays, as the last view build read it (`set_now_playing`).
+    static NOW_PLAYING: std::cell::Cell<Option<(Option<u64>, bool)>> = const { std::cell::Cell::new(None) };
+}
+
+/// What track rows mark as playing until the next view build: the reading the panes' regions
+/// were keyed by, so rows built later in the commit (or as the list scrolls) agree with them.
+pub fn set_now_playing(now: (Option<u64>, bool)) {
+    NOW_PLAYING.set(Some(now));
+}
+
 /// A track row with the row actions the React rows expose.
 fn track_row(key: String, n: usize, tr: &Value, on_play: impl Fn(&mut App) + 'static) -> El {
     track_row_with(key, n, tr, true, None, on_play)
@@ -263,7 +280,7 @@ fn track_row_with(key: String, n: usize, tr: &Value, actions: bool, pl: Option<c
     let id = d["id"].as_u64().unwrap_or(0);
     // The React TrackList: the playing row shows the bouncing bars in place of its number, and
     // the current track's number and title take the accent colour.
-    let (current_id, playing) = controller::now_playing();
+    let (current_id, playing) = NOW_PLAYING.get().unwrap_or_else(controller::now_playing);
     let active = current_id.is_some() && d["id"].as_u64() == current_id;
     let accent_c = oklch(0.82, 0.11, ui::hue(current_id));
     let number: El = if active && playing {
@@ -326,6 +343,25 @@ fn grid(cards: Vec<El>) -> El {
     r
 }
 
+/// A track list whose rows are built only while they're in or near view (`El::virtual_rows`:
+/// the scroll viewport's rows and up to two viewports either side), so a list of thousands
+/// costs what its visible rows do. It lists the tracks at `shown` (indices into `tracks`, a
+/// filter's matches) in order; track `i`'s row is keyed `{prefix}{i}`, as it always was, and
+/// `row(tracks, i)` builds it. Its rows land at once, as rows of a plain column did: a growth
+/// stack's rows would grow in and fold out on a spring.
+fn track_list(prefix: &'static str, tracks: Rc<Vec<Value>>, shown: Vec<usize>, row: impl Fn(&Rc<Vec<Value>>, usize) -> El + 'static) -> El {
+    let shown = Rc::new(shown);
+    // The keys change only with the rows shown, so layout needn't ask for every key each commit.
+    let keys_version = {
+        use std::hash::{BuildHasher, BuildHasherDefault};
+        BuildHasherDefault::<std::collections::hash_map::DefaultHasher>::default().hash_one(&*shown)
+    };
+    let keys = shown.clone();
+    col().key(format!("{prefix}rows")).w_full().gap(2.0).growth(rune::GrowthSpec::default()).instant_changes()
+        .virtual_rows(shown.len(), 48.0, move |_: &App, k| format!("{prefix}{}", keys[k]).into(), move |_: &App, k| row(&tracks, shown[k]))
+        .virtual_rows_version(keys_version)
+}
+
 pub(crate) fn item_page(item: &Value) -> Option<Page> {
     let d = data::data(item);
     match data::kind(item).as_str() {
@@ -351,8 +387,20 @@ fn cards_for(prefix: &str, items: &[Value]) -> Vec<El> {
         .collect()
 }
 
+thread_local! {
+    /// A `loading()` placeholder was built since `took_loading` last looked.
+    static LOADING: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
 pub(crate) fn loading() -> El {
+    LOADING.set(true);
     text("Loading…").font(t(13.0, 500.0)).color(white(0.45))
+}
+
+/// Whether a `loading()` placeholder was built since the last call: a pane that built its
+/// content between two calls is still loading, and tells assistive technology so (`El::busy`).
+pub(crate) fn took_loading() -> bool {
+    LOADING.replace(false)
 }
 
 /// A page's data, or what shows until it's there: `loading()`, or, when the fetch failed, a
@@ -423,12 +471,12 @@ pub fn header(s: &App) -> El {
             let q = s.nav.search.text.trim().to_string();
             if !q.is_empty() {
                 s.nav.search_open = false;
-                s.nav.tab = SearchTab::All;
+                *s.nav.tab = SearchTab::All;
                 go(s, Page::Search(q));
             }
         });
     // 360 pt wide when there's room; in a narrow window it gives way before anything else does.
-    let bar = row().key("search-bar").w(360.0).shrink().min_w(140.0).h(40.0).px(14.0).gap(8.0).radius(20.0).items_center().fill(white(0.08)).child(glyph(G::Search, 16.0, white(0.55))).child(field);
+    let bar = row().key("search-bar").role("search").w(360.0).shrink().min_w(140.0).h(40.0).px(14.0).gap(8.0).radius(20.0).items_center().fill(white(0.08)).child(glyph(G::Search, 16.0, white(0.55))).child(field);
     // Back and Forward, dimmed and inert with no history that way.
     let step = |key: &str, label: &str, g: G, on: bool, f: fn(&mut App)| {
         let b = ui::icon_button::<App>(key, label, g, 18.0, white(if on { 0.75 } else { 0.25 }));
@@ -436,6 +484,7 @@ pub fn header(s: &App) -> El {
     };
     row()
         .key("header")
+        .role("banner")
         .w_full()
         .h(60.0)
         .px(20.0)
@@ -443,14 +492,14 @@ pub fn header(s: &App) -> El {
         .items_center()
         .child(step("back", "Go back", G::Back, !s.nav.back.is_empty(), |s| {
             if let Some(p) = s.nav.back.pop() {
-                let cur = std::mem::replace(&mut s.nav.page, p);
+                let cur = std::mem::replace(&mut *s.nav.page, p);
                 s.nav.fwd.push(cur);
                 s.nav.filter = TextEdit::new("");
             }
         }))
         .child(step("forward", "Go forward", G::Forward, !s.nav.fwd.is_empty(), |s| {
             if let Some(p) = s.nav.fwd.pop() {
-                let cur = std::mem::replace(&mut s.nav.page, p);
+                let cur = std::mem::replace(&mut *s.nav.page, p);
                 s.nav.back.push(cur);
                 s.nav.filter = TextEdit::new("");
             }
@@ -535,14 +584,14 @@ fn pick(s: &mut App, e: Entry) {
     match e {
         Entry::Text(q) => {
             set_search_text(s, &q, false);
-            s.nav.tab = SearchTab::All;
+            *s.nav.tab = SearchTab::All;
             go(s, Page::Search(q));
         }
         Entry::Hit(_, p, _) => go(s, p),
         Entry::Track(_, id, _) => controller::send_play_ids(vec![id]),
         Entry::ViewAll => {
             let q = s.nav.search.text.trim().to_string();
-            s.nav.tab = SearchTab::All;
+            *s.nav.tab = SearchTab::All;
             go(s, Page::Search(q));
         }
     }
@@ -696,13 +745,13 @@ pub fn sidebar(s: &App, w: f32) -> El {
         theme::focusable(row().key(key.to_string()).role("button").label(label)).focus_selected(on).h(28.0).px(10.0).radius(14.0).items_center()
             .fill(if on { white(0.16) } else { white(0.06) }).cursor(rune::Cursor::Pointer)
             .on_press(move |s: &mut App| {
-                s.nav.lib = which;
+                *s.nav.lib = which;
             })
             .child(text(label.to_string()).font(t(12.0, 600.0)).color(white(0.9)).a11y_hidden())
     };
     let sort_label = if s.nav.lib == LibTab::Playlists { "Sort by: Last updated" } else { "Sort by: Date added" };
     let mut list = col().w_full().gap(2.0);
-    match s.nav.lib {
+    match *s.nav.lib {
         LibTab::Playlists => {
             list = list.child(lib_row("lib-loved", "Loved Tracks Collection", "Loved Tracks", "Collection", 9, None, None, Some(Page::Loved)));
             if let Some(f) = data::ready(Key::Folders) {
@@ -728,6 +777,7 @@ pub fn sidebar(s: &App, w: f32) -> El {
     }
     col()
         .key("sidebar")
+        .role("navigation")
         .w(w)
         .h_full()
         .padding(12.0)
@@ -747,7 +797,7 @@ pub fn sidebar(s: &App, w: f32) -> El {
                     .child(text("Show all").font(t(12.0, 600.0)).color(white(0.6)).a11y_hidden())),
         )
         .child(tabs)
-        .child(ui::smooth_wheel::<App>(col().grow(1.0).min_h(0.0).w_full().scroll(ScrollSpec { stick_bottom: false }).child(list), "lib-scroll".into()))
+        .child(ui::smooth_wheel::<App>(col().grow(1.0).min_h(0.0).w_full().scroll(ScrollSpec { stick_bottom: false }).child(list), "lib-scroll".into()).labelled_by("lib"))
 }
 
 /// Loved Tracks' artwork: not an image from TIDAL but React's fixed gradient (#450af5 → #8e2de2
@@ -871,7 +921,8 @@ pub fn bar_cover_action(v: &View) -> Option<ui::CoverAction<App>> {
 // ------------------------------------------------------------------ pages
 
 pub fn page(s: &App, v: &View) -> El {
-    let body = match &s.nav.page {
+    took_loading();
+    let body = match &*s.nav.page {
         Page::Home => crate::home::home(s),
         Page::Explore => explore(),
         Page::ExploreSub(path, title) => explore_sub(path, title),
@@ -891,10 +942,15 @@ pub fn page(s: &App, v: &View) -> El {
     let content = col().w_full().max_w(1520.0).px(24.0).py(24.0).gap(18.0).cache()
         .on_drawn_layout_tx(|s: &mut App, r, tx| {
             let w = (r[2] - 48.0).max(200.0);
-            if (s.nav.content_w - w).abs() >= 1.0 { s.nav.content_w = w } else { tx.live_only() }
+            if (*s.nav.content_w - w).abs() >= 1.0 { *s.nav.content_w = w } else { tx.live_only() }
         })
         .child(body);
-    ui::smooth_wheel::<App>(col().grow(1.0).min_h(0.0).w_full().scroll(ScrollSpec { stick_bottom: false }).child(row().w_full().justify_center().child(content)), format!("page-{:?}", s.nav.page))
+    ui::smooth_wheel::<App>(col().grow(1.0).min_h(0.0).w_full().scroll(ScrollSpec { stick_bottom: false }).child(row().w_full().justify_center().role("main").busy(took_loading()).child(content)), page_key(s))
+}
+
+/// The page's scroll viewport key, which is also its region's id (main::view).
+pub fn page_key(s: &App) -> String {
+    format!("page-{:?}", s.nav.page)
 }
 
 fn play_label(v: &View, source_name: &str) -> &'static str {
@@ -988,13 +1044,14 @@ fn album(id: u64, v: &View) -> El {
                 .on_press(move |s: &mut App| crate::interact::open_media(s, item.clone(), crate::interact::Anchor::Below("album-more".into())))
         });
     let mut c = col().w_full().gap(18.0).child(hero_with(&title, true, album_byline(a), id, false, crate::art::item_url(a, 180.0), actions));
-    let mut rows = col().w_full().gap(2.0);
-    for (i, tr) in tracks.iter().enumerate() {
-        let (all, src, idx) = (tracks.clone(), json!({"type": "album", "id": id, "name": title}), i);
-        rows = rows.child(track_row(format!("al-t{i}"), i + 1, tr, move |_: &mut App| {
-            controller::send(Cmd::PlayFrom { tracks: all.clone(), index: idx, source: src.clone(), album_mode: true });
-        }));
-    }
+    let src = json!({"type": "album", "id": id, "name": title});
+    let every = (0..tracks.len()).collect();
+    let rows = track_list("al-t", Rc::new(tracks), every, move |tracks, i| {
+        let (all, src) = (tracks.clone(), src.clone());
+        track_row(format!("al-t{i}"), i + 1, &tracks[i], move |_: &mut App| {
+            controller::send(Cmd::PlayFrom { tracks: all.to_vec(), index: i, source: src.clone(), album_mode: true });
+        })
+    });
     c = c.child(rows);
     // TIDAL's editorial review, when the album has one (tidal.com shows it under the tracks).
     if let Some(review) = page["review"]["text"].as_str().filter(|r| !r.trim().is_empty()) {
@@ -1117,24 +1174,27 @@ fn playlist(s: &App, uuid: &str, v: &View) -> El {
         .caret(white(0.95), white(0.25))
         .placeholder("Filter", white(0.4))
         .on_edit(|s: &mut App| &mut s.nav.filter);
-    let needle = s.nav.filter.text.to_lowercase();
-    let mut rows = col().w_full().gap(2.0);
-    let mut shown = 0;
+    let needle = s.nav.filter.text.clone();
+    let mut shown = Vec::new();
     for (i, tr) in tracks.iter().enumerate() {
-        if !needle.is_empty() && !format!("{} {}", data::name(tr), data::artist_of(tr)).to_lowercase().contains(&needle) {
+        if !data::matches(&format!("{} {}", data::name(tr), data::artist_of(tr)), &needle) {
             continue;
         }
-        shown += 1;
-        let (all, src, idx) = (tracks.clone(), source.clone(), i);
-        let in_pl = own.then(|| crate::interact::InPlaylist { uuid: uuid.to_string(), index: i });
-        rows = rows.child(track_row_with(format!("pl-t{i}"), i + 1, data::data(tr), true, in_pl, move |_: &mut App| {
-            controller::send(Cmd::PlayFrom { tracks: all.clone(), index: idx, source: src.clone(), album_mode: false });
-        }));
+        shown.push(i);
     }
+    let empty = shown.is_empty();
+    let uuid = uuid.to_string();
+    let rows = track_list("pl-t", Rc::new(tracks), shown, move |tracks, i| {
+        let (all, src) = (tracks.clone(), source.clone());
+        let in_pl = own.then(|| crate::interact::InPlaylist { uuid: uuid.clone(), index: i });
+        track_row_with(format!("pl-t{i}"), i + 1, data::data(&tracks[i]), true, in_pl, move |_: &mut App| {
+            controller::send(Cmd::PlayFrom { tracks: all.to_vec(), index: i, source: src.clone(), album_mode: false });
+        })
+    });
     col().w_full().gap(16.0)
         .child(hero(&title, true, &format!("{creator} · {n} tracks"), 30, false, crate::art::item_url(d, 180.0), actions))
         .child(row().h(40.0).px(12.0).radius(10.0).items_center().fill(white(0.06)).child(filter))
-        .child(if shown > 0 { rows } else { tracks_empty(s, "This playlist is empty") })
+        .child(if !empty { rows } else { tracks_empty(s, "This playlist is empty") })
 }
 
 /// What a track list shows with nothing in it: `none` when it has no tracks at all, or that
@@ -1152,7 +1212,7 @@ fn search_page(s: &App, q: &str) -> El {
         let on = s.nav.tab == which;
         theme::focusable(row().key(key.to_string()).role("button").label(label)).focus_selected(on).h(30.0).px(12.0).radius(15.0).items_center()
             .fill(if on { white(0.9) } else { white(0.08) }).cursor(rune::Cursor::Pointer)
-            .on_press(move |s: &mut App| s.nav.tab = which)
+            .on_press(move |s: &mut App| *s.nav.tab = which)
             .child(text(label.to_string()).font(t(12.0, 600.0)).color(if on { theme::ink() } else { white(0.9) }).a11y_hidden())
     };
     let tabs = row().gap(6.0).flex_wrap().focus_group()
@@ -1168,19 +1228,18 @@ fn search_page(s: &App, q: &str) -> El {
     let (albums, artists, playlists) = (typed("ALBUM", "albums"), typed("ARTIST", "artists"), typed("PLAYLIST", "playlists"));
     let videos: Vec<Value> = v["videos"]["items"].as_array().or(v["videos"].as_array()).cloned().unwrap_or_default();
     let video_source = json!({"type": "search", "id": q, "name": format!("Search: {q}")});
+    let tracks = Rc::new(tracks);
     let track_rows = |limit: usize| {
-        let mut rows = col().w_full().gap(2.0);
-        for (i, tr) in tracks.iter().take(limit).enumerate() {
-            let id = tr["id"].as_u64().unwrap_or(0);
-            rows = rows.child(track_row(format!("sr-t{i}"), i + 1, tr, move |_: &mut App| controller::send_play_ids(vec![id])));
-        }
-        rows
+        track_list("sr-t", tracks.clone(), (0..tracks.len().min(limit)).collect(), |tracks, i| {
+            let id = tracks[i]["id"].as_u64().unwrap_or(0);
+            track_row(format!("sr-t{i}"), i + 1, &tracks[i], move |_: &mut App| controller::send_play_ids(vec![id]))
+        })
     };
     let section = |title: &str, body: El| col().w_full().gap(10.0).child(row().items_center().child(heading(title, theme::SECTION)).child(spacer()).child(
         row().role("button").label("VIEW ALL").h(26.0).px(8.0).items_center().cursor(rune::Cursor::Pointer).child(caps("View all", 0.6).a11y_hidden()))).child(body);
     // A kind with no hits says so where its rows or cards would be.
     let or_none = |none: bool, body: El, what: &str| if none { ui::empty(&format!("No {what}")) } else { body };
-    let body = match s.nav.tab {
+    let body = match *s.nav.tab {
         SearchTab::All | SearchTab::TopHits => col().w_full().gap(22.0)
             .child(section("Tracks", or_none(tracks.is_empty(), track_rows(5), "tracks")))
             .child(section("Albums", or_none(albums.is_empty(), grid(cards_for("sr-al", &albums)), "albums")))
@@ -1424,14 +1483,14 @@ pub fn settings_page(s: &App) -> El {
     let body = match s.nav.settings_tab {
         SettingsTab::Playback => {
             let q = |key: &str, label: &str, tier: &'static str| choice(key, label, quality == tier, move |_: &mut App| controller::send(Cmd::SetMaxQuality(tier.to_string())));
-            col().w_full().gap(8.0).focus_group()
-                .child(caps("Streaming quality", 0.5))
+            col().key("q-group").role("group").labelled_by("q-caption").w_full().gap(8.0).focus_group()
+                .child(caps("Streaming quality", 0.5).key("q-caption"))
                 .child(q("q-hires", "HI-RES LOSSLESS FLAC · up to 24-bit / 192 kHz", "HI_RES_LOSSLESS"))
                 .child(q("q-lossless", "LOSSLESS FLAC · 16-bit / 44.1 kHz", "LOSSLESS"))
                 .child(q("q-high", "HIGH AAC · up to 320 kbps", "HIGH"))
         }
-        SettingsTab::General => col().w_full().gap(8.0).focus_group()
-            .child(caps("Title bar", 0.5))
+        SettingsTab::General => col().key("tb-group").role("group").labelled_by("tb-caption").w_full().gap(8.0).focus_group()
+            .child(caps("Title bar", 0.5).key("tb-caption"))
             .child(choice("tb-custom", "Custom SONE's own in-app title bar, themed to match.", true, |_: &mut App| {}))
             .child(choice("tb-hidden", "Hidden Frameless — no title bar at all.", false, |_: &mut App| {}))
             .child(choice("tb-system", "System Native OS title bar and window controls.", false, |_: &mut App| {})),
@@ -1561,14 +1620,24 @@ pub fn queue_panel(v: &View) -> El {
         c = c.child(row().w_full().items_center().pt(10.0).child(heading("NEXT UP", 11.0)).child(spacer())
             .child(theme::focusable(row().key("qp-clear").role("button").label("Clear")).h(26.0).px(10.0).radius(13.0).items_center().fill(white(0.08)).cursor(rune::Cursor::Pointer)
                 .on_press(|_: &mut App| controller::send(Cmd::ClearQueue)).child(text("Clear").font(t(11.0, 600.0)).color(white(0.8)).a11y_hidden())));
-        for (i, item) in v.queue.iter().enumerate() {
-            let id = item.id;
-            // Not an accessible node (it has none in React either); Tab still reaches it.
-            c = c.child(theme::focusable_row(row().key(format!("qp-{i}-{id}")).role("presentation")).w_full().h(44.0).px(6.0).gap(10.0).items_center().radius(8.0).hover(white(0.05)).cursor(rune::Cursor::Pointer)
-                .on_press(move |_: &mut App| controller::send(Cmd::JumpTo(id)))
-                .child(col().grow(1.0).min_w(0.0).child(text(item.title.clone()).font(t(13.0, 500.0)).color(white(0.9)).truncate()).child(text(item.artist.clone()).font(t(11.0, 400.0)).color(white(0.5)).truncate()))
-                .child(icon::<App>(&format!("qp-{i}-rm"), "Remove", G::Close).on_press(move |_: &mut App| controller::send(Cmd::RemoveAt(i)))));
-        }
+        // Built only while in or near view, as track_list's rows are: a queue can hold thousands.
+        let queue = Rc::new(v.queue.clone());
+        let keys = queue.clone();
+        let keys_version = {
+            use std::hash::{BuildHasher, BuildHasherDefault};
+            BuildHasherDefault::<std::collections::hash_map::DefaultHasher>::default().hash_one(queue.iter().map(|q| q.id).collect::<Vec<_>>())
+        };
+        c = c.child(col().key("qp-rows").w_full().gap(6.0).growth(rune::GrowthSpec::default()).instant_changes()
+            .virtual_rows(queue.len(), 44.0, move |_: &App, i| format!("qp-{i}-{}", keys[i].id).into(), move |_: &App, i| {
+                let item = &queue[i];
+                let id = item.id;
+                // Not an accessible node (it has none in React either); Tab still reaches it.
+                theme::focusable_row(row().key(format!("qp-{i}-{id}")).role("presentation")).w_full().h(44.0).px(6.0).gap(10.0).items_center().radius(8.0).hover(white(0.05)).cursor(rune::Cursor::Pointer)
+                    .on_press(move |_: &mut App| controller::send(Cmd::JumpTo(id)))
+                    .child(col().grow(1.0).min_w(0.0).child(text(item.title.clone()).font(t(13.0, 500.0)).color(white(0.9)).truncate()).child(text(item.artist.clone()).font(t(11.0, 400.0)).color(white(0.5)).truncate()))
+                    .child(icon::<App>(&format!("qp-{i}-rm"), "Remove", G::Close).on_press(move |_: &mut App| controller::send(Cmd::RemoveAt(i))))
+            })
+            .virtual_rows_version(keys_version));
     }
     if !v.history.is_empty() {
         c = c.child(row().pt(10.0).child(heading("HISTORY", 11.0)));
@@ -1581,17 +1650,17 @@ pub fn queue_panel(v: &View) -> El {
 }
 
 fn toggle_drawer(s: &mut App, tab: Drawer) {
-    s.nav.drawer = if s.nav.drawer == Some(tab) { None } else { Some(tab) };
+    *s.nav.drawer = if *s.nav.drawer == Some(tab) { None } else { Some(tab) };
 }
 
 /// The right-hand drawer (React NowPlayingDrawer): queue, suggestions, lyrics, credits.
 pub fn drawer(s: &App, v: &View, shell: Shell) -> Option<El> {
-    let tab = s.nav.drawer?;
+    let tab = (*s.nav.drawer)?;
     let t_btn = |key: &str, label: &str, which: Drawer| {
         let on = tab == which;
         theme::focusable(row().key(key.to_string()).role("button").label(label)).focus_selected(on).h(30.0).px(10.0).radius(15.0).items_center()
             .fill(if on { white(0.14) } else { white(0.05) }).cursor(rune::Cursor::Pointer)
-            .on_press(move |s: &mut App| s.nav.drawer = Some(which))
+            .on_press(move |s: &mut App| *s.nav.drawer = Some(which))
             .child(text(label.to_string()).font(t(11.0, 600.0)).color(white(0.85)).a11y_hidden())
     };
     let tabs = row().gap(6.0).flex_wrap().focus_group()
@@ -1599,6 +1668,7 @@ pub fn drawer(s: &App, v: &View, shell: Shell) -> Option<El> {
         .child(t_btn("dr-suggested", "Suggested tracks", Drawer::Suggested))
         .child(t_btn("dr-lyrics", "Lyrics", Drawer::Lyrics))
         .child(t_btn("dr-credits", "Credits", Drawer::Credits));
+    took_loading();
     let body = match tab {
         Drawer::Queue => queue_panel(v),
         Drawer::Lyrics => lyrics(s, v),
@@ -1611,18 +1681,20 @@ pub fn drawer(s: &App, v: &View, shell: Shell) -> Option<El> {
     }
     // Docked, a column beside the page; in a narrow window (Shell), a sheet over the page's
     // right edge. Either way it starts under the header, which keeps the window controls.
-    let d = col().key("drawer").w(shell.drawer_w);
+    let d = col().key("drawer").role("complementary").label("Now playing panel").w(shell.drawer_w);
     let d = if shell.drawer_docked { d.h_full() } else { d.pin(None, Some(0.0), Some(0.0), Some(0.0)).border(1.0, white(0.06)).shadow(0.0, 32.0, theme::black(0.45)) };
     let mut d = d.padding(16.0).gap(12.0).fill(theme::drawer_bg())
         .child(head)
-        .child(ui::smooth_wheel::<App>(col().grow(1.0).min_h(0.0).w_full().scroll(ScrollSpec { stick_bottom: false }).child(body), "drawer-scroll".into()));
-    if tab == Drawer::Lyrics && s.nav.lyrics_scrolled && v.current.as_ref().and_then(|c| synced_lyrics(c.id)).is_some() {
+        .child(ui::smooth_wheel::<App>(col().grow(1.0).min_h(0.0).w_full().scroll(ScrollSpec { stick_bottom: false }).child(body), "drawer-scroll".into())
+            .labelled_by(match tab { Drawer::Queue => "dr-queue", Drawer::Suggested => "dr-suggested", Drawer::Lyrics => "dr-lyrics", Drawer::Credits => "dr-credits" })
+            .busy(took_loading()));
+    if tab == Drawer::Lyrics && *s.nav.lyrics_scrolled && v.current.as_ref().and_then(|c| synced_lyrics(c.id)).is_some() {
         // LyricsTab: the floating "Sync lyrics" button once the user scrolls away
         d = d.child(theme::focusable(row().key("ly-sync").role("button").label("Sync lyrics")).pin(None, None, Some(32.0), Some(16.0)).h(36.0).px(16.0).gap(8.0).radius(18.0).items_center()
             .fill(accent()).shadow(6.0, 18.0, theme::black(0.4)).cursor(rune::Cursor::Pointer).press_scale(0.95)
             .on_press_tx(|s: &mut App, tx: &mut Tx| {
-                s.nav.lyrics_scrolled = false;
-                if let Some(i) = s.nav.lyric_line {
+                *s.nav.lyrics_scrolled = false;
+                if let Some(i) = *s.nav.lyric_line {
                     tx.scroll_center(format!("ly-{i}"));
                 }
             })
@@ -1693,11 +1765,13 @@ fn lyrics(s: &App, v: &View) -> El {
         data::Load::Ready(l) => {
             let provider = l["lyricsProvider"].as_str().map(str::to_string);
             if let Some(lines) = synced_lyrics(cur.id) {
-                let active = s.nav.lyric_line;
+                let active = *s.nav.lyric_line;
                 let duration = v.duration.max(1.0);
                 let mut col_lines = col().w_full().gap(12.0).py(40.0)
                     .on_wheel(|s: &mut App, _, _| {
-                        s.nav.lyrics_scrolled = true;
+                        if !*s.nav.lyrics_scrolled {
+                            *s.nav.lyrics_scrolled = true;
+                        }
                         false
                     });
                 for (i, (at, line)) in lines.iter().enumerate() {
@@ -1710,7 +1784,7 @@ fn lyrics(s: &App, v: &View) -> El {
                             .origin(0.0, 0.5).scale(if on { 1.22 } else { 1.0 }).scale_motion(rune::Spring::new(0.5, 0.0))
                             .hover(white(0.0)).cursor(rune::Cursor::Pointer)
                             .on_press(move |s: &mut App| {
-                                s.nav.lyrics_scrolled = false;
+                                *s.nav.lyrics_scrolled = false;
                                 controller::send(Cmd::SeekFraction((at / duration).clamp(0.0, 1.0) as f32));
                             }),
                     );
@@ -2014,19 +2088,21 @@ fn loved_page(s: &App, v: &View) -> El {
         .key("loved-filter").label("Filter on title, artist or album").single_line().w(320.0)
         .color(white(0.95)).caret(white(0.95), white(0.25)).placeholder("Filter on title, artist or album", white(0.4))
         .on_edit(|s: &mut App| &mut s.nav.filter);
-    let needle = s.nav.filter.text.to_lowercase();
-    let mut rows = col().w_full().gap(2.0);
-    let mut shown = 0;
+    let needle = s.nav.filter.text.clone();
+    let mut shown = Vec::new();
     for (i, tr) in tracks.iter().enumerate() {
-        if !needle.is_empty() && !format!("{} {} {}", data::name(tr), data::artist_of(tr), data::data(tr)["album"]["title"].as_str().unwrap_or("")).to_lowercase().contains(&needle) {
+        if !data::matches(&format!("{} {} {}", data::name(tr), data::artist_of(tr), data::data(tr)["album"]["title"].as_str().unwrap_or("")), &needle) {
             continue;
         }
-        shown += 1;
-        let (all, src, idx) = (tracks.clone(), source.clone(), i);
-        rows = rows.child(track_row(format!("lv-t{i}"), i + 1, tr, move |_: &mut App| {
-            controller::send(Cmd::PlayFrom { tracks: all.clone(), index: idx, source: src.clone(), album_mode: false });
-        }));
+        shown.push(i);
     }
+    let empty = shown.is_empty();
+    let rows = track_list("lv-t", Rc::new(tracks), shown, move |tracks, i| {
+        let (all, src) = (tracks.clone(), source.clone());
+        track_row(format!("lv-t{i}"), i + 1, &tracks[i], move |_: &mut App| {
+            controller::send(Cmd::PlayFrom { tracks: all.to_vec(), index: i, source: src.clone(), album_mode: false });
+        })
+    });
     let art = loved_art(180.0, 14.0, 64.0);
     let head = row().w_full().gap(24.0).items_end().child(art)
         .child(col().gap(10.0).min_w(0.0).child(heading("Loved Tracks", theme::PAGE_TITLE))
@@ -2035,7 +2111,7 @@ fn loved_page(s: &App, v: &View) -> El {
     col().w_full().gap(16.0)
         .child(head)
         .child(row().h(40.0).px(12.0).radius(10.0).items_center().fill(white(0.06)).child(filter))
-        .child(if shown > 0 { rows } else { tracks_empty(s, "No loved tracks yet") })
+        .child(if !empty { rows } else { tracks_empty(s, "No loved tracks yet") })
 }
 
 /// A mix or radio (React MixPage): its tracks, with Play, Shuffle, Add, Share and More.
@@ -2058,16 +2134,17 @@ fn mix_page(id: &str, title: &str, sub: &str, v: &View) -> El {
         }))
         .child(header_btn("mix-more", "More options", "More", G::More, false)
             .on_press(move |s: &mut App| crate::interact::open_media(s, item.clone(), crate::interact::Anchor::Below("mix-more".into()))));
-    let mut rows = col().w_full().gap(2.0);
-    for (i, tr) in tracks.iter().enumerate() {
-        let (all, src, idx) = (tracks.clone(), source.clone(), i);
-        rows = rows.child(track_row(format!("mx-t{i}"), i + 1, tr, move |_: &mut App| {
-            controller::send(Cmd::PlayFrom { tracks: all.clone(), index: idx, source: src.clone(), album_mode: false });
-        }));
-    }
     let seed = id.bytes().fold(7u64, |h, b| h.wrapping_mul(31).wrapping_add(b as u64));
+    let art = tracks.first().and_then(|t| crate::art::item_url(t, 180.0));
+    let every = (0..tracks.len()).collect();
+    let rows = track_list("mx-t", Rc::new(tracks), every, move |tracks, i| {
+        let (all, src) = (tracks.clone(), source.clone());
+        track_row(format!("mx-t{i}"), i + 1, &tracks[i], move |_: &mut App| {
+            controller::send(Cmd::PlayFrom { tracks: all.to_vec(), index: i, source: src.clone(), album_mode: false });
+        })
+    });
     col().w_full().gap(16.0)
-        .child(hero(title, true, sub, seed, false, tracks.first().and_then(|t| crate::art::item_url(t, 180.0)), actions))
+        .child(hero(title, true, sub, seed, false, art, actions))
         .child(rows)
 }
 

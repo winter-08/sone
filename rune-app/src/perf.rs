@@ -2,14 +2,15 @@
 //! did in that interval (PLAYER_DESIGN.md, "Motion spike"):
 //!
 //! `[perf] open playing focused fx=on | frames 4.2/s (drawn 21, unchanged 0, skipped 0)
-//! views 1.0/s polls 6.2/s | cpu 41.3% rss 512 MB`
+//! views 1.0/s polls 6.2/s | cpu 41.3% rss 512 MB | regions 1.0/s`
 //!
 //! Frames are Rune's own `on_frame_encoded` reports for the main window: `Drawn` frames were
 //! encoded and presented. Views count `view` runs (commits); polls count `poll` runs. CPU is the
 //! process's utime + stime from /proc/self/stat (all threads, audio included) as a share of one
-//! core. Focus comes from the root's window-focus handler. Unset, no thread runs, neither the
-//! frame hook nor the focus handler is installed, and the view and poll counters are one relaxed
-//! load each.
+//! core. Focus comes from the root's window-focus handler. Regions count the main window's pane
+//! regions built again (`main::pane`; a reused one costs no build), not the debug builds'
+//! re-checks of reused ones. Unset, no thread runs, neither the frame hook nor the focus handler
+//! is installed, and the view, poll and region counters are one relaxed load each.
 
 use std::sync::LazyLock;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -21,6 +22,7 @@ const USER_HZ: f64 = 100.0;
 
 static VIEWS: AtomicU64 = AtomicU64::new(0);
 static POLLS: AtomicU64 = AtomicU64::new(0);
+static REGIONS: AtomicU64 = AtomicU64::new(0);
 static DRAWN: AtomicU64 = AtomicU64::new(0);
 static UNCHANGED: AtomicU64 = AtomicU64::new(0);
 static SKIPPED: AtomicU64 = AtomicU64::new(0);
@@ -40,6 +42,12 @@ pub fn view_ran() {
 pub fn poll_ran() {
     if on() {
         POLLS.fetch_add(1, Ordering::Relaxed);
+    }
+}
+
+pub fn region_built() {
+    if on() {
+        REGIONS.fetch_add(1, Ordering::Relaxed);
     }
 }
 
@@ -64,22 +72,22 @@ pub fn start() {
         return;
     }
     std::thread::Builder::new().name("sone-perf".into()).spawn(|| {
-        let counters = || [&DRAWN, &UNCHANGED, &SKIPPED, &VIEWS, &POLLS].map(|c| c.load(Ordering::Relaxed));
-        let mut last = (Instant::now(), cpu_ticks(), [0u64; 5]);
+        let counters = || [&DRAWN, &UNCHANGED, &SKIPPED, &VIEWS, &POLLS, &REGIONS].map(|c| c.load(Ordering::Relaxed));
+        let mut last = (Instant::now(), cpu_ticks(), [0u64; 6]);
         loop {
             std::thread::sleep(EVERY);
             let now = (Instant::now(), cpu_ticks(), counters());
             let secs = now.0.duration_since(last.0).as_secs_f64();
-            let d: Vec<u64> = (0..5).map(|i| now.2[i] - last.2[i]).collect();
+            let d: Vec<u64> = (0..6).map(|i| now.2[i] - last.2[i]).collect();
             let cpu = (now.1 - last.1) as f64 / USER_HZ / secs * 100.0;
             let (_, playing) = crate::controller::clock();
             let line = format!(
-                "[perf] {} {} {} fx={} | frames {:.1}/s (drawn {}, unchanged {}, skipped {}) views {:.1}/s polls {:.1}/s | cpu {:.1}% rss {} MB",
+                "[perf] {} {} {} fx={} | frames {:.1}/s (drawn {}, unchanged {}, skipped {}) views {:.1}/s polls {:.1}/s | cpu {:.1}% rss {} MB | regions {:.1}/s",
                 if crate::full_ui::covers_bar() { "open" } else { "closed" },
                 if playing { "playing" } else { "paused" },
                 if FOCUSED.load(Ordering::Relaxed) { "focused" } else { "unfocused" },
                 if crate::fx::on() { "on" } else { "off" },
-                d[0] as f64 / secs, d[0], d[1], d[2], d[3] as f64 / secs, d[4] as f64 / secs, cpu, rss_mb(),
+                d[0] as f64 / secs, d[0], d[1], d[2], d[3] as f64 / secs, d[4] as f64 / secs, cpu, rss_mb(), d[5] as f64 / secs,
             );
             log::info!("{line}");
             eprintln!("{line}");

@@ -51,10 +51,10 @@ pub fn version() -> u64 {
 }
 
 pub fn home(s: &App) -> El {
-    let slug = s.nav.home_tab.clone();
+    let slug = (*s.nav.home_tab).clone();
     let first = match views::ready_or(Key::Home(slug.clone())) { Ok(v) => v, Err(e) => return e };
     let home = &first["home"];
-    let w = s.nav.content_w;
+    let w = *s.nav.content_w;
     // Rows and grids are sized to the measured width; until the first layout measures it, drawing
     // them at a guess made every card jump to its real size on launch.
     if w <= 0.0 {
@@ -72,9 +72,9 @@ pub fn home(s: &App) -> El {
             bar = bar.child(theme::focusable(row().key(format!("home-tab-{tslug}")).role("tab").label(name.clone())).focus_selected(on).h(36.0).px(16.0).radius(18.0).items_center()
                 .fill(if on { white(0.95) } else { white(0.08) }).hover(if on { white(0.95) } else { white(0.14) }).cursor(rune::Cursor::Pointer)
                 .on_press(move |s: &mut App| {
-                    if s.nav.home_tab != tslug {
-                        s.nav.home_tab = tslug.clone();
-                        s.nav.home_pages = 0;
+                    if *s.nav.home_tab != tslug {
+                        *s.nav.home_tab = tslug.clone();
+                        *s.nav.home_pages = 0;
                     }
                 })
                 .child(text(name).font(t(14.0, 700.0)).color(if on { theme::ink() } else { white(0.92) }).a11y_hidden()));
@@ -86,7 +86,7 @@ pub fn home(s: &App) -> El {
     let mut sections: Vec<Value> = home["sections"].as_array().cloned().unwrap_or_default();
     let mut cursor = home["cursor"].as_str().filter(|c| !c.is_empty()).map(str::to_string);
     let mut waiting = false;
-    for _ in 0..s.nav.home_pages {
+    for _ in 0..*s.nav.home_pages {
         let Some(cur) = cursor.clone() else { break };
         match data::want(Key::HomeMore(slug.clone(), cur)) {
             data::Load::Ready(p) => {
@@ -116,9 +116,9 @@ pub fn home(s: &App) -> El {
         c = c.child(views::loading());
     } else if cursor.is_some() {
         // The sentinel: reaching the end asks for the next page.
-        let n = s.nav.home_pages;
+        let n = *s.nav.home_pages;
         c = c.child(el().key(format!("home-more-{n}")).w_full().h(2.0).a11y_hidden()
-            .on_visible(move |s: &mut App, on, _| if on && s.nav.home_pages == n { s.nav.home_pages += 1 }));
+            .on_visible(move |s: &mut App, on, _| if on && *s.nav.home_pages == n { *s.nav.home_pages += 1 }));
     }
     c
 }

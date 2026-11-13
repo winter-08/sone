@@ -57,6 +57,10 @@ struct Entry {
     fetch: u64,
     at: Instant,
     retries: usize,
+    /// `nudge_due_retries` has bumped the version for this failure's retry.
+    nudged: bool,
+    /// The version whose bump made it visible (0 for a fetch just started, which needs none).
+    version: u64,
 }
 
 static CACHE: LazyLock<Mutex<HashMap<Key, Entry>>> = LazyLock::new(Default::default);
@@ -71,11 +75,59 @@ pub fn version() -> u64 {
     VERSION.load(Ordering::Relaxed)
 }
 
+thread_local! {
+    /// The version the view building now read (`freeze`).
+    static FROZEN: std::cell::Cell<Option<u64>> = const { std::cell::Cell::new(None) };
+}
+
+/// For one view build: the version now, and until the guard drops, `want` and `peek` on this
+/// thread answer as of that version, so a fetch landing mid-build (on another thread) shows
+/// from the next build on. The panes are regions keyed by this version: without it a region
+/// reused for the version it read could differ from building it again a moment later.
+pub fn freeze() -> (u64, Frozen) {
+    let v = version();
+    FROZEN.set(Some(v));
+    (v, Frozen(()))
+}
+
+/// Ends [`freeze`] when dropped.
+pub struct Frozen(());
+
+impl Drop for Frozen {
+    fn drop(&mut self) {
+        FROZEN.set(None);
+    }
+}
+
+fn after_frozen(version: u64) -> bool {
+    FROZEN.get().is_some_and(|f| version > f)
+}
+
+/// Bumps the version once for each failed entry whose retry has come due, so the view asks for
+/// it again: the panes are regions, which build (and ask) only when something they read changed,
+/// not every second as the whole view used to while music played. Called by main::poll.
+pub fn nudge_due_retries() {
+    let mut due = false;
+    for e in CACHE.lock().unwrap().values_mut() {
+        if !e.nudged && matches!(e.load, Load::Failed(_)) && RETRY_FAILED_AFTER.get(e.retries).is_some_and(|d| e.at.elapsed() >= *d) {
+            e.nudged = true;
+            due = true;
+        }
+    }
+    if due {
+        VERSION.fetch_add(1, Ordering::Relaxed);
+    }
+}
+
 /// The cached value, starting the fetch if this is the first ask (or a failure has cooled down).
 pub fn want(key: Key) -> Load {
     let mut c = CACHE.lock().unwrap();
     let mut retries = 0;
     if let Some(e) = c.get(&key) {
+        // Landed after the view read the version: it was loading as far as this view knows.
+        if after_frozen(e.version) {
+            return Load::Loading;
+        }
         let due = matches!(e.load, Load::Failed(_)) && RETRY_FAILED_AFTER.get(e.retries).is_some_and(|d| e.at.elapsed() >= *d);
         if !due {
             return e.load.clone();
@@ -83,7 +135,7 @@ pub fn want(key: Key) -> Load {
         retries = e.retries + 1;
     }
     let fetch_id = FETCHES.fetch_add(1, Ordering::Relaxed) + 1;
-    c.insert(key.clone(), Entry { load: Load::Loading, fetch: fetch_id, at: Instant::now(), retries });
+    c.insert(key.clone(), Entry { load: Load::Loading, fetch: fetch_id, at: Instant::now(), retries, nudged: false, version: 0 });
     drop(c);
     sone_host_shim::async_runtime::spawn(async move {
         let res = fetch(&key).await;
@@ -98,9 +150,8 @@ pub fn want(key: Key) -> Load {
         // result is older than what was asked for.
         let mut c = CACHE.lock().unwrap();
         if c.get(&key).is_some_and(|e| e.fetch == fetch_id) {
-            c.insert(key, Entry { load, fetch: fetch_id, at: Instant::now(), retries });
-            drop(c);
-            VERSION.fetch_add(1, Ordering::Relaxed);
+            let version = VERSION.fetch_add(1, Ordering::Relaxed) + 1;
+            c.insert(key, Entry { load, fetch: fetch_id, at: Instant::now(), retries, nudged: false, version });
         }
     });
     Load::Loading
@@ -110,7 +161,7 @@ pub fn want(key: Key) -> Load {
 /// on render, e.g. debounced suggestions).
 pub fn peek(key: &Key) -> Option<Value> {
     match CACHE.lock().unwrap().get(key) {
-        Some(Entry { load: Load::Ready(v), .. }) => Some(v.clone()),
+        Some(Entry { load: Load::Ready(v), version, .. }) if !after_frozen(*version) => Some(v.clone()),
         _ => None,
     }
 }
@@ -129,8 +180,9 @@ pub async fn get(key: Key) -> Result<Value, String> {
     }
     let v = fetch(&key).await?;
     let fetch_id = FETCHES.fetch_add(1, Ordering::Relaxed) + 1;
-    CACHE.lock().unwrap().insert(key, Entry { load: Load::Ready(v.clone()), fetch: fetch_id, at: Instant::now(), retries: 0 });
-    VERSION.fetch_add(1, Ordering::Relaxed);
+    let mut c = CACHE.lock().unwrap();
+    let version = VERSION.fetch_add(1, Ordering::Relaxed) + 1;
+    c.insert(key, Entry { load: Load::Ready(v.clone()), fetch: fetch_id, at: Instant::now(), retries: 0, nudged: false, version });
     Ok(v)
 }
 
@@ -210,4 +262,63 @@ pub fn artist_of(item: &Value) -> String {
         .or_else(|| ["subTitle", "shortSubtitle"].iter().find_map(|k| d[*k].as_str().map(str::to_string)))
         .or_else(|| ["subtitleTextInfo", "subTitleTextInfo", "shortSubtitleTextInfo"].iter().find_map(|k| d[*k]["text"].as_str().map(str::to_string)))
         .unwrap_or_default()
+}
+
+/// Whether `text` holds the filter `query` as a reader expects: case folded fully (`ß` as `ss`),
+/// an unaccented query matching accented text (`beyonce` finds `Beyoncé`), and in a Turkish or
+/// Azerbaijani locale the dotted and dotless i. An empty query matches everything.
+pub fn matches(text: &str, query: &str) -> bool {
+    static FOLD: LazyLock<rune_kit::search::Fold> = LazyLock::new(|| rune_kit::search::Fold::for_language(&locale_tag(|k| std::env::var(k).ok())));
+    FOLD.contains(text, query)
+}
+
+/// The user's language as a BCP 47 tag (`tr-TR`), from the POSIX locale the session runs in
+/// (`LC_ALL`, then `LC_MESSAGES`, then `LANG`); empty for `C`, `POSIX` or none.
+fn locale_tag(var: impl Fn(&str) -> Option<String>) -> String {
+    let posix = ["LC_ALL", "LC_MESSAGES", "LANG"].iter().find_map(|k| var(k).filter(|v| !v.is_empty())).unwrap_or_default();
+    let lang = posix.split(['.', '@']).next().unwrap_or("");
+    if lang == "C" || lang == "POSIX" { String::new() } else { lang.replace('_', "-") }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{locale_tag, matches};
+    use rune_kit::search::Fold;
+
+    #[test]
+    fn filters_fold_case_and_accents() {
+        assert!(matches("Beyoncé", "beyonce"));
+        assert!(matches("Sigur Rós Hoppípolla", "sigur ros"));
+        assert!(matches("Motörhead Ace of Spades", "MOTORHEAD"));
+        assert!(matches("Die Ärzte", "arzte"));
+        assert!(matches("Straße", "strasse"));
+        assert!(matches("Straße", "STRASSE"));
+        assert!(matches("Łódź", "lodz"));
+        assert!(matches("Anything", ""));
+        assert!(matches("Anything", "  "));
+        // A query with an accent asks for it.
+        assert!(!matches("Beyonce", "beyoncé"));
+        assert!(!matches("Sigur Rós", "sigur rosa"));
+    }
+
+    #[test]
+    fn turkish_locale_folds_dotless_i() {
+        let tr = Fold::for_language(&locale_tag(|k| (k == "LANG").then(|| "tr_TR.UTF-8".to_string())));
+        assert!(tr.contains("ISTANBUL", "ıstanbul"));
+        assert!(tr.contains("İstanbul", "istanbul"));
+        assert!(!tr.contains("ISTANBUL", "istanbul"));
+        // Everywhere else `I` is `i`.
+        assert!(Fold::default().contains("ISTANBUL", "istanbul"));
+        assert!(Fold::default().contains("İstanbul", "istanbul"));
+    }
+
+    #[test]
+    fn locale_tag_reads_posix_locale() {
+        let env = |pairs: &'static [(&'static str, &'static str)]| move |k: &str| pairs.iter().find(|p| p.0 == k).map(|p| p.1.to_string());
+        assert_eq!(locale_tag(env(&[("LANG", "tr_TR.UTF-8")])), "tr-TR");
+        assert_eq!(locale_tag(env(&[("LC_ALL", "az_AZ@latin"), ("LANG", "en_US.UTF-8")])), "az-AZ");
+        assert_eq!(locale_tag(env(&[("LC_ALL", ""), ("LC_MESSAGES", "de_DE.UTF-8"), ("LANG", "tr_TR")])), "de-DE");
+        assert_eq!(locale_tag(env(&[("LANG", "C.UTF-8")])), "");
+        assert_eq!(locale_tag(env(&[])), "");
+    }
 }

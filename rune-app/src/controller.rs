@@ -20,7 +20,7 @@
 use serde_json::{Value, json};
 use sone_host_shim::{AppHandle, Manager};
 use std::collections::HashSet;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU8, AtomicU64, Ordering};
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 use tauri_app_lib::AppState;
@@ -247,6 +247,28 @@ pub fn send_play_ids(ids: Vec<u64>) {
     send(Cmd::PlayIds(ids));
 }
 
+/// The main window, in [`set_clock_shown`].
+pub const MAIN: u8 = 1;
+/// The miniplayer window, in [`set_clock_shown`].
+pub const MINI: u8 = 2;
+/// The windows on screen that draw the playback clock ([`MAIN`], [`MINI`]).
+static CLOCK_SHOWN: AtomicU8 = AtomicU8::new(MAIN);
+
+/// Says whether `window` is on screen drawing the clock. The position poll (every 2 s, or
+/// 0.5 s for a video) only keeps the drawn clock honest, so it stops while no window shows
+/// it and runs again, at once, when one comes back. Playback, MPRIS and queue advance don't
+/// need it.
+pub fn set_clock_shown(window: u8, shown: bool) {
+    let before = if shown { CLOCK_SHOWN.fetch_or(window, Ordering::Relaxed) } else { CLOCK_SHOWN.fetch_and(!window, Ordering::Relaxed) };
+    if before == 0 && shown && let Some(tx) = TX.get() {
+        let _ = tx.send(Msg::ClockShown);
+    }
+}
+
+fn clock_shown() -> bool {
+    CLOCK_SHOWN.load(Ordering::Relaxed) != 0
+}
+
 /// The seek asked for last, not yet taken by the controller. Seeks are latest-wins: a flushing
 /// seek waits for the stream to refill after the one before (about 170 ms), and a dragged seek
 /// bar asks for one every frame, so handling each in turn left seconds of seeks to work through.
@@ -315,6 +337,8 @@ enum Msg {
     GaplessDue(u64),
     GaplessRetry,
     PositionPoll(u64),
+    /// A window that draws the clock is on screen again after none was (`set_clock_shown`).
+    ClockShown,
     SeekCorrection(u64),
     RateLimitResume { pgen: u64, retry: Option<Value>, context_first: bool },
     SaveDue(u64),
@@ -718,6 +742,12 @@ impl Player {
                 Msg::GaplessRetry => self.gapless_refresh().await,
                 Msg::PositionPoll(seq) if seq == self.poll_seq => self.poll_position(true).await,
                 Msg::PositionPoll(_) => {}
+                // A new chain, which retires one still pending.
+                Msg::ClockShown if self.playing => {
+                    self.poll_seq += 1;
+                    self.poll_position(true).await;
+                }
+                Msg::ClockShown => {}
                 Msg::SeekCorrection(seq) => {
                     if pos().correction == seq {
                         self.poll_position(false).await;
@@ -2025,7 +2055,7 @@ impl Player {
                     p.loading = matches!(crate::video::state(), Some(crate::video::State::Loading));
                 }
             }
-            if reschedule && self.playing {
+            if reschedule && self.playing && clock_shown() {
                 self.later(VIDEO_POLL_EVERY, Msg::PositionPoll(self.poll_seq));
             }
             return;
@@ -2046,7 +2076,7 @@ impl Player {
                 }
             }
         }
-        if reschedule && self.playing {
+        if reschedule && self.playing && clock_shown() {
             self.later(POLL_EVERY, Msg::PositionPoll(self.poll_seq));
         }
     }
