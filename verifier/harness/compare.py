@@ -89,6 +89,16 @@ def diff_audio(g: dict, a: dict, out):
         out.append(f"audio: {a['unmatched_nonsilent_bytes']} bytes of non-silent audio match no fixture (not bit-perfect)")
 
 
+def strip_ignored(snap, ignore) -> dict:
+    """An initial/final snapshot without the ignored keys: at its top level and in its `state`,
+    which has the same shape as a step's state (initial.state.controls is the start-up
+    inventory), so `ignore` means the same thing there as it does for steps."""
+    out = {k: v for k, v in (snap or {}).items() if k not in ignore}
+    if isinstance(out.get("state"), dict):
+        out["state"] = {k: v for k, v in out["state"].items() if k not in ignore}
+    return out
+
+
 def compare(golden: dict, trace: dict, ignore: set[str] = frozenset()) -> list[str]:
     """`ignore` drops whole parts of the comparison by key, e.g. {"controls", "unnamed_controls"}
     to judge behaviour (L2) without the accessibility inventory (L3) for a partial port."""
@@ -109,8 +119,7 @@ def compare(golden: dict, trace: dict, ignore: set[str] = frozenset()) -> list[s
                     tv = {k: v for k, v in (tv or {}).items() if k not in ignore}
                 diff_values(gv, tv, f"{p}.{key}", out)
     for part in ("initial", "final"):
-        strip = lambda d: {k: v for k, v in (d or {}).items() if k not in ignore}
-        diff_values(strip(golden.get(part)), strip(trace.get(part)), part, out)
+        diff_values(strip_ignored(golden.get(part), ignore), strip_ignored(trace.get(part), ignore), part, out)
     diff_audio(golden.get("audio", {}), trace.get("audio", {}), out)
     return out
 
