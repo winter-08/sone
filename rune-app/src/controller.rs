@@ -79,14 +79,6 @@ pub enum Cmd {
     PlaySingle(Value),
     /// playSingle for a track id (the search dropdown's play button).
     PlaySingleId(u64),
-    /// Put these track ids at the front of the manual queue, in order ("Play next").
-    PlayNextIds(Vec<u64>),
-    /// Append these track ids to the manual queue ("Add to queue").
-    QueueIds(Vec<u64>),
-    /// Put these items in the manual queue as they are, at the front (`next`, "Play next") or
-    /// at the end (TrackContextMenu passes the row's item: a video in a playlist can't be
-    /// fetched as a track).
-    QueueItems { items: Vec<Value>, next: bool },
     /// The menus' Play next / Add to queue (addToQueue / playNextInQueue): these tracks (or
     /// videos) as the menu has them, each tagged with the collection it came from (`source`, the
     /// "Playing from" once it plays), at the front of the manual queue in order (`next`) or at
@@ -1326,18 +1318,6 @@ impl Player {
             }
             Cmd::Logout => self.logout().await,
             Cmd::SessionExpired => self.signed_in = false,
-            Cmd::QueueIds(ids) => self.fetch_tracks(ids, "queue", true),
-            Cmd::QueueItems { items, next } => {
-                // (the content filter holds here too: addToQueue / playNextInQueue)
-                let items: Vec<Value> = items.into_iter().filter(|t| !self.is_blocked(t)).collect();
-                let stamped: Vec<Value> = items.into_iter().map(|t| self.stamp(normalize(t))).collect();
-                if next {
-                    self.manual.splice(0..0, stamped);
-                } else {
-                    self.manual.extend(stamped);
-                }
-            }
-            Cmd::PlayNextIds(ids) => self.fetch_tracks(ids, "play_next", true),
             Cmd::QueueTracks { tracks, source, next } => {
                 let stamped: Vec<Value> = tracks.into_iter().filter(|t| !self.is_blocked(t)).collect::<Vec<_>>().into_iter().map(|t| {
                     let mut s = self.stamp(normalize(t));
