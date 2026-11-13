@@ -295,6 +295,10 @@ fn main() {
     };
     // Matches the desktop entry package.nix installs, so the desktop shows its name and icon.
     rune::set_app_id(option_env!("SONE_RUNE_APP_ID").unwrap_or("sone-rune"));
+    // Rune now ends the process at once when the app quits, skipping everything after `run`;
+    // the queue flush below and the logger's final flush (dropping `_logger`) need the
+    // orderly teardown.
+    rune::orderly_exit();
     let mut app = rune::App::new(spec);
     // Frame counts for SONE_PERF.
     if perf::on() {

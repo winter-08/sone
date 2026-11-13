@@ -14,7 +14,7 @@ path = "src/main.rs"
 # The SONE backend, built without Tauri/WebKit; `tauri::` resolves to host-shim.
 sone = { path = "../src-tauri", default-features = false, features = ["host"] }
 sone-host-shim = { path = "../src-tauri/host-shim" }
-rune = { git = "https://github.com/anomalyco/rune", rev = "58eeef5f8974299aa5e471de0010123323e3127e", features = ["accessibility"] }
+rune = { git = "https://github.com/anomalyco/rune", rev = "6c3cb8abf150e1c43b2f276a14568b2f2f504d72", features = ["accessibility"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tokio = { version = "1", features = ["sync", "time", "macros", "net", "io-util"] }
@@ -26,6 +26,15 @@ rand = "0.8"
 gstreamer = "0.23"
 gstreamer-app = "0.23"
 gstreamer-video = "0.23"
+
+# Rune patches these crates in its own workspace, and a dependency's [patch] doesn't reach ours,
+# so an app that builds Rune patches them too, from the same rev (Rune's README, "Depending on
+# Rune"). Keep the list equal to the [patch.crates-io] table in Rune's root Cargo.toml.
+[patch.crates-io]
+winit = { git = "https://github.com/anomalyco/rune", rev = "6c3cb8abf150e1c43b2f276a14568b2f2f504d72" }
+parley_engine = { git = "https://github.com/anomalyco/rune", rev = "6c3cb8abf150e1c43b2f276a14568b2f2f504d72" }
+wgpu-hal = { git = "https://github.com/anomalyco/rune", rev = "6c3cb8abf150e1c43b2f276a14568b2f2f504d72" }
+accesskit_windows = { git = "https://github.com/anomalyco/rune", rev = "6c3cb8abf150e1c43b2f276a14568b2f2f504d72" }
 
 [profile.dev]
 opt-level = 1

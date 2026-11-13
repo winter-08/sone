@@ -449,8 +449,8 @@ pub fn section(title: &str) -> El {
 
 // ---- smooth wheel scrolling
 //
-// Rune moves a notched mouse wheel's line steps at once (40 pt a notch) and leaves smoothing to
-// the app (`WheelEvent::precise`). Here a notch glides instead: each one moves the glide's
+// Rune moves a notched mouse wheel's line steps at once and leaves smoothing to the app
+// (`WheelEvent::precise`). Here a notch glides instead: each one moves the glide's
 // target, and `Tx::scroll_to_with` keeps the running glide's speed, so a spin of the wheel is one
 // continuous motion at the display's rate, like WebKit's smooth scrolling. Trackpads and
 // free-spinning wheels (precise deltas) scroll as Rune does.
@@ -467,6 +467,11 @@ thread_local! {
 }
 
 const WHEEL_SPRING: Spring = Spring::new(0.22, 0.0);
+
+/// Rune reports a Linux wheel notch as 120 pt (Chromium's step, since anomalyco/rune#856; it was
+/// 40). A notch here moves 40 pt, as in SONE's WebKitGTK frontend (WebKit's line step) and as
+/// this app did before.
+const NOTCH_SCALE: f32 = 40.0 / 120.0;
 
 /// A scroll viewport keyed `key` whose notched-wheel scrolling glides.
 pub fn smooth_wheel<S: 'static>(e: El, key: String) -> El {
@@ -496,7 +501,7 @@ pub fn smooth_wheel<S: 'static>(e: El, key: String) -> El {
                     Some(t) if st.last.elapsed().as_secs_f32() < 0.4 => t,
                     _ => st.offset,
                 };
-                let to = (from - ev.dy).clamp(0.0, st.max);
+                let to = (from - ev.dy * NOTCH_SCALE).clamp(0.0, st.max);
                 st.target = Some(to);
                 st.last = std::time::Instant::now();
                 tx.scroll_to_with(k_wheel.clone(), 0.0, to, WHEEL_SPRING);
