@@ -2803,13 +2803,31 @@ impl Player {
         self.playback_source = v["playbackSource"].as_object().map(|_| v["playbackSource"].clone());
         self.context_source = v["contextSource"].as_object().map(|_| v["contextSource"].clone());
         // Advance the qid counter past every restored q<N> and stamp the unstamped.
-        let all = self.current.iter().chain(&self.queue).chain(&self.history).chain(&self.manual).chain(self.original.iter().flatten());
+        let src_tracks = [&self.playback_source, &self.context_source].into_iter().flatten().filter_map(|s| s["tracks"].as_array()).flatten();
+        let all = self.current.iter().chain(&self.queue).chain(&self.history).chain(&self.manual).chain(self.original.iter().flatten()).chain(src_tracks);
         let max = all.filter_map(|t| t["_qid"].as_str()?.strip_prefix('q')?.parse::<u64>().ok()).max().unwrap_or(0);
         self.qid_counter = self.qid_counter.max(max);
         let q = std::mem::take(&mut self.queue);
         self.queue = q.into_iter().map(|t| self.ensure_qid(t)).collect();
         let m = std::mem::take(&mut self.manual);
         self.manual = m.into_iter().map(|t| self.ensure_qid(t)).collect();
+        // (and every other restored list, as React's restoreSnapshot does: an unshuffle or a
+        // repeat-all refill from these must not bring back items without a qid)
+        if let Some(o) = self.original.take() {
+            self.original = Some(o.into_iter().map(|t| self.ensure_qid(t)).collect());
+        }
+        let h = std::mem::take(&mut self.history);
+        self.history = h.into_iter().map(|t| self.ensure_qid(t)).collect();
+        for which in [0, 1] {
+            let src = if which == 0 { self.playback_source.take() } else { self.context_source.take() };
+            let src = src.map(|mut s| {
+                if let Some(a) = s.get_mut("tracks").and_then(Value::as_array_mut).map(std::mem::take) {
+                    s["tracks"] = Value::Array(a.into_iter().map(|t| self.ensure_qid(t)).collect());
+                }
+                s
+            });
+            if which == 0 { self.playback_source = src } else { self.context_source = src }
+        }
     }
 
     // -------------------------------------------------------------- outputs (§8)
