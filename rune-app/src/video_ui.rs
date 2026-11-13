@@ -144,6 +144,8 @@ pub fn open_fullscreen(s: &mut App, tx: &mut Tx, open: bool) {
 /// the view draws changed, and when to look again.
 pub fn tick(s: &mut App, tx: &mut Tx) -> (bool, Option<Duration>) {
     let (is_video, session, open) = controller::video_status();
+    // (a menu open over the player keeps its controls up, as the quality menu does)
+    let menu = s.nav.ctx.is_some();
     let p = &mut s.nav.video;
     let mut changed = false;
     // No video, or it was closed (it ended with nothing after it, or Escape): no player, and
@@ -177,7 +179,7 @@ pub fn tick(s: &mut App, tx: &mut Tx) -> (bool, Option<Duration>) {
         return (changed, None);
     }
     match p.hide_at {
-        Some(at) if p.quality_menu => p.hide_at = Some(at.max(Instant::now() + CONTROLS_IDLE)),
+        Some(at) if p.quality_menu || menu => p.hide_at = Some(at.max(Instant::now() + CONTROLS_IDLE)),
         Some(at) if Instant::now() >= at => {
             p.hide_at = None;
             if p.controls {
@@ -245,7 +247,7 @@ pub fn overlay(s: &App, v: &View) -> Option<El> {
         return None;
     }
     let state = video::state();
-    let shown = p.controls || p.quality_menu || !matches!(state, Some(video::State::Playing));
+    let shown = p.controls || p.quality_menu || s.nav.ctx.is_some() || !matches!(state, Some(video::State::Playing));
     let faded = |e: El| e.opacity(if shown { 1.0 } else { 0.0 }).opacity_motion(rune::Spring::new(0.3, 0.0));
 
     let mut layer = el().key("video-layer").role("dialog").label(info.title.clone()).pin(Some(0.0), Some(0.0), Some(0.0), Some(0.0))
@@ -313,7 +315,14 @@ pub fn overlay(s: &App, v: &View) -> Option<El> {
     let controls = row().w_full().mt(14.0).items_center()
         .child(row().w(260.0).gap(4.0).items_center()
             .child(btn("video-fav", if fav { "Remove from favorites" } else { "Add to favorites" }, if fav { G::HeartFilled } else { G::Heart }, 16.0, if fav { theme::accent() } else { white(0.6) })
-                .on_press(move |_: &mut App| interact::toggle_fav(Fav::Video, fid.clone(), fl.clone(), Say::Nothing))))
+                .on_press(move |_: &mut App| interact::toggle_fav(Fav::Video, fid.clone(), fl.clone(), Say::Nothing)))
+            // VideoPlayer's More options: the track menu for the video (Play next, playlists,
+            // Loved videos, Share)
+            .children(v.current.as_ref().map(|c| {
+                let item = (*c.track).clone();
+                btn("video-more", "More options", G::More, 16.0, white(0.6))
+                    .on_press(move |s: &mut App| interact::open_track(s, item.clone(), None, interact::Anchor::Below("video-more".into())))
+            })))
         .child(spacer())
         .child(ui::transport::<App>(v, "video", 36.0))
         .child(spacer())

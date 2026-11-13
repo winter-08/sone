@@ -1202,17 +1202,16 @@ pub fn bar_track_actions(v: &View) -> El {
         .size(28.0, 28.0).radius(14.0).items_center().justify_center()
         .hover(white(0.06)).press_scale(0.9).cursor(rune::Cursor::Pointer)
         .child(glyph(if loved { G::HeartFilled } else { G::Heart }, 16.0, if loved { accent() } else { white(0.45) }));
-    // A video's heart is a video favourite (PlayerBar FavoriteButton); it has no track menu.
-    if let Some(vi) = &v.video {
-        let loved = interact::is_fav(Fav::Video, &vi.id.to_string());
-        let (id, title) = (vi.id.to_string(), vi.title.clone());
-        return heart(loved).on_press(move |_: &mut App| interact::toggle_fav(Fav::Video, id.clone(), title.clone(), Say::Nothing));
-    }
-    let loved = interact::is_fav(Fav::Track, &c.id.to_string());
-    let (id, title) = (c.id.to_string(), c.title.clone());
-    let cur = interact::json_of_track(c.id, &c.title, &c.artist);
+    // A video's heart is a video favourite (PlayerBar FavoriteButton); More options opens the
+    // track menu for whatever is current, a video included (its items know it's a video).
+    let (fav, id, title) = match &v.video {
+        Some(vi) => (Fav::Video, vi.id.to_string(), vi.title.clone()),
+        None => (Fav::Track, c.id.to_string(), c.title.clone()),
+    };
+    let loved = interact::is_fav(fav, &id);
+    let cur = (*c.track).clone();
     row().gap(2.0).items_center()
-        .child(heart(loved).on_press(move |_: &mut App| interact::toggle_fav(Fav::Track, id.clone(), title.clone(), Say::Nothing)))
+        .child(heart(loved).on_press(move |_: &mut App| interact::toggle_fav(fav, id.clone(), title.clone(), Say::Nothing)))
         .child(ui::icon_button::<App>("more", "More options", G::More, 16.0, white(0.45))
             .on_press(move |s: &mut App| interact::open_track(s, cur.clone(), None, Anchor::Below("more".into()))))
 }

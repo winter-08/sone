@@ -402,11 +402,20 @@ fn view(s: &App, cx: &mut Cx<App>) -> El {
     for o in coll::overlay(s) {
         root = root.child(o);
     }
-    for o in interact::overlay(s) {
-        root = root.child(o);
+    // (over the video player while it's open: its More button opens the track menu there)
+    let video_up = s.nav.video.expanded;
+    if !video_up {
+        for o in interact::overlay(s) {
+            root = root.child(o);
+        }
     }
     if let Some(p) = theme::dark(|| video_ui::overlay(s, &v)) {
         root = root.child(p);
+    }
+    if video_up {
+        for o in interact::overlay(s) {
+            root = root.child(o);
+        }
     }
     if let Some(t) = interact::toast_layer() {
         root = root.child(t);
