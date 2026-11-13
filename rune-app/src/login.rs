@@ -411,7 +411,7 @@ pub fn simple(s: &App, state: &controller::Login) -> El {
             // React's buttons stay (the sign-in golden pins them) and say what they do.
             LoginMode::Pkce => {
                 let st2 = st.clone();
-                c.child(small("Recommended. Unlocks Hi-Res / MAX quality up to 24-bit/192 kHz. Opens TIDAL's sign-in page in your browser.", 0.45))
+                c.child(small("Recommended. Unlocks Hi-Res / MAX quality up to 24-bit/192 kHz. Opens TIDAL's sign-in page in your browser.", 0.45).align(rune::Align::Center))
                     .child(primary("login-pkce", "Sign in with TIDAL", true).on_press(move |s: &mut App| {
                         s.nav.pkce_paste = TextEdit::new("");
                         start(&st, "Waiting for browser...", Cmd::StartPkceLogin)
@@ -426,7 +426,7 @@ pub fn simple(s: &App, state: &controller::Login) -> El {
                         .child(text("Open in browser instead").font(t(12.0, 400.0)).color(white(0.45)).a11y_hidden()))
             }
             LoginMode::Code => c
-                .child(small("Get a 6-character code and enter it on link.tidal.com.", 0.45))
+                .child(small("Get a 6-character code and enter it on link.tidal.com.", 0.45).align(rune::Align::Center))
                 .child(primary("login-code", "Get Login Code", true).on_press(move |_: &mut App| start(&st, "Starting device authorization...", Cmd::StartDeviceLogin)))
                 .child(el().h(22.0)),
         };
