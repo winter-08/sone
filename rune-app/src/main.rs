@@ -35,6 +35,7 @@ mod perf;
 mod profile;
 mod proxy_banner;
 mod queue_ui;
+mod scheme;
 mod settings;
 mod shell;
 mod signal_path;
@@ -492,6 +493,8 @@ fn main() {
     proxy_banner::start();
     // A newer release (notices.rs).
     notices::check_for_update();
+    // The tidal:// handler entry Tauri's deep-link plugin wrote at launch (scheme.rs).
+    scheme::register_at_start();
 
     let spec = AppSpec::<App> {
         min_size: Some((900.0, 600.0)),
