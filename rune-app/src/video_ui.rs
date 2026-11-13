@@ -64,9 +64,10 @@ pub fn video_card_with(key: String, d: &Value, play: impl Fn(&mut App) + Clone +
     let title = d["title"].as_str().unwrap_or("").to_string();
     let artist = d["artist"]["name"].as_str().or(d["artists"][0]["name"].as_str()).unwrap_or("").to_string();
     let h = ui::hue(Some(id));
-    let mut art = el().size(W, H).radius(10.0).clip_rounded(10.0).fill(rune::oklch(0.22, 0.07, h)).a11y_hidden();
+    // (not hidden from assistive technology as a whole: its play button and heart are in it)
+    let mut art = el().size(W, H).radius(10.0).clip_rounded(10.0).fill(rune::oklch(0.22, 0.07, h));
     if let Some(px) = image_id(d).and_then(|i| image_url(i, W)).and_then(|u| crate::art::pixels(&u, W)) {
-        art = art.child(el().absolute(0.0, 0.0).size(W, H).pixels_fit(&px, rune::SurfaceFit::Fill));
+        art = art.child(el().absolute(0.0, 0.0).size(W, H).pixels_fit(&px, rune::SurfaceFit::Fill).a11y_hidden());
     }
     let menu_item = video_track(d);
     let on = interact::is_fav(Fav::Video, &id.to_string());
