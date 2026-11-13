@@ -1932,7 +1932,15 @@ pub fn account_menu(s: &App, v: &View) -> Option<El> {
         }))
         .child(menu_item("am-shortcuts", "Shortcuts", None, |s: &mut App| s.nav.dialog = Some(Dialog::Shortcuts)))
         .child(menu_item("am-about", "About", None, |s: &mut App| s.nav.dialog = Some(Dialog::About)))
-        .child(menu_item("am-logout", "Log out", None, |_: &mut App| controller::send(Cmd::Logout)));
+        // (UserMenu draws Log out in red, with its icon)
+        .child(theme::focusable_row(row().key("am-logout").role("button").label("Log out")).w_full().h(36.0).px(12.0).gap(10.0).radius(theme::inset_radius(8.0)).items_center()
+            .hover(white(0.08)).cursor(rune::Cursor::Pointer)
+            .on_press(|s: &mut App| {
+                s.nav.menu_open = false;
+                controller::send(Cmd::Logout)
+            })
+            .child(glyph(G::LogOut, 16.0, theme::danger()))
+            .child(text("Log out").font(t(13.0, 500.0)).color(theme::danger()).grow(1.0).a11y_hidden()));
     // A modal layer over the window: the page is inert while the menu is open, and a press
     // anywhere outside the menu closes it.
     Some(el().key("am-layer").pin(Some(0.0), Some(0.0), Some(0.0), Some(0.0))

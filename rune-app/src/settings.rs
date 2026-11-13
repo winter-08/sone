@@ -905,9 +905,11 @@ fn disconnect(name: &'static str) -> impl Fn(&mut App) {
 }
 
 /// A provider row's left side: its name, and who it scrobbles as (or why not).
-fn provider_head(display: &str, status: El, connected: bool) -> El {
+fn provider_head(display: &str, mark: El, status: El, connected: bool) -> El {
     row().w_full().gap(12.0).items_center()
         .child(el().size(4.0, 30.0).radius(2.0).fill(if connected { theme::accent() } else { white(0.0) }))
+        // ScrobbleTab's glyph tile: the provider's mark on a 38 pt rounded square
+        .child(el().size(38.0, 38.0).radius(12.0).fill(white(0.05)).border(1.0, white(0.08)).items_center().justify_center().child(mark))
         .child(col().grow(1.0).min_w(0.0).gap(2.0).child(text(display.to_string()).font(t(13.5, 700.0)).color(white(0.92))).child(status))
 }
 
@@ -929,7 +931,8 @@ fn audioscrobbler_row(f: &Form, name: &'static str, display: &str) -> El {
     } else {
         text("Not connected").font(t(11.5, 400.0)).color(white(0.5))
     };
-    let mut head = provider_head(display, status, connected);
+    let mark = crate::brand::mark(if name == "lastfm" { &crate::brand::LASTFM } else { &crate::brand::LIBREFM }, if name == "lastfm" { 20.0 } else { 22.0 }, theme::accent());
+    let mut head = provider_head(display, mark, status, connected);
     if connected {
         head = head.child(small_button(&key("disconnect"), "Disconnect", true).on_press(disconnect(name)));
     } else if auth.step == AuthStep::Idle {
@@ -957,7 +960,7 @@ fn listenbrainz_row(f: &Form) -> El {
     let p = provider(f, "listenbrainz");
     let connected = p.is_some_and(|p| p.connected);
     let status = if connected { scrobbling_as(p.and_then(|p| p.username.as_deref()).unwrap_or("")) } else { text("Paste token to connect").font(t(11.5, 400.0)).color(white(0.5)) };
-    let mut head = provider_head("ListenBrainz", status, connected);
+    let mut head = provider_head("ListenBrainz", crate::brand::listenbrainz(23.0, theme::accent(), white(0.95)), status, connected);
     if connected {
         head = head.child(small_button("lb-disconnect", "Disconnect", true).on_press(disconnect("listenbrainz")));
     }
@@ -1053,13 +1056,14 @@ fn discord_tab(s: &App) -> El {
             .child(row().w_full().gap(8.0).items_center().child(note("Or install the Flatpak or a native package.")).child(spacer()).child(copy_button(f, "dc-relay-copy", "Copy", SNAP_RELAY.to_string()))));
     }
     if on {
-        // React fills the status text through the caret; tags here go at the end of the text.
+        // DiscordTab insertTag: the tag goes in at the field's caret (where it was when the
+        // field lost focus to the chip), and the field takes focus again with the caret after it.
         let chip = |key: &'static str, tag: &'static str| theme::focusable(row().key(key).role("button").label(tag)).h(26.0).px(10.0).radius(7.0).items_center()
             .fill(theme::accent().alpha(0.1)).border(1.0, theme::accent().alpha(0.3)).hover(theme::accent().alpha(0.2)).cursor(rune::Cursor::Pointer)
-            .on_press(move |s: &mut App| {
-                let next = format!("{}{tag}", s.nav.set.discord_status.text);
-                s.nav.set.discord_status = TextEdit::new(&next);
+            .on_press_tx(move |s: &mut App, tx: &mut Tx| {
+                insert_at_caret(&mut s.nav.set.discord_status, tag);
                 discord_changed(s);
+                tx.focus("dc-status", false);
             })
             .child(text(tag).font(ui::tnum(t(11.0, 600.0))).color(theme::accent()).a11y_hidden());
         let v = &*s.ctl;
@@ -1088,6 +1092,18 @@ fn discord_tab(s: &App) -> El {
                         .child(text(quality).font(t(11.0, 400.0)).color(white(0.5)).truncate()))));
     }
     c
+}
+
+/// insertTag: `tag` into `e` at the start of its selection (React's selectionStart), the caret
+/// after it.
+fn insert_at_caret(e: &mut TextEdit, tag: &str) {
+    let mut at = e.anchor.min(e.focus).min(e.text.len());
+    while !e.text.is_char_boundary(at) {
+        at -= 1;
+    }
+    e.anchor = at;
+    e.focus = at;
+    e.insert(tag);
 }
 
 /// DiscordTab's rendered status: the tags filled in, or "TIDAL via SONE" when that's empty.
@@ -1584,5 +1600,14 @@ mod tests {
         assert_eq!(render_status("{track} by {artist} on {album}", "T", "A", "B"), "T by A on B");
         assert_eq!(render_status("  ", "T", "A", "B"), "TIDAL via SONE");
         assert_eq!(render_status("{artist} - {track}", "T", "A", ""), "A - T");
+    }
+
+    #[test]
+    fn a_tag_goes_in_at_the_caret() {
+        let mut e = TextEdit::new("by on");
+        (e.anchor, e.focus) = (2, 2);
+        insert_at_caret(&mut e, " {artist}");
+        assert_eq!(e.text, "by {artist} on");
+        assert_eq!((e.anchor, e.focus), (11, 11));
     }
 }

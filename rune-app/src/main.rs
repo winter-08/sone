@@ -8,6 +8,7 @@
 
 mod art;
 mod bio;
+mod brand;
 mod content;
 mod coll;
 mod controller;
