@@ -128,6 +128,62 @@ def track_json(tid: int) -> dict:
     }
 
 
+# Playlist folders with state (SPIKE_FOLDERS=1, for exercising folder management by hand): the
+# catalog's playlists start at the top level; create-folder, rename, remove and move change what
+# GET /v2/my-collection/playlists/folders lists. Unset (the default), the catalog answers.
+FOLDERS_ON = bool(os.environ.get("SPIKE_FOLDERS"))
+FOLDERS: dict = {}  # folder id -> name
+PLACE: dict = {}  # playlist uuid -> folder id ("root" when absent)
+
+
+def folders_route(flow: http.HTTPFlow, path: str) -> bool:
+    q = flow.request.query
+    base = os.path.join(ctx.options.fixtures, "catalog", "playlist_folders.json")
+    playlists = [i for i in json.load(open(base))["items"] if i["itemType"] == "PLAYLIST"]
+    stamp = "2024-05-01T12:00:00.000+0000"
+
+    def folder_item(fid):
+        n = sum(1 for p in playlists if PLACE.get(p["data"]["uuid"], "root") == fid)
+        return {"trn": f"trn:folder:{fid}", "itemType": "FOLDER", "addedAt": stamp, "lastModifiedAt": stamp,
+                "name": FOLDERS[fid], "parent": None, "data": {"trn": f"trn:folder:{fid}", "name": FOLDERS[fid],
+                                                              "totalNumberOfItems": n, "itemType": "FOLDER"}}
+    if path == "/v2/my-collection/playlists/folders":
+        fid = q.get("folderId", "root")
+        items = [folder_item(f) for f in FOLDERS] if fid == "root" else []
+        items += [p for p in playlists if PLACE.get(p["data"]["uuid"], "root") == fid]
+        respond(flow, 200, {"lastModifiedAt": stamp, "items": items, "totalNumberOfItems": len(items), "cursor": None})
+        return True
+    if path == "/v2/my-collection/playlists/folders/flattened":
+        respond(flow, 200, {"lastModifiedAt": stamp, "items": playlists, "totalNumberOfItems": len(playlists), "cursor": None})
+        return True
+    trns = [t for t in q.get("trns", "").split(",") if t]
+    if path.endswith("/create-folder"):
+        fid = f"f{len(FOLDERS) + 1:04d}-0000-0000-0000-000000000000"
+        FOLDERS[fid] = q.get("name", "Folder")
+        for t in trns:
+            PLACE[t.replace("trn:playlist:", "")] = fid
+        respond(flow, 200, {"items": [folder_item(fid)]})
+        return True
+    if path.endswith("/rename"):
+        FOLDERS[q.get("trn", "").replace("trn:folder:", "")] = q.get("name", "")
+        respond(flow, 200, {})
+        return True
+    if path.endswith("/remove"):
+        for t in trns:
+            fid = t.replace("trn:folder:", "")
+            FOLDERS.pop(fid, None)
+            for u in [u for u, f in PLACE.items() if f == fid]:
+                PLACE.pop(u)
+        respond(flow, 200, {})
+        return True
+    if path.endswith("/move"):
+        for t in trns:
+            PLACE[t.replace("trn:playlist:", "")] = q.get("folderId", "root")
+        respond(flow, 200, {})
+        return True
+    return False
+
+
 def is_big(tid: int) -> bool:
     return BIG > 0 and BIG_BASE < tid <= BIG_BASE + BIG
 
@@ -294,6 +350,8 @@ def route(flow: http.HTTPFlow) -> bool:
         if os.environ.get("SPIKE_PLAYLIST_VIDEO") and method == "GET" and re.fullmatch(
                 rf"/v1/playlists/{P1}/(items|tracks)", path):
             respond(flow, 200, mixtape_with_video())
+            return True
+        if FOLDERS_ON and path.startswith("/v2/my-collection/playlists/folders") and folders_route(flow, path):
             return True
         # Catalog before the catch-all empty-page stub, so e.g. /users/{id}/playlists can be served.
         if serve_catalog(flow, host, path, method):
