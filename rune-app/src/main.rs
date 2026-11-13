@@ -181,6 +181,10 @@ fn lyric_tick(s: &mut App, tx: &mut Tx) -> bool {
     if LYRICS_TAB.with(|l| l.shown(drawer.then(|| controller::now_playing().0).flatten())) && *Tracked::untracked(&s.nav.lyrics_scrolled) {
         *s.nav.lyrics_scrolled = false;
     }
+    // A scroll the app didn't make (the scrollbar, the keyboard) stops the follow as a wheel does.
+    if views::take_lyrics_user_scroll() && drawer && !*Tracked::untracked(&s.nav.lyrics_scrolled) {
+        *s.nav.lyrics_scrolled = true;
+    }
     let lines = (drawer || full)
         .then(|| controller::now_playing().0).flatten()
         .and_then(views::synced_lyrics);
@@ -201,6 +205,7 @@ fn lyric_tick(s: &mut App, tx: &mut Tx) -> bool {
         if let Some(i) = line
             && !*s.nav.lyrics_scrolled
         {
+            views::lyrics_auto_scroll();
             tx.scroll_center(format!("ly-{i}"));
         }
         moved = true;

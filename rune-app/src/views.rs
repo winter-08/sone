@@ -2010,9 +2010,15 @@ pub fn drawer(s: &App, v: &View, shell: Shell) -> Option<El> {
     // right edge. Either way it starts under the header, which keeps the window controls.
     let d = col().key("drawer").role("complementary").label("Now playing panel").w(shell.drawer_w);
     let d = if shell.drawer_docked { d.h_full() } else { d.pin(None, Some(0.0), Some(0.0), Some(0.0)).border(1.0, white(0.06)).shadow(0.0, 32.0, theme::black(0.45)) };
+    let mut scroller = col().grow(1.0).min_h(0.0).w_full().scroll(ScrollSpec { stick_bottom: false }).child(body);
+    if tab == Drawer::Lyrics {
+        scroller = scroller.on_scroll_offset(watch_lyrics_scroll);
+    } else {
+        LY_SCROLL.with(|c| c.set(None));
+    }
     let mut d = d.padding(16.0).gap(12.0).fill(theme::drawer_bg())
         .child(head)
-        .child(ui::smooth_wheel::<App>(col().grow(1.0).min_h(0.0).w_full().scroll(ScrollSpec { stick_bottom: false }).child(body), "drawer-scroll".into())
+        .child(ui::smooth_wheel::<App>(scroller, "drawer-scroll".into())
             .labelled_by(match tab { Drawer::Queue => "dr-queue", Drawer::Suggested => "dr-suggested", Drawer::Lyrics => "dr-lyrics", Drawer::Credits => "dr-credits" })
             .busy(took_loading()));
     if tab == Drawer::Lyrics && *s.nav.lyrics_scrolled && v.current.as_ref().and_then(|c| synced_lyrics(c.id)).is_some() {
@@ -2022,6 +2028,7 @@ pub fn drawer(s: &App, v: &View, shell: Shell) -> Option<El> {
             .on_press_tx(|s: &mut App, tx: &mut Tx| {
                 *s.nav.lyrics_scrolled = false;
                 if let Some(i) = *s.nav.lyric_line {
+                    lyrics_auto_scroll();
                     tx.scroll_center(format!("ly-{i}"));
                 }
             })
@@ -2108,6 +2115,37 @@ pub fn synced_lyrics(track: u64) -> Option<std::rc::Rc<Vec<(f64, String)>>> {
     let lines = std::rc::Rc::new(v["subtitles"].as_str().map(parse_lrc).unwrap_or_default());
     LRC.with(|c| *c.borrow_mut() = Some((track, lines.clone())));
     (!lines.is_empty()).then_some(lines)
+}
+
+thread_local! {
+    /// The Lyrics tab's scroll offset and range as last reported (None: not shown since).
+    static LY_SCROLL: std::cell::Cell<Option<(f32, f32)>> = const { std::cell::Cell::new(None) };
+    /// Until when a scroll is the app's own glide to the active line (LyricsTab isAutoScrolling).
+    static LY_AUTO_UNTIL: std::cell::Cell<Option<std::time::Instant>> = const { std::cell::Cell::new(None) };
+}
+static LY_USER_SCROLLED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// The app is about to glide the Lyrics tab to a line: the scrolling that follows is its own.
+pub fn lyrics_auto_scroll() {
+    LY_AUTO_UNTIL.with(|c| c.set(Some(std::time::Instant::now() + std::time::Duration::from_millis(1000))));
+}
+
+/// The Lyrics tab's scroll offset, every frame it moves: a move the app didn't make (the
+/// scrollbar, the keyboard; the wheel says so itself) is the user scrolling away (LyricsTab's
+/// scroll listener). A changed range is the content resizing, not a scroll.
+fn watch_lyrics_scroll(at: rune::ScrollPos) {
+    let now = (at.offset[1], at.max[1]);
+    let before = LY_SCROLL.with(|c| c.replace(Some(now)));
+    let Some((off, max)) = before else { return };
+    let auto = LY_AUTO_UNTIL.with(|c| c.get()).is_some_and(|t| std::time::Instant::now() < t);
+    if !auto && (max - now.1).abs() < 0.5 && (off - now.0).abs() > 2.0 {
+        LY_USER_SCROLLED.store(true, std::sync::atomic::Ordering::Relaxed);
+    }
+}
+
+/// Whether the user scrolled the Lyrics tab since this was last asked.
+pub fn take_lyrics_user_scroll() -> bool {
+    LY_USER_SCROLLED.swap(false, std::sync::atomic::Ordering::Relaxed)
 }
 
 /// The line at `pos` (React findActiveLine) and when the next one starts.
