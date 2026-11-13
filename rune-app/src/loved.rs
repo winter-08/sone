@@ -121,10 +121,10 @@ fn loved_video(t: &Value) -> bool {
 
 /// The Videos tab: loved videos as cards, paged in at the end; unhearted ones drop out.
 fn videos_tab(snap: &paged::Snap, needle: &str, source: Value) -> El {
-    let vids: Vec<Value> = snap.shown().iter().map(|v| crate::data::data(v).clone())
-        .filter(|v| loved_video(v) && crate::data::matches(&format!("{} {}", crate::data::name(v), crate::data::artist_of(v)), needle))
-        .collect();
-    if snap.len == 0 {
+    let loved: Vec<Value> = snap.shown().iter().map(|v| crate::data::data(v).clone()).filter(loved_video).collect();
+    // None at all, or every one un-hearted this visit: the empty state (FavoritesView's
+    // displayedVideos), not a filter miss.
+    if loved.is_empty() && !snap.more {
         // "Go to videos": Explore's Videos page, when Explore has one.
         let target = crate::data::peek(&crate::data::Key::Page("pages/explore".into())).and_then(|e| {
             e["sections"].as_array()?.iter().flat_map(|s| s["items"].as_array().cloned().unwrap_or_default())
@@ -140,8 +140,13 @@ fn videos_tab(snap: &paged::Snap, needle: &str, source: Value) -> El {
                 None => views::go(s, views::Page::Explore),
             }));
     }
-    if vids.is_empty() {
-        return ui::empty(&format!("No videos match \u{201c}{}\u{201d}.", needle.trim()));
+    let vids: Vec<Value> = loved.into_iter()
+        .filter(|v| crate::data::matches(&format!("{} {}", crate::data::name(v), crate::data::artist_of(v)), needle))
+        .collect();
+    if vids.is_empty() && !needle.trim().is_empty() {
+        return col().gap(6.0).items_start()
+            .child(text("No results").font(t(15.0, 650.0)).color(white(0.9)))
+            .child(ui::empty(&format!("No videos match \u{201c}{}\u{201d}.", needle.trim())));
     }
     let mut c = col().w_full().gap(10.0).child(views::grid(crate::video_ui::video_cards("lvv", &vids, source)));
     if snap.more && needle.trim().is_empty() {
