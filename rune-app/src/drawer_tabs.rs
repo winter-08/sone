@@ -76,13 +76,7 @@ fn suggested_row(v: &View, tr: &Value, i: usize) -> El {
     if let Some(b) = crate::content::badges_for(tr) {
         head = head.child(b);
     }
-    let mut sub = row().min_w(0.0).items_center();
-    let artist = text(data::artist_of(tr)).font(t(11.0, 400.0)).color(white(0.5)).truncate().shrink();
-    let aid = tr["artist"]["id"].as_u64().or_else(|| tr["artists"][0]["id"].as_u64());
-    sub = match aid {
-        Some(aid) => sub.child(hover_text(artist).cursor(rune::Cursor::Pointer).on_press(move |s: &mut App| views::go(s, Page::Artist(aid)))),
-        None => sub.child(artist),
-    };
+    let mut sub = row().min_w(0.0).items_center().child(crate::queue_ui::row_artists(&key, tr));
     if let Some(album) = tr["album"]["title"].as_str().filter(|a| !a.is_empty()) {
         sub = sub.child(text(" · ").font(t(11.0, 400.0)).color(white(0.5)).a11y_hidden());
         let a = text(album.to_string()).font(t(11.0, 400.0)).color(white(0.5)).truncate().shrink();

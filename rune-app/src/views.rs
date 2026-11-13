@@ -337,11 +337,15 @@ impl Default for Look {
 /// A row's artists (TrackList's TrackArtists): each a link to the artist's page, comma
 /// separated; "Unknown Artist" with none.
 pub(crate) fn artist_links(key: &str, d: &Value, color: rune::Color) -> El {
+    artist_links_in(key, d, t(12.0, 400.0), color)
+}
+
+/// [`artist_links`] in `font`: the player bar, the queue and Suggested rows use it too.
+pub(crate) fn artist_links_in(key: &str, d: &Value, font: rune::TextStyle, color: rune::Color) -> El {
     let list: Vec<(u64, String)> = match d["artists"].as_array().filter(|a| !a.is_empty()) {
         Some(a) => a.iter().filter_map(|x| Some((x["id"].as_u64().unwrap_or(0), x["name"].as_str()?.to_string()))).collect(),
         None => d["artist"]["name"].as_str().map(|n| vec![(d["artist"]["id"].as_u64().unwrap_or(0), n.to_string())]).unwrap_or_default(),
     };
-    let font = t(12.0, 400.0);
     if list.is_empty() {
         return text("Unknown Artist").font(font).color(color).truncate();
     }
@@ -1237,9 +1241,11 @@ pub fn bar_info(v: &View) -> El {
     if let Some(b) = crate::content::badges(cur.explicit, cur.ai && !is_video) {
         head = head.child(b);
     }
-    let foot = match cur.artist_id.filter(|_| !is_video) {
-        Some(id) => link(artist, "bar-artist", v.artist.clone(), Page::Artist(id)),
-        None => artist,
+    // TrackArtists: every artist is its own link
+    let foot = if is_video {
+        artist
+    } else {
+        artist_links_in("bar-artist", &cur.track, t(12.0, 400.0), white(0.6))
     };
     base.child(head).child(foot)
 }

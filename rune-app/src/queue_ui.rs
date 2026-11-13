@@ -15,6 +15,7 @@ use crate::theme::{self, accent};
 use crate::ui::{self, t, white};
 use crate::views::{self, Page};
 use rune::{Drag, El, Phase, Tracked, Tx, col, el, row, spacer, text};
+use serde_json::Value;
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -99,6 +100,12 @@ pub fn source_page(src: &Source) -> Option<Page> {
 /// Text that brightens under the pointer, as the React links do (`hover:text-th-text-primary`).
 fn hover_text(t: El) -> El {
     el().shrink().min_w(0.0).hover_group().child(t.group_color(white(0.92)))
+}
+
+/// A queue or Suggested row's artists: each a link to its page (the track rows' shared
+/// views::artist_links_in, at the rows' 11 pt).
+pub fn row_artists(key: &str, track: &Value) -> El {
+    views::artist_links_in(key, track, t(11.0, 400.0), white(0.5)).shrink()
 }
 
 fn heading(label: &str) -> El {
@@ -263,12 +270,7 @@ fn track_row(v: &View, item: &QItem, kind: Kind, key: String) -> El {
     if let Some(b) = crate::content::badges(item.explicit, item.ai) {
         title = title.child(b);
     }
-    let mut sub = row().gap(0.0).min_w(0.0).items_center();
-    let artist = text(item.artist.clone()).font(t(11.0, 400.0)).color(white(0.5)).truncate().shrink();
-    sub = match item.artist_id {
-        Some(aid) => sub.child(hover_text(artist).cursor(rune::Cursor::Pointer).on_press(move |s: &mut App| views::go(s, Page::Artist(aid)))),
-        None => sub.child(artist),
-    };
+    let mut sub = row().gap(0.0).min_w(0.0).items_center().child(row_artists(&key, &item.track));
     if !item.album.is_empty() {
         sub = sub.child(text(" · ").font(t(11.0, 400.0)).color(white(0.5)).a11y_hidden());
         let album = text(item.album.clone()).font(t(11.0, 400.0)).color(white(0.5)).truncate().shrink();
