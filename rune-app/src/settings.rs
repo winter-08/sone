@@ -376,7 +376,7 @@ pub fn flush_settings(s: &mut App) {
         // closed, so `port: 0` would leave the app with no HTTP client until it's finished).
         if should_submit_proxy(&p) {
             // submitProxy: a refusal says why in the banner (the settings still reached disk).
-            run(async move { utility::set_proxy_settings(st(), p).await.map_err(|e| e.to_string()) }, |f, r| {
+            run(async move { let r = utility::set_proxy_settings(st(), p).await.map_err(|e| e.to_string()); crate::proxy_banner::refresh(); r }, |f, r| {
                 // Either way the backend dropped the prerolled gapless track: arm it again.
                 crate::controller::send(crate::controller::Cmd::ProxySaved);
                 if let Err(e) = r {

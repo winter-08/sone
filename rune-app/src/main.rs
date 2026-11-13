@@ -31,6 +31,7 @@ mod obs;
 mod paged;
 mod perf;
 mod profile;
+mod proxy_banner;
 mod queue_ui;
 mod settings;
 mod shell;
@@ -342,7 +343,7 @@ fn view(s: &App, cx: &mut Cx<App>) -> El {
     }
     // Shell data (Home, folders, ...) is loaded by the controller once signed in.
     if !v.signed_in {
-        return shell::frame(views::login(s, &v), win_size);
+        return shell::frame(proxy_banner::wrap(views::login(s, &v), false), win_size);
     }
     // The panes are regions: each builds again only when something it read changed (a `Tracked`
     // field of `App`), or its inputs did (the window's width bands, the stores outside `App`).
@@ -435,7 +436,8 @@ fn view(s: &App, cx: &mut Cx<App>) -> El {
     if (s.nav.full.open && v.video.is_none()) || (s.nav.video.expanded && v.video.is_some()) {
         return shell::frame_covered(root, win_size);
     }
-    shell::frame(root, win_size)
+    // (the proxy notice bar across the top, under the title bar: proxy_banner.rs)
+    shell::frame(proxy_banner::wrap(root, true), win_size)
 }
 
 /// The window's first size: SONE_WINDOW_SIZE (the verifier uses a tall one), else the size it
@@ -484,6 +486,8 @@ fn main() {
     obs::start();
     // SIGTERM and SIGINT quit as Quit does (shell.rs).
     shell::on_terminate_signals();
+    // The proxy notice bar's status poll (proxy_banner.rs).
+    proxy_banner::start();
 
     let spec = AppSpec::<App> {
         min_size: Some((900.0, 600.0)),

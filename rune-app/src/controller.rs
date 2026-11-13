@@ -335,6 +335,7 @@ pub fn auth_known() -> bool {
 pub fn now_playing() -> (Option<u64>, bool) {
     VIEW.get().map(|v| { let v = v.lock().unwrap(); (v.track_id, v.playing) }).unwrap_or((None, false))
 }
+
 /// What the OBS overlay shows (obs.rs): the current item (trimmed), its cover, whether it
 /// plays, the clock and the stream's quality text, without cloning the whole view.
 pub fn overlay_now() -> Option<(std::sync::Arc<Value>, Option<String>, bool, f64, String)> {
@@ -343,7 +344,6 @@ pub fn overlay_now() -> Option<(std::sync::Arc<Value>, Option<String>, bool, f64
     let pos = POSITION.get().map(|p| p.lock().unwrap().interpolated()).unwrap_or(0.0).min(v.duration.max(0.0));
     Some((cur.track.clone(), v.cover.clone(), v.playing, pos, quality_text(&v.stream_info)))
 }
-
 
 /// The streaming quality ceiling, read from the backend (it owns the setting).
 pub fn max_quality() -> String {
@@ -1731,7 +1731,7 @@ impl Player {
                 let f = classify(&e);
                 match &f {
                     Fail::Blocked(r) => self.toast_error(r.clone()),
-                    Fail::Network => self.toast_error("Network error — check your internet connection"),
+                    Fail::Network => if let Some(m) = crate::proxy_banner::network_error() { self.toast_error(m) },
                     Fail::RateLimited(after) => {
                         if retry_rl {
                             let _ = playback::stop_track(self.state()).await;
@@ -2225,7 +2225,7 @@ impl Player {
                             match classify(&e) {
                                 Fail::RateLimited(a) => self.schedule_rate_limit(a, None, false),
                                 Fail::Unplayable => self.toast("Track unavailable"),
-                                Fail::Network => self.toast_error("Network error — check your internet connection"),
+                                Fail::Network => if let Some(m) = crate::proxy_banner::network_error() { self.toast_error(m) },
                                 _ => self.playback_error(&e),
                             }
                         }
@@ -2388,7 +2388,7 @@ impl Player {
             Ok(m) => serde_json::to_value(m).unwrap_or(Value::Null),
             Err(e) => {
                 match classify(&e) {
-                    Fail::Network => self.toast_error("Network error — check your internet connection"),
+                    Fail::Network => if let Some(m) = crate::proxy_banner::network_error() { self.toast_error(m) },
                     Fail::RateLimited(after) => {
                         self.schedule_rate_limit(after, None, false);
                         return true;
@@ -2513,7 +2513,7 @@ impl Player {
                         match classify(&e) {
                             Fail::RateLimited(a) => self.toast(format!("Too many requests — try again in {}s", a.unwrap_or(5))),
                             Fail::Unplayable => self.toast("Track unavailable"),
-                            Fail::Network => self.toast_error("Network error — check your internet connection"),
+                            Fail::Network => if let Some(m) = crate::proxy_banner::network_error() { self.toast_error(m) },
                             _ => self.playback_error(&e),
                         }
                     }
@@ -2649,7 +2649,7 @@ impl Player {
                 match classify(&e) {
                     Fail::RateLimited(a) => self.toast(format!("Too many requests — try again in {}s", a.unwrap_or(5))),
                     Fail::Unplayable => self.toast("Track unavailable"),
-                    Fail::Network => self.toast_error("Network error — check your internet connection"),
+                    Fail::Network => if let Some(m) = crate::proxy_banner::network_error() { self.toast_error(m) },
                     _ => self.playback_error(&e),
                 }
             }

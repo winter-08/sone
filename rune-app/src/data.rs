@@ -239,7 +239,7 @@ async fn fetch(key: &Key) -> Result<Value, String> {
     let j = |r: Result<Value, String>| r;
     macro_rules! v {
         ($e:expr) => {
-            $e.await.map_err(|e| e.to_string()).and_then(|x| serde_json::to_value(x).map_err(|e| e.to_string()))
+            $e.await.map_err(|e| crate::proxy_banner::checked(e.to_string())).and_then(|x| serde_json::to_value(x).map_err(|e| e.to_string()))
         };
     }
     j(match key {
