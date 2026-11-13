@@ -4,11 +4,8 @@
 
 use crate::data::{self, Key};
 use crate::interact::{self, Fav};
-use crate::paged::{self, PKey};
 use serde_json::Value;
-use sone_host_shim::Manager;
 use std::time::Duration;
-use tauri_app_lib::AppState;
 
 /// What an MCP event asks the views to drop and set, apart from the fetches it starts.
 #[derive(Debug, PartialEq)]
@@ -54,51 +51,25 @@ pub fn on_event(name: &str, payload: &str) {
     let Some(change) = parse(name, payload) else { return };
     log::info!("[rune] mcp library change {change:?}");
     match change {
+        // The heart, then the lists, exactly as for a heart pressed in the app
+        // (interact::refresh_lists): an addition fetches the list of its kind again unless a
+        // loaded one holds it already; a removal is hidden by the lists' favourite filter.
         Change::Favorite { kind, id, on } => {
             interact::set_fav(kind, id.clone(), on);
-            match kind {
-                Fav::Track => paged::forget_where(|k| matches!(k, PKey::Loved { .. })),
-                Fav::Album if on => {
-                    // React fetches the album to put it at the top of the library at once.
-                    let num = id.parse().unwrap_or(0);
-                    sone_host_shim::async_runtime::spawn(async move {
-                        let st = crate::host().state::<AppState>();
-                        let _ = tauri_app_lib::commands::pages::get_album_detail(st, num).await;
-                        data::forget(&Key::FavAlbums);
-                    });
-                }
-                Fav::Album => data::forget(&Key::FavAlbums),
-                Fav::Artist if on => {
-                    let num = id.parse().unwrap_or(0);
-                    sone_host_shim::async_runtime::spawn(async move {
-                        let st = crate::host().state::<AppState>();
-                        let _ = tauri_app_lib::commands::pages::get_artist_detail(st, num).await;
-                        data::forget(&Key::FavArtists);
-                    });
-                }
-                Fav::Artist => data::forget(&Key::FavArtists),
-                _ => {}
-            }
+            interact::refresh_lists(kind, &id, on);
         }
         Change::Playlists { uuid, again_later } => {
             if let Some(u) = uuid {
                 data::forget(&Key::Playlist(u));
             }
-            forget_playlists();
+            crate::library::refresh_folders();
             if again_later {
                 sone_host_shim::async_runtime::spawn(async {
                     tokio::time::sleep(Duration::from_secs(3)).await;
-                    forget_playlists();
+                    crate::library::refresh_folders();
                 });
             }
         }
-    }
-}
-
-/// Every list of the user's playlists: the sidebar and library, the pickers.
-fn forget_playlists() {
-    for k in [Key::Folders, Key::AllPlaylists, Key::FlattenedPlaylists] {
-        data::forget(&k);
     }
 }
 

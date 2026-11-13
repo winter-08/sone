@@ -247,7 +247,7 @@ pub fn toggle_fav(k: Fav, id: String, label: String, say: Say) {
 ///   and only when a loaded list doesn't hold it yet;
 /// - the playlist lists (folders) don't filter, so a playlist added or removed fetches them again.
 /// Only that kind's lists start over: the others keep their place.
-fn refresh_lists(k: Fav, id: &str, now_on: bool) {
+pub fn refresh_lists(k: Fav, id: &str, now_on: bool) {
     use crate::paged::{self, Lib, PKey};
     fn lib(l: Lib) -> impl Fn(&PKey) -> bool {
         move |key| matches!(key, PKey::Library { kind, .. } if *kind == l)
@@ -260,7 +260,7 @@ fn refresh_lists(k: Fav, id: &str, now_on: bool) {
         Fav::Album if now_on && !paged::all_hold(lib(Lib::Albums), id) => data::forget(&Key::FavAlbums),
         Fav::Artist if now_on && !paged::all_hold(lib(Lib::Artists), id) => data::forget(&Key::FavArtists),
         Fav::Mix if now_on && !paged::all_hold(lib(Lib::Mixes), id) => data::forget(&Key::FavMixes),
-        Fav::Playlist if !(now_on && paged::all_hold(lib(Lib::Playlists), id)) => data::forget(&Key::Folders),
+        Fav::Playlist if !(now_on && paged::all_hold(lib(Lib::Playlists), id)) => crate::library::refresh_folders(),
         _ => {}
     }
 }
