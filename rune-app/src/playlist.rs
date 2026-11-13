@@ -166,7 +166,7 @@ pub fn page(s: &App, uuid: &str, v: &View) -> El {
         c = c.child(views::loading());
     }
     if !snap.more && !snap.loading {
-        c = c.child(recommended(s, uuid, &title, own));
+        c = c.child(recommended(s, uuid, &title));
     }
     c
 }
@@ -199,7 +199,7 @@ fn set_access(uuid: String, title: String, desc: String, public: bool) {
 /// Recommended Tracks: ten at a time from a batch of 50; Refresh shows the next ten, then the
 /// next batch, wrapping to the first when the server has no more. Each has "Add to this
 /// playlist"; a click plays the ten shown.
-fn recommended(s: &App, uuid: &str, title: &str, own: bool) -> El {
+fn recommended(s: &App, uuid: &str, title: &str) -> El {
     let (page, offset) = match &s.nav.coll.ui.recs {
         Some((u, p, o)) if u == uuid => (*p, *o),
         _ => (0, 0),
@@ -216,7 +216,9 @@ fn recommended(s: &App, uuid: &str, title: &str, own: bool) -> El {
     let pool: Vec<Value> = batch.into_iter().map(|t| paged::track_of(&t)).filter(|t| !added.contains(&(uuid.to_string(), t["id"].as_u64().unwrap_or(0)))).collect();
     drop(added);
     let visible: Vec<Value> = pool.iter().skip(page * RECS_PAGE).take(RECS_PAGE).cloned().collect();
-    if visible.is_empty() || !own {
+    // PlaylistView shows them under any playlist once all its tracks are in; adding goes to
+    // this playlist, which the server refuses on someone else's (a failure toast, as React).
+    if visible.is_empty() {
         return el();
     }
     let n_pool = pool.len();
@@ -226,12 +228,12 @@ fn recommended(s: &App, uuid: &str, title: &str, own: bool) -> El {
     for (i, tr) in list.iter().enumerate() {
         let (all, src) = (list.clone(), source.clone());
         let (u, tr2) = (uuid.to_string(), tr.clone());
-        rows = rows.child(row().w_full().items_center()
-            .child(col().grow(1.0).min_w(0.0).child(views::track_row_with(format!("pl-rec{i}"), i + 1, tr, false, None, move |_: &mut App| {
-                controller::send(controller::Cmd::PlayFrom { tracks: all.to_vec(), index: i, source: src.clone(), album_mode: false });
-            })))
-            .child(ui::icon_button::<App>(&format!("pl-rec{i}-add"), "Add to this playlist", G::ListPlus, 18.0, white(0.75))
-                .on_press(move |_: &mut App| add_rec(u.clone(), tr2.clone()))));
+        // TrackList keeps the heart and More on these rows and swaps only + for "Add to this
+        // playlist".
+        let look = views::Look { add_here: Some(std::rc::Rc::new(move |_: &mut App| add_rec(u.clone(), tr2.clone()))), ..Default::default() };
+        rows = rows.child(views::track_row_look(format!("pl-rec{i}"), i + 1, tr, look, None, move |_: &mut App| {
+            controller::send(controller::Cmd::PlayFrom { tracks: all.to_vec(), index: i, source: src.clone(), album_mode: false });
+        }));
     }
     let u = uuid.to_string();
     col().w_full().gap(12.0).pt(24.0)
