@@ -480,6 +480,12 @@ pub(crate) fn grid(cards: Vec<El>) -> El {
 /// `row(tracks, i)` builds it. Its rows land at once, as rows of a plain column did: a growth
 /// stack's rows would grow in and fold out on a spring.
 pub(crate) fn track_list<P: std::ops::Deref<Target = Vec<Value>> + 'static>(prefix: &'static str, tracks: P, shown: Vec<usize>, row: impl Fn(&P, usize) -> El + 'static) -> El {
+    track_list_keyed(format!("{prefix}rows"), prefix, tracks, shown, row)
+}
+
+/// [`track_list`] keyed `list_key`: several lists over one set of tracks (an album's volumes)
+/// keep their rows' keys, `{prefix}{i}`, unique.
+pub(crate) fn track_list_keyed<P: std::ops::Deref<Target = Vec<Value>> + 'static>(list_key: String, prefix: &'static str, tracks: P, shown: Vec<usize>, row: impl Fn(&P, usize) -> El + 'static) -> El {
     let shown = Rc::new(shown);
     // The keys change only with the rows shown, so layout needn't ask for every key each commit.
     let keys_version = {
@@ -487,7 +493,7 @@ pub(crate) fn track_list<P: std::ops::Deref<Target = Vec<Value>> + 'static>(pref
         BuildHasherDefault::<std::collections::hash_map::DefaultHasher>::default().hash_one(&*shown)
     };
     let keys = shown.clone();
-    col().key(format!("{prefix}rows")).w_full().gap(2.0).growth(rune::GrowthSpec::default()).instant_changes()
+    col().key(list_key).w_full().gap(2.0).growth(rune::GrowthSpec::default()).instant_changes()
         .virtual_rows(shown.len(), 48.0, move |_: &App, k| format!("{prefix}{}", keys[k]).into(), move |_: &App, k| row(&tracks, shown[k]))
         .virtual_rows_version(keys_version)
 }
@@ -1185,10 +1191,6 @@ pub(crate) fn album_byline(a: &Value) -> El {
                 .on_press(move |s: &mut App| go(s, Page::Artist(aid))),
         );
     }
-    let year = d["releaseDate"].as_str().unwrap_or("").get(..4).unwrap_or("").to_string();
-    if !year.is_empty() {
-        r = r.child(dim(&format!(" · {year}")));
-    }
     r
 }
 
@@ -1222,21 +1224,92 @@ fn album(id: u64, v: &View) -> El {
             tx.copy_rich(rune::ClipboardContent::new(format!("https://tidal.com/album/{id}")));
             crate::interact::toast("Copied share link to clipboard".into(), crate::interact::Kind::Success);
         }))
+/// Under an album's title (AlbumView's header): the "ALBUM" eyebrow, the main artist's picture
+/// beside the artists, "N TRACKS (h:mm:ss)", and the year with the AI and quality badges.
+fn album_sub(a: &Value, tracks: &[Value]) -> El {
+    let d = data::data(a);
+    let mut by = row().gap(8.0).items_center().min_w(0.0);
+    let pic = d["artists"][0]["picture"].as_str().or(d["artist"]["picture"].as_str()).filter(|p| !p.is_empty());
+    if let Some(p) = pic {
+        by = by.child(ui::with_image(el().size(24.0, 24.0).radius(12.0).clip_rounded(12.0).fill(white(0.08)), crate::art::artist_picture(&json!({"picture": p}), 24.0), 24.0, 12.0).a11y_hidden());
+    }
+    let mut c = col().gap(6.0).min_w(0.0)
+        .child(text("ALBUM").font(t(11.0, 700.0).tracking(1.2)).color(white(0.55)))
+        .child(by.child(album_byline(a)));
+    let secs = d["duration"].as_u64().unwrap_or_else(|| tracks.iter().filter_map(|t| data::data(t)["duration"].as_u64()).sum());
+    if let Some(n) = d["numberOfTracks"].as_u64() {
+        c = c.child(text(crate::formats::track_count(n as usize, secs)).font(t(11.0, 500.0).tracking(0.6)).color(white(0.45)));
+    } else if secs > 0 {
+        c = c.child(text(format!("({})", crate::formats::total_duration(secs))).font(t(11.0, 500.0).tracking(0.6)).color(white(0.45)));
+    }
+    let year = d["releaseDate"].as_str().and_then(|r| r.get(..4)).filter(|y| !y.is_empty());
+    let badge = crate::formats::quality_badge(d);
+    let ai = d["ai"].as_bool() == Some(true);
+    if year.is_some() || badge.is_some() || ai {
+        let mut r = row().gap(8.0).items_center();
+        if let Some(y) = year {
+            r = r.child(text(y.to_string()).font(t(12.0, 500.0)).color(white(0.55)));
+        }
+        if ai {
+            r = r.child(crate::content::ai_badge());
+        }
+        if let Some((label, tier)) = badge {
+            let fill = match tier { 2 => accent().alpha(0.2), 1 => accent().alpha(0.15), _ => white(0.1) };
+            r = r.child(el().h(18.0).px(8.0).radius(4.0).fill(fill).items_center().justify_center()
+                .child(text(label).font(t(10.0, 650.0).tracking(0.6)).color(white(0.9))));
+        }
+        c = c.child(r);
+    }
+    c
+}
+
+/// Under an album's tracks (AlbumView's footer): "MAY 17, 2013 • 12 TRACKS (40:00)" and the
+/// copyright.
+fn album_footer(a: &Value, tracks: &[Value], copyright: Option<&str>) -> El {
+    let d = data::data(a);
+    let secs: u64 = tracks.iter().filter_map(|t| data::data(t)["duration"].as_u64()).sum();
+    let mut line = crate::formats::track_count(tracks.len(), secs);
+    if let Some(r) = d["releaseDate"].as_str().filter(|r| !r.is_empty()) {
+        line = format!("{} \u{2022} {line}", crate::formats::release_long(r));
+    }
+    let mut c = col().w_full().gap(4.0).px(12.0).child(text(line).font(t(12.0, 500.0)).color(white(0.4)));
+    if let Some(cr) = copyright.filter(|c| !c.trim().is_empty()) {
+        c = c.child(text(cr.to_uppercase()).font(t(11.0, 500.0)).color(white(0.4)).wrap());
+    }
+    c
+}
+
         .child({
             let item = json!({"type": "ALBUM", "data": a.clone()});
             header_btn("album-more", "More options", "More", G::More, false)
                 .on_press(move |s: &mut App| crate::interact::open_media(s, item.clone(), crate::interact::Anchor::Below("album-more".into())))
         });
-    let mut c = col().w_full().gap(18.0).child(hero_with(&title, true, album_byline(a), id, false, crate::art::item_url(a, 180.0), actions));
+    let mut c = col().w_full().gap(18.0).child(hero_with(&title, true, album_sub(a, &tracks), id, false, crate::art::item_url(a, 180.0), actions));
+    let footer = (!tracks.is_empty()).then(|| album_footer(a, &tracks, page["copyright"].as_str()));
     let src = json!({"type": "album", "id": id, "name": title});
-    let every = (0..tracks.len()).collect();
-    let rows = track_list("al-t", Rc::new(tracks), every, move |tracks, i| {
-        let (all, src) = (tracks.clone(), src.clone());
-        track_row(format!("al-t{i}"), i + 1, &tracks[i], move |_: &mut App| {
-            controller::send(Cmd::PlayFrom { tracks: all.to_vec(), index: i, source: src.clone(), album_mode: true });
-        })
-    });
-    c = c.child(rows);
+    // A multi-disc album lists each volume under "Volume N" (AlbumView volumeGroups); a click
+    // plays from that track in the whole album either way.
+    let groups = crate::formats::volumes(&tracks).unwrap_or_else(|| vec![(0, (0..tracks.len()).collect())]);
+    let tracks = Rc::new(tracks);
+    for (vol, shown) in groups {
+        let src = src.clone();
+        let list_key = if vol == 0 { "al-trows".to_string() } else { format!("al-trows{vol}") };
+        let rows = track_list_keyed(list_key, "al-t", tracks.clone(), shown, move |tracks, i| {
+            let (all, src) = (tracks.clone(), src.clone());
+            // TrackList numbers an album's rows by their track number
+            let n = data::data(&tracks[i])["trackNumber"].as_u64().map(|n| n as usize).unwrap_or(i + 1);
+            track_row_look(format!("al-t{i}"), n, &tracks[i], Look { cover: false, ..Look::default() }, None, move |_: &mut App| {
+                controller::send(Cmd::PlayFrom { tracks: all.to_vec(), index: i, source: src.clone(), album_mode: true });
+            })
+        });
+        if vol > 0 {
+            c = c.child(heading(&format!("Volume {vol}"), 15.0).pt(if vol > 1 { 8.0 } else { 0.0 }));
+        }
+        c = c.child(rows);
+    }
+    if let Some(f) = footer {
+        c = c.child(f);
+    }
     // TIDAL's editorial review, when the album has one (tidal.com shows it under the tracks).
     if let Some(review) = page["review"]["text"].as_str().filter(|r| !r.trim().is_empty()) {
         let mut r = col().w_full().max_w(820.0).gap(10.0).child(heading("Review", theme::SECTION)).child(crate::bio::view(review, 14.0, 0.72));

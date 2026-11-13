@@ -191,8 +191,37 @@ def folders_route(flow: http.HTTPFlow, path: str) -> bool:
 #     50, then none (so Refresh walks the batches and wraps).
 # Editing a playlist (PATCH openapi.tidal.com/v2/playlists/{id}) is always answered 204, and the
 # playlist's details then carry the new title, description and access.
+#   SPIKE_COLLECTIONS=1: album 78 "Queue Suite" is a two-disc album (its last track on volume
+#     2), and Fixture Mixtape's tracks carry dates added (2, 10 and 20 days ago, then 2023-03-04).
 ARTIST_VIEWALL = bool(os.environ.get("SPIKE_ARTIST_VIEWALL"))
 RECS = bool(os.environ.get("SPIKE_RECS"))
+COLLECTIONS = bool(os.environ.get("SPIKE_COLLECTIONS"))
+
+
+def collections_route(flow: http.HTTPFlow, path: str, method: str) -> bool:
+    q = flow.request.query
+    if path == "/v1/pages/album" and q.get("albumId") == "78":
+        d = catalog_json("album_page_78.json")
+        for row in d.get("rows", []):
+            for mod in row.get("modules", []):
+                if mod.get("type") == "ALBUM_HEADER":
+                    mod["album"]["numberOfVolumes"] = 2
+                if mod.get("type") == "ALBUM_ITEMS":
+                    items = mod.get("pagedList", {}).get("items", [])
+                    if items:
+                        items[-1]["item"]["volumeNumber"] = 2
+                        items[-1]["item"]["trackNumber"] = 1
+        respond(flow, 200, d)
+        return True
+    if re.fullmatch(rf"/v1/playlists/{P1}/(items|tracks)", path):
+        now = time.time()
+        stamps = [time.strftime("%Y-%m-%dT%H:%M:%S.000+0000", time.gmtime(now - days * 86400)) for days in (2, 10, 20)]
+        items = catalog_items(P1)
+        for i, it in enumerate(items):
+            it["item"]["dateAdded"] = stamps[i] if i < len(stamps) else "2023-03-04T10:00:00.000+0000"
+        respond(flow, 200, page(items))
+        return True
+    return False
 EDITS: dict = {}  # playlist uuid -> {"name", "description", "accessType"}
 
 
@@ -209,6 +238,8 @@ def extras_route(flow: http.HTTPFlow, host: str, path: str, method: str) -> bool
         return True
     if host != "api.tidal.com":
         return False
+    if COLLECTIONS and method == "GET" and collections_route(flow, path, method):
+        return True
     if method == "GET" and (m := re.fullmatch(r"/v1/playlists/([0-9a-f-]+)", path)) and m.group(1) in EDITS:
         name = {P1: "playlist_p1.json", "66666666-7777-8888-9999-aaaaaaaaaaaa": "playlist_p2.json"}.get(m.group(1))
         if name:
