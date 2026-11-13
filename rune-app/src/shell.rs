@@ -155,7 +155,6 @@ static NATIVE_FRAME: AtomicBool = AtomicBool::new(false);
 /// For the settings page's Title bar choice: saves the mode as React's GeneralTab does
 /// (`set_decorations` for the frame, `hideTitleBar` for Hidden). Custom and Hidden apply at once;
 /// a change of frame (to or from System) at the next start, which a toast says.
-#[allow(dead_code)] // the settings page's Title bar choice calls it
 pub fn set_title_bar_mode(mode: TitleBarMode) {
     let st = crate::host().state::<AppState>();
     let save_decorations = |on: bool| {

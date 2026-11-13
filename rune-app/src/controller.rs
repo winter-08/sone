@@ -129,6 +129,9 @@ pub enum Cmd {
     /// A suggested track's row: append it to the manual queue tagged with its album as the
     /// source it plays from (addToQueue(track, albumSource)).
     QueueTrack(Value),
+    /// Settings → Playback's gapless toggle: saved by the backend, then the prerolled next
+    /// track is refreshed for it.
+    SetGapless(bool),
     /// Log out (React useAuth.logout): the backend's logout, then every trace of the account
     /// and its playback is dropped and the sign-in screen shows.
     Logout,
@@ -1158,6 +1161,12 @@ impl Player {
             Cmd::FavoritesChanged => {}
             Cmd::SetMaxQuality(q) => {
                 let _ = utility::set_max_quality(self.state(), q);
+            }
+            Cmd::SetGapless(on) => {
+                if utility::set_gapless(self.state(), on).is_ok() {
+                    self.gapless_setting = on;
+                    self.gapless_refresh().await;
+                }
             }
             Cmd::Logout => self.logout().await,
             Cmd::QueueIds(ids) => self.fetch_tracks(ids, "queue", true),

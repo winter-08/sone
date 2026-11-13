@@ -90,15 +90,9 @@ pub struct Nav {
     /// Settings is a modal over the current page (React SettingsModal).
     pub settings_open: bool,
     pub dialog: Option<Dialog>,
-    /// Editable settings fields, filled from the saved settings when Settings opens.
-    pub discord_status: TextEdit,
-    pub lb_token: TextEdit,
-    pub overlay_host: TextEdit,
-    pub proxy_user: TextEdit,
-    /// Debounced saves (React's 500 ms timers in DiscordTab / NetworkTab).
-    pub discord_due: Option<std::time::Instant>,
-    pub proxy_due: Option<std::time::Instant>,
-    pub lb_status: Option<String>,
+    /// The Settings modal's fields and what its commands reported (settings.rs), filled from
+    /// the saved settings when Settings opens.
+    pub set: crate::settings::Form,
     /// The open context menu (crate::interact), and the create-playlist dialog.
     pub ctx: Option<crate::interact::Ctx>,
     pub create: Option<crate::interact::Create>,
@@ -133,8 +127,7 @@ pub enum Dialog {
 impl Default for Nav {
     fn default() -> Self {
         Nav { page: Page::Home.into(), back: Tracked::default(), fwd: Tracked::default(), search: TextEdit::new(""), lib: LibTab::Playlists.into(), tab: SearchTab::All.into(), filter: TextEdit::new(""), queue_open: false, suggest_due: None, menu_open: false, settings_tab: SettingsTab::Playback, drawer: None.into(), login_mode: LoginMode::Pkce, settings_open: false, dialog: None,
-            discord_status: TextEdit::new(""), lb_token: TextEdit::new(""), overlay_host: TextEdit::new(""), proxy_user: TextEdit::new(""),
-            discord_due: None, proxy_due: None, lb_status: None, ctx: None, create: None, lyric_line: None.into(), lyrics_scrolled: false.into(), search_open: false, search_sel: None,
+            set: Default::default(), ctx: None, create: None, lyric_line: None.into(), lyrics_scrolled: false.into(), search_open: false, search_sel: None,
             video: Default::default(), full: Default::default(), home_tab: String::from("static").into(), home_pages: 0.into(), content_w: 0.0.into(), pkce_paste: TextEdit::new("") }
     }
 }

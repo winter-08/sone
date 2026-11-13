@@ -100,7 +100,7 @@ fn poll(s: &mut App, t: f64, tx: &mut Tx) -> bool {
         }
     }
     views::flush_settings(s);
-    if s.nav.suggest_due.is_some() || s.nav.discord_due.is_some() || s.nav.proxy_due.is_some() {
+    if s.nav.suggest_due.is_some() || settings::due(s) {
         tx.wake_after(Duration::from_millis(50));
     }
     // menus and favourites (interact.rs): favourite ids once signed in, async results, toasts

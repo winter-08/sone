@@ -296,6 +296,20 @@ def route(flow: http.HTTPFlow) -> bool:
         serve_file(flow, os.path.join(ctx.options.fixtures, "cover.jpg"), "image/jpeg")
         return True
 
+    # Last.fm / Libre.fm desktop auth (Settings → Scrobbling → Connect): auth.getToken hands out a
+    # request token, auth.getSession (after "I've authorized") a session for the fixture user.
+    if (host, path) in (("ws.audioscrobbler.com", "/2.0/"), ("libre.fm", "/2.0/")):
+        q = flow.request.query if method == "GET" else flow.request.urlencoded_form
+        m = q.get("method", "")
+        if m == "auth.getToken":
+            respond(flow, 200, {"token": "fake-scrobble-token"})
+            return True
+        if m == "auth.getSession":
+            respond(flow, 200, {"session": {"name": "fixture", "key": "fake-session-key", "subscriber": 0}})
+            return True
+        respond(flow, 200, {})
+        return True
+
     if host == "api.github.com":
         respond(flow, 200, {"tag_name": "v0.0.1", "html_url": "https://github.com/lullabyX/sone"})
         return True
