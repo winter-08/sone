@@ -53,15 +53,10 @@ pub fn avatar_image(files: &[Value]) -> Option<String> {
 }
 
 /// The signed-in user's picture for the account menu (React currentUserAvatarAtom), once the
-/// profile has loaded; asking for it starts the load.
+/// profile has been loaded (by the profile page).
 pub fn avatar() -> Option<String> {
-    if data::user_id() == 0 {
-        return None;
-    }
-    match data::want(Key::UserProfile) {
-        data::Load::Ready(p) => avatar_image(p["pictureFiles"].as_array().map(Vec::as_slice).unwrap_or(&[])),
-        _ => None,
-    }
+    // Only once loaded: opening the menu mustn't fetch (React's menu sends nothing either).
+    data::peek(&Key::UserProfile).and_then(|p| avatar_image(p["pictureFiles"].as_array().map(Vec::as_slice).unwrap_or(&[])))
 }
 
 /// splitLinks: the website, and the social links by type.
