@@ -2110,6 +2110,15 @@ impl Player {
             self.user_paused = false;
             // Repeat-one, not explicit: replay in place (§3.2 step 2).
             if self.prefs.repeat == 2 && !explicit {
+                // A video still open just rewinds (React: currentTime = 0), keeping its pipeline
+                // and session, so a minimised player stays minimised.
+                if self.current_is_video() && crate::video::is_open() {
+                    crate::video::seek(0.0);
+                    crate::video::play();
+                    self.playing = true;
+                    self.notify_seek(0.0);
+                    return;
+                }
                 if let Some(cur) = self.current.clone() {
                     self.mark_loading(true);
                     match self.invoke_play(&cur).await {
