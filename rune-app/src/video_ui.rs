@@ -250,7 +250,11 @@ pub fn overlay(s: &App, v: &View) -> Option<El> {
 
     let mut layer = el().key("video-layer").role("dialog").label(info.title.clone()).pin(Some(0.0), Some(0.0), Some(0.0), Some(0.0))
         .fill(theme::black(1.0))
-        .modal(false, |s: &mut App| close(s))
+        // Escape with a control focused comes here rather than to the app's key handler: it
+        // steps back the same way (quality menu, full screen, then the video).
+        .modal_tx(false, |s: &mut App, tx: &mut Tx| {
+            on_escape(s, tx);
+        })
         .cursor(if shown { rune::Cursor::Default } else { rune::Cursor::Hidden })
         .on_pointer_move_local(|s: &mut App, _, tx| show_controls(s, tx));
 
