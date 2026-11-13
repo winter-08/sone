@@ -203,6 +203,23 @@ pub async fn get(key: Key) -> Result<Value, String> {
     Ok(v)
 }
 
+/// Put `v` in the cache as `key`'s value, as if it had just been fetched: a refresh that kept
+/// the old value showing until the new one came. A fetch of `key` still running is then stale.
+pub fn replace(key: Key, v: Value) {
+    let fetch_id = FETCHES.fetch_add(1, Ordering::Relaxed) + 1;
+    let mut c = CACHE.lock().unwrap();
+    let version = VERSION.fetch_add(1, Ordering::Relaxed) + 1;
+    c.insert(key, Entry { load: Load::Ready(v), fetch: fetch_id, at: Instant::now(), retries: 0, nudged: false, version });
+}
+
+/// How long ago `key`'s value landed, if it's there.
+pub fn age(key: &Key) -> Option<Duration> {
+    match CACHE.lock().unwrap().get(key) {
+        Some(Entry { load: Load::Ready(_), at, .. }) => Some(at.elapsed()),
+        _ => None,
+    }
+}
+
 /// Forget a cached entry so the next ask fetches again (e.g. after signing in).
 pub fn forget(key: &Key) {
     // A playlist forgotten after an edit (a track added or removed) takes its paged tracks

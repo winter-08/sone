@@ -106,6 +106,7 @@ pub fn home(s: &App) -> El {
                 }
             }
         }
+        refresh_if_stale(&slug, first);
     }
     let tabs = TABS.lock().unwrap().clone();
     let first = match load {
@@ -163,12 +164,77 @@ pub fn home(s: &App) -> El {
         // The sentinel: reaching the end asks for the next page.
         let n = *s.nav.home_pages;
         c = c.child(el().key(format!("home-more-{n}")).w_full().h(2.0).a11y_hidden()
-            .on_visible(move |s: &mut App, on, _| if on && *s.nav.home_pages == n { *s.nav.home_pages += 1 }));
+            .on_visible(move |s: &mut App, on, _| if on && *s.nav.home_pages == n {
+                *s.nav.home_pages += 1;
+                PAGED.lock().unwrap().insert((*s.nav.home_tab).clone());
+            }));
     }
     c
 }
 
 /// A tab that couldn't load (Home.tsx): the tab bar, "Couldn't load Home", why, and Retry.
+/// The tabs that have shown a further page this session (React's `hasPaginated`): their first
+/// page stays as it is, since the pages after it follow on from its cursor.
+static PAGED: std::sync::LazyLock<std::sync::Mutex<std::collections::HashSet<String>>> = std::sync::LazyLock::new(Default::default);
+
+/// The tabs whose stale first page has been refreshed (once a session each).
+static REFRESHED: std::sync::LazyLock<std::sync::Mutex<std::collections::HashSet<String>>> = std::sync::LazyLock::new(Default::default);
+
+/// Home.tsx: a first page the backend served stale from its cache shows at once, and the tab is
+/// fetched fresh behind it (refresh_home_page); the fresh page takes its place unless the tab
+/// has paged on meanwhile.
+fn refresh_if_stale(slug: &str, first: &Value) {
+    if first["isStale"].as_bool() != Some(true) || PAGED.lock().unwrap().contains(slug) || !REFRESHED.lock().unwrap().insert(slug.to_string()) {
+        return;
+    }
+    let (slug, old_tabs) = (slug.to_string(), first["home"]["tabs"].clone());
+    sone_host_shim::async_runtime::spawn(async move {
+        use sone_host_shim::Manager;
+        let h = crate::host().clone();
+        match tauri_app_lib::commands::pages::refresh_home_page(h.state::<tauri_app_lib::AppState>(), Some(slug.clone())).await {
+            Ok(fresh) => {
+                let mut home = serde_json::to_value(fresh).unwrap_or(Value::Null);
+                // (the tabs come with the cached page's header; keep them if this has none)
+                if home["tabs"].as_array().is_none_or(|t| t.is_empty()) {
+                    home["tabs"] = old_tabs;
+                }
+                if !PAGED.lock().unwrap().contains(&slug) {
+                    data::replace(Key::Home(slug), json!({"home": home, "isStale": false}));
+                }
+            }
+            Err(e) => log::warn!("[rune] home refresh failed: {e}"),
+        }
+    });
+}
+
+/// The window came back on screen: Home.tsx revalidates the tab showing when it was loaded more
+/// than five minutes ago and hasn't paged on (its visibilitychange / focus handler). The page
+/// shown stays until the new one lands.
+pub fn revalidate(s: &App) {
+    let slug = (*s.nav.home_tab).clone();
+    let key = Key::Home(slug.clone());
+    if *s.nav.page != Page::Home || PAGED.lock().unwrap().contains(&slug) || !data::age(&key).is_some_and(|a| a.as_secs() >= 5 * 60) {
+        return;
+    }
+    static BUSY: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+    if BUSY.swap(true, std::sync::atomic::Ordering::Relaxed) {
+        return;
+    }
+    sone_host_shim::async_runtime::spawn(async move {
+        use sone_host_shim::Manager;
+        let h = crate::host().clone();
+        let got = tauri_app_lib::commands::pages::get_home_page(h.state::<tauri_app_lib::AppState>(), h.clone(), Some(slug.clone())).await;
+        if let Ok(v) = got.map_err(|e| e.to_string()).and_then(|x| serde_json::to_value(x).map_err(|e| e.to_string()))
+            && !PAGED.lock().unwrap().contains(&slug)
+        {
+            // a stale answer gets its refresh again
+            REFRESHED.lock().unwrap().remove(&slug);
+            data::replace(key, v);
+        }
+        BUSY.store(false, std::sync::atomic::Ordering::Relaxed);
+    });
+}
+
 fn failed(tabs: &[Value], slug: &str, why: &str) -> El {
     let mut c = col().w_full().gap(32.0);
     if !tabs.is_empty() {

@@ -291,6 +291,9 @@ fn on_visibility(s: &mut App, shown: bool, _: &mut Tx) {
     s.shown = shown;
     controller::set_clock_shown(controller::MAIN, shown);
     interact::hold_toasts(!shown);
+    if shown {
+        home::revalidate(s);
+    }
 }
 
 thread_local! {

@@ -183,11 +183,7 @@ pub fn go(s: &mut App, p: Page) {
         s.nav.search.focused = false;
     }
     if s.nav.page == Page::Feed {
-        let h = crate::host().clone();
-        sone_host_shim::async_runtime::spawn(async move {
-            use sone_host_shim::Manager;
-            let _ = tauri_app_lib::commands::feed::mark_feed_seen(h.state::<tauri_app_lib::AppState>(), data::user_id()).await;
-        });
+        feed_opened();
     }
 }
 
@@ -707,6 +703,9 @@ pub fn header(s: &App) -> El {
                 search_tab_left(s, &cur);
                 s.nav.fwd.push(cur);
                 s.nav.filter = TextEdit::new("");
+                if *s.nav.page == Page::Feed {
+                    feed_opened();
+                }
             }
         }))
         .child(step("forward", "Go forward", G::Forward, !s.nav.fwd.is_empty(), |s| {
@@ -715,6 +714,9 @@ pub fn header(s: &App) -> El {
                 search_tab_left(s, &cur);
                 s.nav.back.push(cur);
                 s.nav.filter = TextEdit::new("");
+                if *s.nav.page == Page::Feed {
+                    feed_opened();
+                }
             }
         }))
         .child(spacer())
@@ -1103,13 +1105,56 @@ fn nav_on(cur: &Page, page: &Page) -> bool {
     cur == page || (*page == Page::Explore && matches!(cur, Page::ExploreSub(..)))
 }
 
+/// A sidebar entry's icon; the Feed's with React's unread dot while the feed has unseen items.
+fn nav_glyph(g: G, on: bool) -> El {
+    let icon = glyph(g, 18.0, white(if on { 0.95 } else { 0.7 }));
+    if g != G::Bell || !feed_unseen() {
+        return icon;
+    }
+    el().size(18.0, 18.0).child(icon)
+        .child(el().absolute(12.0, -1.0).size(8.0, 8.0).radius(4.0).fill(accent()).border(2.0, theme::sidebar_bg()).a11y_hidden())
+}
+
+/// The feed has activities not seen yet (its unseenCount; opening the Feed clears it).
+fn feed_unseen() -> bool {
+    data::peek(&Key::Feed).is_some_and(|f| f["unseenCount"].as_u64().unwrap_or(0) > 0)
+}
+
+/// The Feed was opened, by any way there (a link, Back or Forward): FeedPage fetches the feed
+/// again on every visit and marks it seen, which clears the unread dot at once. The feed shown
+/// stays until the new one lands.
+fn feed_opened() {
+    if let Some(mut f) = data::peek(&Key::Feed) {
+        if f["unseenCount"].as_u64().unwrap_or(0) > 0 {
+            f["unseenCount"] = json!(0);
+            data::replace(Key::Feed, f);
+        }
+    }
+    let h = crate::host().clone();
+    let again = data::peek(&Key::Feed).is_some();
+    sone_host_shim::async_runtime::spawn(async move {
+        use sone_host_shim::Manager;
+        let st = || h.state::<tauri_app_lib::AppState>();
+        // the feed first (from the backend's cache when it's fresh), then the seen mark, which
+        // drops that cache for the next visit
+        if again
+            && let Ok(f) = tauri_app_lib::commands::feed::get_feed(st(), data::user_id()).await
+            && let Ok(mut v) = serde_json::to_value(f)
+        {
+            v["unseenCount"] = json!(0);
+            data::replace(Key::Feed, v);
+        }
+        let _ = tauri_app_lib::commands::feed::mark_feed_seen(st(), data::user_id()).await;
+    });
+}
+
 pub fn sidebar(s: &App, w: f32) -> El {
     let nav_btn = |key: &str, label: &str, g: G, page: Page| {
         let on = nav_on(&s.nav.page, &page);
         theme::focusable_row(row().key(key.to_string()).role("button").label(label)).h(40.0).px(12.0).gap(12.0).radius(10.0).items_center()
             .fill(if on { white(0.08) } else { white(0.0) }).hover(white(0.06)).cursor(rune::Cursor::Pointer).help(label)
             .on_press(move |s: &mut App| go(s, page.clone()))
-            .child(glyph(g, 18.0, white(if on { 0.95 } else { 0.7 })))
+            .child(nav_glyph(g, on))
             .child(text(label.to_string()).font(t(14.0, 600.0)).color(white(if on { 0.95 } else { 0.75 })).a11y_hidden())
     };
     let tab = |key: &str, label: &str, which: LibTab| {
@@ -1136,7 +1181,7 @@ pub fn sidebar(s: &App, w: f32) -> El {
             theme::focusable(el().key(key.to_string()).role("button").label(label)).size(40.0, 40.0).radius(10.0).items_center().justify_center()
                 .fill(if on { white(0.08) } else { white(0.0) }).hover(white(0.06)).cursor(rune::Cursor::Pointer).help(label)
                 .on_press(move |s: &mut App| go(s, page.clone()))
-                .child(glyph(g, 18.0, white(if on { 0.95 } else { 0.7 })))
+                .child(nav_glyph(g, on))
         };
         return col().key("sidebar").role("navigation").w(w).h_full().py(12.0).px(8.0).gap(6.0).items_center().fill(theme::sidebar_bg())
             .child(icon_btn("nav-home", "Home", G::Home, Page::Home))
