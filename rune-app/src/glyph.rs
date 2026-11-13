@@ -71,6 +71,8 @@ pub enum G {
     LogOut,
     Clock,
     Sort,
+    // sign-in
+    External,
 }
 
 pub fn lucide(g: G) -> &'static rune::Icon {
@@ -133,6 +135,7 @@ pub fn lucide(g: G) -> &'static rune::Icon {
         G::LogOut => &i::LOG_OUT,
         G::Clock => &i::CLOCK,
         G::Sort => &i::ARROW_UP_DOWN,
+        G::External => &i::EXTERNAL_LINK,
     }
 }
 

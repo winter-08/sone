@@ -31,6 +31,9 @@ pub struct Custom {
     curl: TextEdit,
     response: TextEdit,
     import_error: Option<String>,
+    /// The token fields' masks as the user set them (None: masked once over 200 characters).
+    curl_masked: Option<bool>,
+    response_masked: Option<bool>,
     help: bool,
     /// The error shown for this view (the simple view's goes away when switching here).
     dismissed: bool,
@@ -55,6 +58,12 @@ pub fn open(s: &mut App) {
     let st = crate::host().state::<AppState>();
     let (id, secret) = auth::get_saved_credentials(st).unwrap_or_default();
     s.nav.set.custom_login = Some(Custom { client_id: TextEdit::new(&id), client_secret: TextEdit::new(&secret), ..Default::default() });
+}
+
+/// Whether a token field shows masked: as the user last set it, else once it holds more than
+/// 200 characters (Login.tsx's auto-mask of long pastes).
+fn mask_shown(explicit: Option<bool>, text: &str) -> bool {
+    !text.is_empty() && explicit.unwrap_or(text.chars().count() > 200)
 }
 
 /// isCredentialRelatedError: an error that says the client credentials are wrong.
@@ -199,24 +208,37 @@ pub fn view(s: &App, failed: Option<&str>) -> El {
                 controller::send(Cmd::StartPkceLoginWith { id, secret });
             })),
         Method::Import => {
-            let area = |edit: &TextEdit, key: &str, label: &str, placeholder: &str, get: fn(&mut App) -> &mut TextEdit| {
-                let field = text_input(edit, t(11.0, 500.0).lh(15.0)).key(key.to_string()).label(label).w_full().min_h(40.0).max_h(90.0).color(white(0.9)).caret(white(0.95), white(0.25))
+            // React masks a field once a paste passes 200 characters (it holds tokens), with an
+            // eye to show it again. (A field that starts masked needs its own key in Rune.)
+            let area = |edit: &TextEdit, key: &str, label: &str, placeholder: &str, get: fn(&mut App) -> &mut TextEdit, mask: fn(&mut Custom) -> &mut Option<bool>, explicit: Option<bool>| {
+                let masked = mask_shown(explicit, &edit.text);
+                let field = text_input(edit, t(11.0, 500.0).lh(15.0)).key(if masked { format!("{key}-masked") } else { key.to_string() }).label(label).w_full().min_h(40.0).max_h(90.0).color(white(0.9)).caret(white(0.95), white(0.25))
                     .placeholder(placeholder, white(0.35)).on_edit(get).on_input_change(|s: &mut App, _| {
                         if let Some(c) = &mut s.nav.set.custom_login {
                             c.import_error = None;
                         }
                     });
-                // React masks a paste over 200 characters; the field here scrolls instead.
-                row().w_full().padding(8.0).radius(8.0).fill(white(0.06)).border(1.0, white(0.08)).child(field)
+                let field = if masked { field.secure() } else { field };
+                let mut r = row().w_full().padding(8.0).gap(6.0).radius(8.0).fill(white(0.06)).border(1.0, white(0.08)).child(field);
+                if !edit.text.is_empty() {
+                    r = r.child(theme::focusable(row().key(format!("{key}-eye")).role("button").label(if masked { "Show" } else { "Hide" })).h(22.0).px(6.0).radius(6.0).items_center().self_start().cursor(rune::Cursor::Pointer)
+                        .on_press(move |s: &mut App| {
+                            if let Some(c) = &mut s.nav.set.custom_login {
+                                *mask(c) = Some(!masked);
+                            }
+                        })
+                        .child(text(if masked { "Show" } else { "Hide" }).font(t(10.5, 600.0)).color(white(0.5)).a11y_hidden()));
+                }
+                r
             };
             let can = !c.curl.text.trim().is_empty() || !c.response.text.trim().is_empty();
             let mut b = col().w_full().gap(10.0)
                 .child(small("For web player client IDs or any client that doesn't support Device Code. Paste the cURL and response from your browser's Network tab.", 0.55))
                 .child(row().w_full().items_center().child(small("cURL Command", 0.65)).child(spacer()).child(paste("lc-curl-paste", field_of!(curl))))
-                .child(area(&c.curl, "lc-curl", "cURL Command", "Right-click token request → Copy as cURL", field_of!(curl)))
+                .child(area(&c.curl, "lc-curl", "cURL Command", "Right-click token request → Copy as cURL", field_of!(curl), |c: &mut Custom| &mut c.curl_masked, c.curl_masked))
                 .child(small("Provides Client ID.", 0.4))
                 .child(row().w_full().items_center().child(small("Response Body", 0.65)).child(spacer()).child(paste("lc-response-paste", field_of!(response))))
-                .child(area(&c.response, "lc-response", "Response Body", "Same request → Response tab → copy JSON", field_of!(response)))
+                .child(area(&c.response, "lc-response", "Response Body", "Same request → Response tab → copy JSON", field_of!(response), |c: &mut Custom| &mut c.response_masked, c.response_masked))
                 .child(small("Provides session tokens (access_token, refresh_token).", 0.4));
             if let Some(e) = &c.import_error {
                 b = b.child(text(e.clone()).font(t(11.5, 500.0)).color(theme::danger()).wrap());
@@ -305,8 +327,198 @@ pub fn help_dialog(s: &App) -> Option<El> {
     }))
 }
 
+// ------------------------------------------------------------------ the simple view
+
+/// Whether the build has the PKCE pair (has_pkce_defaults), read once: without it the simple
+/// view has no method tabs and opens on Login Code (React loadCreds).
+pub fn pkce_embedded() -> bool {
+    static PKCE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *PKCE.get_or_init(|| auth::has_pkce_defaults().unwrap_or(false))
+}
+
+/// The method the simple view shows: the chosen tab, or Login Code when PKCE isn't built in.
+pub fn simple_mode(chosen: crate::views::LoginMode) -> crate::views::LoginMode {
+    if pkce_embedded() { chosen } else { crate::views::LoginMode::Code }
+}
+
+/// A flow being started (React's status line with its spinner, "Starting device
+/// authorization..."): the message, and the sign-in state it was pressed in, so it shows until
+/// the controller's state moves on.
+static STARTING: std::sync::Mutex<Option<(&'static str, controller::Login)>> = std::sync::Mutex::new(None);
+
+/// Starts `cmd` from the simple view, with `status` under a spinner until it answers.
+fn start(state: &controller::Login, status: &'static str, cmd: Cmd) {
+    *STARTING.lock().unwrap() = Some((status, state.clone()));
+    controller::send(cmd);
+}
+
+fn starting(state: &controller::Login) -> Option<&'static str> {
+    STARTING.lock().unwrap().as_ref().filter(|(_, at)| at == state).map(|(m, _)| *m)
+}
+
+fn status_line(msg: &str) -> El {
+    col().key("login-status").gap(12.0).py(18.0).items_center()
+        .child(crate::glyph::glyph(G::Loader, 24.0, theme::accent()))
+        .child(text(msg.to_string()).font(t(14.0, 400.0)).color(white(0.6)))
+}
+
+/// The simple view, idle (React Login's simple view): the method tabs when PKCE is built in, a
+/// line saying what each method gives, the error with Dismiss, a status while a flow starts.
+pub fn simple(s: &App, state: &controller::Login) -> El {
+    use crate::views::LoginMode;
+    let mode = simple_mode(s.nav.login_mode);
+    let mut c = col().w_full().gap(14.0).items_center()
+        .child(text("Connect your TIDAL account").font(t(17.0, 400.0)).color(white(0.6)));
+    if pkce_embedded() {
+        let mtab = |key: &str, label: &str, which: LoginMode| {
+            let on = mode == which;
+            theme::focusable(row().key(key.to_string()).role("button").label(label)).focus_selected(on).h(32.0).w(124.0).radius(16.0).items_center().justify_center()
+                .fill(if on { theme::accent() } else { white(0.0) }).hover(if on { theme::accent() } else { white(0.06) }).cursor(rune::Cursor::Pointer)
+                .on_press(move |s: &mut App| {
+                    s.nav.login_mode = which;
+                    if matches!(controller::view().login, controller::Login::Failed(_)) {
+                        controller::send(Cmd::CancelLogin);
+                    }
+                })
+                .child(text(label.to_string()).font(t(13.0, 500.0)).color(if on { theme::ink() } else { white(0.6) }).a11y_hidden())
+        };
+        c = c.child(row().gap(0.0).padding(4.0).radius(20.0).fill(white(0.05)).border(1.0, white(0.08)).focus_group()
+            .child(mtab("lm-pkce", "PKCE", LoginMode::Pkce)).child(mtab("lm-code", "Login Code", LoginMode::Code)));
+    }
+    if let controller::Login::Failed(e) = state {
+        let mut b = col().key("login-error").w_full().padding(14.0).gap(8.0).radius(10.0).fill(theme::danger().alpha(0.12)).border(1.0, theme::danger().alpha(0.4))
+            .child(text(e.clone()).font(t(13.0, 400.0)).color(theme::danger()).wrap());
+        if credential_error(e) {
+            // React offers the advanced view when the embedded credentials look stale.
+            b = b.child(theme::focusable(row().key("login-creds-stale").role("button").label("Credentials may need updating — use custom credentials")).gap(6.0).cursor(rune::Cursor::Pointer)
+                .on_press(open)
+                .child(crate::glyph::glyph(G::Info, 14.0, rune::oklch(0.8, 0.13, 80.0)))
+                .child(text("Credentials may need updating — use custom credentials").font(t(12.5, 500.0)).color(rune::oklch(0.8, 0.13, 80.0)).a11y_hidden()));
+        } else {
+            b = b.child(theme::focusable(row().key("login-dismiss").role("button").label("Dismiss")).w_full().justify_center().cursor(rune::Cursor::Pointer)
+                .on_press(|_: &mut App| controller::send(Cmd::CancelLogin))
+                .child(text("Dismiss").font(t(12.5, 500.0)).color(theme::danger().alpha(0.85)).a11y_hidden()));
+        }
+        c = c.child(b);
+    }
+    if let Some(msg) = starting(state) {
+        c = c.child(status_line(msg));
+    } else {
+        let st = state.clone();
+        c = match mode {
+            // TIDAL's login page opens in the user's browser: there is no web view here for
+            // React's embedded login window, so the browser is the one PKCE flow. Both of
+            // React's buttons stay (the sign-in golden pins them) and say what they do.
+            LoginMode::Pkce => {
+                let st2 = st.clone();
+                c.child(small("Recommended. Unlocks Hi-Res / MAX quality up to 24-bit/192 kHz. Opens TIDAL's sign-in page in your browser.", 0.45))
+                    .child(primary("login-pkce", "Sign in with TIDAL", true).on_press(move |s: &mut App| {
+                        s.nav.pkce_paste = TextEdit::new("");
+                        start(&st, "Waiting for browser...", Cmd::StartPkceLogin)
+                    }))
+                    .child(theme::focusable(row().key("login-browser").role("button").label("Open in browser instead")).gap(6.0).h(22.0).items_center().cursor(rune::Cursor::Pointer)
+                        .help("Signs in through your browser, as Sign in with TIDAL does here")
+                        .on_press(move |s: &mut App| {
+                            s.nav.pkce_paste = TextEdit::new("");
+                            start(&st2, "Waiting for browser...", Cmd::StartPkceLogin)
+                        })
+                        .child(crate::glyph::glyph(G::External, 11.0, white(0.45)))
+                        .child(text("Open in browser instead").font(t(12.0, 400.0)).color(white(0.45)).a11y_hidden()))
+            }
+            LoginMode::Code => c
+                .child(small("Get a 6-character code and enter it on link.tidal.com.", 0.45))
+                .child(primary("login-code", "Get Login Code", true).on_press(move |_: &mut App| start(&st, "Starting device authorization...", Cmd::StartDeviceLogin)))
+                .child(el().h(22.0)),
+        };
+    }
+    c.child(el().w_full().h(1.0).fill(white(0.06)))
+        .child(theme::focusable(row().key("login-custom").role("button").label("Use custom credentials")).gap(4.0).items_center().cursor(rune::Cursor::Pointer).on_press(open)
+            .child(text("Use custom credentials").font(t(12.0, 500.0)).color(white(0.45)).a11y_hidden())
+            .child(crate::glyph::glyph(G::Forward, 12.0, white(0.45))))
+}
+
+/// Waiting for the login code to be approved (React's device_pending step): the code, a QR
+/// code of the approval link, the address and a button opening it, "Waiting for
+/// authorization..." and Cancel.
+pub fn waiting(code: &str, uri: &str) -> El {
+    let u = uri.to_string();
+    let base = uri.split('/').take(3).collect::<Vec<_>>().join("/");
+    let mut card = col().w_full().padding(22.0).gap(12.0).radius(12.0).fill(white(0.04)).border(1.0, white(0.07))
+        .child(text("Scan the QR code or enter this code:").font(t(14.0, 400.0)).color(white(0.6)))
+        .child(row().w_full().justify_center().py(8.0).child(text(code.to_string()).font(t(34.0, 700.0).tracking(8.0)).color(white(0.97))));
+    if let Some(px) = qr_pixels(uri) {
+        card = card.child(row().w_full().justify_center().child(
+            el().key("login-qr").size(184.0, 184.0).radius(12.0).fill(rune::Color::WHITE).padding(12.0)
+                .child(el().size(160.0, 160.0).pixels_fit(&px, rune::SurfaceFit::Fill))));
+    }
+    card = card.child(row().w_full().justify_center().child(text(base.clone()).font(t(13.0, 400.0)).color(white(0.45))))
+        .child(ui::pill("login-open", &format!("Open {base}"), Some(G::External), ui::Pill::Secondary).w_full().justify_center().on_press(move |_: &mut App| {
+            let _ = std::process::Command::new("xdg-open").arg(&u).spawn();
+        }));
+    col().w_full().gap(16.0).items_center()
+        .child(card)
+        .child(row().gap(10.0).items_center()
+            .child(crate::glyph::glyph(G::Loader, 16.0, white(0.45)))
+            .child(text("Waiting for authorization...").font(t(13.0, 400.0)).color(white(0.45))))
+        .child(theme::focusable(row().key("login-cancel").role("button").label("Cancel")).h(24.0).px(8.0).items_center().cursor(rune::Cursor::Pointer)
+            .on_press(|_: &mut App| controller::send(Cmd::CancelLogin))
+            .child(text("Cancel").font(t(12.0, 500.0)).color(white(0.45)).a11y_hidden()))
+}
+
+/// The QR code of `uri` as an image, 8 pixels a module (the white card around it is its margin).
+fn qr_pixels(uri: &str) -> Option<rune::Pixels> {
+    static CACHE: std::sync::Mutex<Option<(String, rune::Pixels)>> = std::sync::Mutex::new(None);
+    let mut c = CACHE.lock().unwrap();
+    if let Some((u, p)) = c.as_ref().filter(|(u, _)| u == uri) {
+        let _ = u;
+        return Some(p.clone());
+    }
+    let (side, rgba) = qr_rgba(uri, 8)?;
+    let p = rune::Pixels::new();
+    p.set(side, side, rgba);
+    *c = Some((uri.to_string(), p.clone()));
+    Some(p)
+}
+
+/// `uri` as a QR code (error correction M, as React's QRCodeSVG level="M"): its side in pixels
+/// and the RGBA, black modules on white, `scale` pixels a module.
+pub fn qr_rgba(uri: &str, scale: u32) -> Option<(u32, Vec<u8>)> {
+    let qr = qrcodegen::QrCode::encode_text(uri, qrcodegen::QrCodeEcc::Medium).ok()?;
+    let n = qr.size() as u32;
+    let side = n * scale;
+    let mut rgba = vec![255u8; (side * side * 4) as usize];
+    for y in 0..side {
+        for x in 0..side {
+            if qr.get_module((x / scale) as i32, (y / scale) as i32) {
+                let i = ((y * side + x) * 4) as usize;
+                rgba[i..i + 3].copy_from_slice(&[0, 0, 0]);
+            }
+        }
+    }
+    Some((side, rgba))
+}
+
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn the_qr_code_is_square_and_scaled() {
+        let (side, rgba) = super::qr_rgba("https://link.tidal.com/ABCDE", 4).unwrap();
+        assert_eq!(side % 4, 0);
+        assert_eq!(rgba.len(), (side * side * 4) as usize);
+        // a finder pattern's corner module is dark
+        assert_eq!(&rgba[0..3], &[0, 0, 0]);
+    }
+
+    #[test]
+    fn long_pastes_are_masked_until_shown() {
+        let long = "x".repeat(201);
+        assert!(!super::mask_shown(None, "short"));
+        assert!(super::mask_shown(None, &long));
+        assert!(!super::mask_shown(Some(false), &long));
+        assert!(super::mask_shown(Some(true), "short"));
+        assert!(!super::mask_shown(Some(true), ""));
+    }
+
     #[test]
     fn credential_errors_are_recognised() {
         assert!(super::credential_error("Api error 401: {\"error\":\"invalid_client\"}"));

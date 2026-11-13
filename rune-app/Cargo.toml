@@ -24,6 +24,8 @@ log = "0.4"
 # cover art: decode and resize to the drawn size (already in the build via the backend)
 image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }
 rand = "0.8"
+# the sign-in screen's QR code for the login-code link (login.rs)
+qrcodegen = "1.8"
 # music videos (video.rs): the same GStreamer the backend plays audio with
 gstreamer = "0.23"
 gstreamer-app = "0.23"

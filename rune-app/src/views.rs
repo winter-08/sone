@@ -2583,56 +2583,13 @@ pub fn login(s: &App, v: &View) -> El {
                 c = c.child(text(e.clone()).font(t(12.0, 500.0)).color(theme::danger()).wrap());
             }
         }
-        Login::Waiting { code, uri } => {
-            let u = uri.clone();
-            let host_label = format!("Open {}", uri.split('/').take(3).collect::<Vec<_>>().join("/"));
-            c = c.child(text("Enter this code at TIDAL:").font(t(14.0, 500.0)).color(white(0.7)))
-                .child(text(code.clone()).font(t(34.0, 700.0).tracking(4.0)).color(white(0.97)))
-                .child(button::<App>("login-open", &host_label, None, true).on_press(move |_: &mut App| {
-                    let _ = std::process::Command::new("xdg-open").arg(&u).spawn();
-                }))
-                .child(button::<App>("login-cancel", "Cancel", None, false).on_press(|_: &mut App| controller::send(Cmd::CancelLogin)));
-        }
+        Login::Waiting { code, uri } => c = c.child(crate::login::waiting(code, uri)),
         state if s.nav.set.custom_login.is_some() => {
             let failed = if let Login::Failed(e) = state { Some(e.as_str()) } else { None };
             c = c.w(480.0).child(crate::login::view(s, failed));
         }
-        state => {
-            let mode = s.nav.login_mode;
-            let mtab = |key: &str, label: &str, which: LoginMode| {
-                let on = mode == which;
-                theme::focusable(row().key(key.to_string()).role("button").label(label)).focus_selected(on).h(32.0).px(14.0).radius(16.0).items_center()
-                    .fill(if on { white(0.16) } else { white(0.05) }).cursor(rune::Cursor::Pointer)
-                    .on_press(move |s: &mut App| s.nav.login_mode = which)
-                    .child(text(label.to_string()).font(t(12.0, 600.0)).color(white(0.9)).a11y_hidden())
-            };
-            c = c.child(row().gap(8.0).focus_group().child(mtab("lm-pkce", "PKCE", LoginMode::Pkce)).child(mtab("lm-code", "Login Code", LoginMode::Code)));
-            c = match mode {
-                LoginMode::Pkce => c
-                    // React opens TIDAL's login in an embedded window first; with no web view
-                    // here, both go through the browser (its "Open in browser instead").
-                    .child(button::<App>("login-pkce", "Sign in with TIDAL", None, true).on_press(|s: &mut App| {
-                        s.nav.pkce_paste = TextEdit::new("");
-                        controller::send(Cmd::StartPkceLogin)
-                    }))
-                    .child(button::<App>("login-browser", "Open in browser instead", None, false).on_press(|s: &mut App| {
-                        s.nav.pkce_paste = TextEdit::new("");
-                        controller::send(Cmd::StartPkceLogin)
-                    })),
-                LoginMode::Code => c.child(button::<App>("login-code", "Get Login Code", None, true).on_press(|_: &mut App| controller::send(Cmd::StartDeviceLogin))),
-            };
-            if let Login::Failed(e) = state {
-                c = c.child(text(e.clone()).font(t(12.0, 500.0)).color(theme::danger()).wrap());
-                // React offers the advanced view when the embedded credentials look stale.
-                if crate::login::credential_error(e) {
-                    c = c.child(theme::focusable(row().key("login-creds-stale").role("button").label("Credentials may need updating — use custom credentials")).cursor(rune::Cursor::Pointer)
-                        .on_press(crate::login::open)
-                        .child(text("Credentials may need updating — use custom credentials").font(t(12.5, 500.0)).color(oklch(0.8, 0.13, 80.0)).a11y_hidden()));
-                }
-            }
-            c = c.child(theme::focusable(row().key("login-custom").role("button").label("Use custom credentials")).cursor(rune::Cursor::Pointer).on_press(crate::login::open)
-                .child(text("Use custom credentials").font(t(12.0, 500.0)).color(white(0.55)).a11y_hidden()));
-        }
+        // (the simple view, login.rs: the method tabs when PKCE is built in, the error, status)
+        state => c = c.child(crate::login::simple(s, state)),
     }
     let mut frame = login_frame(c);
     if let Some(d) = crate::login::help_dialog(s) {
