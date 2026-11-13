@@ -250,7 +250,7 @@ fn narrow(v: &View, w: f32, h: f32) -> El {
     }
     controls = controls.child(play(v, 32.0));
     if w >= 290.0 {
-        controls = controls.child(next(v, 28.0, 16.0, white(0.7)));
+        controls = controls.child(next(28.0, 16.0, white(0.7)));
     }
     if w >= 420.0 {
         controls = controls.child(volume(v));
@@ -295,7 +295,7 @@ fn compact(v: &View, w: f32, h: f32) -> El {
     if wide {
         middle = middle.child(shuffle(v));
     }
-    middle = middle.child(prev(28.0, 16.0, white(0.7))).child(play(v, play_size).mx(2.0)).child(next(v, 28.0, 16.0, white(0.7)));
+    middle = middle.child(prev(28.0, 16.0, white(0.7))).child(play(v, play_size).mx(2.0)).child(next(28.0, 16.0, white(0.7)));
     if wide {
         middle = middle.child(repeat(v));
     }
@@ -329,7 +329,7 @@ fn full(s: &Mini, v: &View, w: f32, h: f32) -> El {
             row().absolute(0.0, 0.0).size(sz, sz).gap(gap).items_center().justify_center()
                 .child(prev(side, side_glyph, white(0.92)))
                 .child(play(v, play_size))
-                .child(next(v, side, side_glyph, white(0.92))),
+                .child(next(side, side_glyph, white(0.92))),
         )
         .child(seek);
     let art = el().key("mini-art").size(sz, sz).hover_group().hover_motion(OVERLAY_FADE, OVERLAY_FADE).child(cover(v, sz)).child(overlay);
@@ -467,10 +467,10 @@ fn prev(size: f32, glyph_size: f32, c: Color) -> El {
     button("mini-prev", "Previous", G::Prev, c, size, glyph_size, true).on_press(|_: &mut Mini| send(Cmd::Previous))
 }
 
-fn next(v: &View, size: f32, glyph_size: f32, c: Color) -> El {
-    let b = button("mini-next", "Next", G::Next, c, size, glyph_size, true);
-    // nothing to go to: an empty queue that doesn't repeat
-    if v.queue.is_empty() && v.repeat == Repeat::Off { off(b) } else { b.on_press(|_: &mut Mini| send(Cmd::Next)) }
+/// Never disabled, as the player bar's: with the queue empty and repeat off, Next still starts
+/// the Autoplay radio when that's on (React MiniPlayer's play-next).
+fn next(size: f32, glyph_size: f32, c: Color) -> El {
+    button("mini-next", "Next", G::Next, c, size, glyph_size, true).on_press(|_: &mut Mini| send(Cmd::Next))
 }
 
 /// Shuffle and repeat: muted when off, the accent with a dot under them when on.
