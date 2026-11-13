@@ -203,9 +203,15 @@ def folders_route(flow: http.HTTPFlow, path: str) -> bool:
 #   SPIKE_COLLECTIONS=1: album 78 "Queue Suite" is a two-disc album (its last track on volume
 #     2), Fixture Mixtape's tracks carry dates added (2, 10 and 20 days ago, then 2023-03-04),
 #     and search suggestions start with "fixture history" from the server's search history.
+#   SPIKE_HOME_EXTRA=1: the Home feed (For You) also has a "Recently played" compact grid (album
+#     77, Fixture Mixtape, track 1005, artist 7) and a "Fresh Tracks" track list (1006, 1007).
+#     A profile whose cached Home predates it shows them only once Home is refreshed.
+#   SPIKE_HOME_TABS=1: Home has a second tab, "Staff Picks" (EDITORIAL), whose feed fails (500).
 ARTIST_VIEWALL = bool(os.environ.get("SPIKE_ARTIST_VIEWALL"))
 RECS = bool(os.environ.get("SPIKE_RECS"))
 COLLECTIONS = bool(os.environ.get("SPIKE_COLLECTIONS"))
+HOME_EXTRA = bool(os.environ.get("SPIKE_HOME_EXTRA"))
+HOME_TABS = bool(os.environ.get("SPIKE_HOME_TABS"))
 
 
 def collections_route(flow: http.HTTPFlow, path: str, method: str) -> bool:
@@ -254,6 +260,24 @@ def extras_route(flow: http.HTTPFlow, host: str, path: str, method: str) -> bool
     if host != "api.tidal.com":
         return False
     if COLLECTIONS and method == "GET" and collections_route(flow, path, method):
+        return True
+    if (HOME_EXTRA or HOME_TABS) and method == "GET" and (m := re.fullmatch(r"/v2/home/feed/([A-Za-z_]+)", path)):
+        if m.group(1).upper() == "EDITORIAL" and HOME_TABS:
+            respond(flow, 500, {"status": 500, "subStatus": 999, "userMessage": "Fixture tab is down"})
+            return True
+        d = catalog_json("home_feed.json")
+        if HOME_TABS:
+            d["header"]["vibes"]["items"].append({"name": "Staff Picks", "type": "EDITORIAL"})
+        if HOME_EXTRA:
+            album = catalog_json("album_77.json")
+            album = album.get("album", album)
+            pl = catalog_json("playlist_p1.json")
+            d["items"].insert(1, {"type": "COMPACT_GRID_CARD", "moduleId": "RECENTLY_PLAYED", "title": "Recently played", "items": [
+                {"type": "ALBUM", "data": album}, {"type": "PLAYLIST", "data": pl},
+                {"type": "TRACK", "data": track_json(1005)}, {"type": "ARTIST", "data": catalog_json("artist_7.json")}]})
+            d["items"].append({"type": "TRACK_LIST", "moduleId": "FRESH_TRACKS", "title": "Fresh Tracks",
+                               "items": [{"type": "TRACK", "data": track_json(t)} for t in (1006, 1007)]})
+        respond(flow, 200, d)
         return True
     if method == "GET" and (m := re.fullmatch(r"/v1/playlists/([0-9a-f-]+)", path)) and m.group(1) in EDITS:
         name = {P1: "playlist_p1.json", "66666666-7777-8888-9999-aaaaaaaaaaaa": "playlist_p2.json"}.get(m.group(1))
