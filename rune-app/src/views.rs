@@ -668,6 +668,9 @@ pub fn header(s: &App) -> El {
             let q = s.nav.search.text.trim().to_string();
             if !q.is_empty() {
                 s.nav.search_open = false;
+                // (the dropdown is closed: suggestions still due would be a request for nothing,
+                // ahead of whatever the user clicks next)
+                s.nav.suggest_due = None;
                 remember_search(s, &q);
                 go(s, Page::Search(q));
                 *s.nav.tab = SearchTab::All;
