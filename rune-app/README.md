@@ -19,6 +19,7 @@ rune-app/
   src/queue_ui.rs, drawer_tabs.rs, signal_path.rs            the now-playing panel
   src/full_ui.rs, mini.rs                                    full-screen player, miniplayer
   src/video.rs, video_ui.rs, hls_relay.rs                    music videos (GStreamer)
+  src/cover_video.rs     animated album covers (looping muted mp4s, their own pipelines)
   src/settings.rs, login.rs, profile.rs, theme.rs            settings, sign-in, profile, themes
   src/shell.rs, keys.rs  title bar, window state, tray, deep links; shortcuts and rebinding
   src/obs.rs, mcp_sync.rs, proxy_banner.rs, notices.rs, scheme.rs   integrations and notices
@@ -79,7 +80,6 @@ is `verifier/bench/states.sh` (see `verifier/bench/states.py`).
 
 ## Not done
 
-- **Animated album covers** (`videoCovers` in React) and their Playback toggle.
 - **Needs Rune changes:** top and left resize edges on a frameless window; switching to or from
   the system title bar without a restart; global media keys (MPRIS still carries them on GNOME
   and KDE); the Maximize/Restore label following the compositor on Wayland.
@@ -88,5 +88,15 @@ is `verifier/bench/states.sh` (see `verifier/bench/states.py`).
 - **Deliberately different** from React: the album art in the player bar opens the full-screen
   player (`PLAYER_DESIGN.md`); every press of Next counts; the track menu has "Go to album" and
   "Go to artist"; a video's heart and menu act on the video, not on a track with its id.
-- **Not verified on real hardware:** `on_visibility` (the headless compositor never reports it),
+  Animated covers play in the drawer's cover column (windows about 1580 pt wide and up), not
+  in the narrower drawer's 52 pt thumbnail; they pause while the window is unfocused and stop
+  while the album page's cover is scrolled out of view, since each frame redraws the window.
+- **A playing animated cover redraws the window** at its frame rate (at most 30 frames/s;
+  Rune has no partial redraw, and never skips a frame with a video surface on screen). On a
+  GPU that is cheap (album page 5.7% of a core, full player 7.8%, against 0.2% and 1.0% with
+  a still cover); under software rendering (lavapipe) it is not (149% and 871%, against 0.5%
+  and 26%). Unfocused, it costs nothing. Settings > Playback > "Animated album covers" turns
+  it off. Numbers: `../verifier/bench/results/states-2026-11-14-114331-vcover.md`.
+- **Not verified on real hardware:** `on_visibility` (the headless compositor never reports it;
+  animated covers stop on it, unit-tested only),
   touchpads, profile picture upload (needs a file chooser), X11, and real music.
