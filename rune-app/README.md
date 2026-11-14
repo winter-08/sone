@@ -24,6 +24,7 @@ rune-app/
   src/shell.rs, keys.rs  title bar, window state, tray, deep links; shortcuts and rebinding
   src/obs.rs, mcp_sync.rs, proxy_banner.rs, notices.rs, scheme.rs   integrations and notices
   src/data.rs, art.rs, formats.rs, skeleton.rs               catalogue cache, artwork, formatting
+  src/sched.rs           background requests: at most two of the client's six slots
   src/perf.rs            SONE_PERF=1: one line every 5 s on what the window did
   PLAYBACK_SPEC.md       the behavioural contract, written from the React sources
   PLAYER_DESIGN.md       decisions on the full-screen player and miniplayer
@@ -79,7 +80,14 @@ Rune exposes only on-screen content to assistive technology, so Rune builds are 
 display. `--ignore controls,unnamed_controls` judges behaviour (MPRIS, MCP, network, bit-exact
 audio) and leaves out the accessibility inventory, whose control names still differ from the
 reference's. The sandbox never touches real audio hardware or your profile. The state benchmark
-is `verifier/bench/states.sh` (see `verifier/bench/states.py`).
+is `verifier/bench/states.sh` (see `verifier/bench/states.py`). Loading and navigation times
+against a slow TIDAL (300 ms a request by default, as the real service is) are
+`verifier/bench/latency.py`: the command to rerun is at the top of that file.
+
+The backend sends TIDAL requests concurrently (at most six at once, one token refresh for many
+expired requests: `TidalClientCell` in `src-tauri/src/tidal_api.rs`). Work the user hasn't asked
+for yet (other Home tabs, the feed, the profile, favourite ids) holds at most two of those
+slots (`src/sched.rs`).
 
 ## Not done
 
