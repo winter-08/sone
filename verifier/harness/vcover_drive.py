@@ -139,6 +139,18 @@ def main():
     n = log_len()
     atspi.press("Fixture Album", "heading")
     atspi.find("Favorite album", "button", timeout=20)
+    if not os.environ.get("SPIKE_GPU"):
+        # On a software renderer covers are off until turned on: nothing moves, no pipeline.
+        time.sleep(2.0)
+        step("software default", n, {"page": page_region})
+        n = log_len()
+        atspi.press("Account")
+        time.sleep(0.8)
+        atspi.press("Settings")
+        atspi.find("Animated album covers", timeout=10)
+        atspi.press("Animated album covers")
+        time.sleep(0.6)
+        atspi.key("Escape")
     first = wait_log("first frame page", n)
     time.sleep(0.5)
     step("album page", n, {"page": page_region}, first_frame=first)

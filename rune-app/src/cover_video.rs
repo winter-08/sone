@@ -181,7 +181,39 @@ pub fn on() -> bool {
     enabled() && crate::fx::on()
 }
 
-static ENABLED: LazyLock<AtomicBool> = LazyLock::new(|| AtomicBool::new(crate::shell::store_get(STORE_KEY).and_then(|v| v.as_bool()).unwrap_or(true)));
+/// Whether this process draws on a software renderer. Rune can't redraw part of a window, so a
+/// playing cover redraws all of it 30 times a second: a few percent of a core on a GPU, several
+/// whole cores on lavapipe. Rune doesn't say which adapter it picked, so this goes by what
+/// selects one: a Vulkan driver list naming only lavapipe (`wrap.sh`'s SONE_SOFTWARE_VULKAN),
+/// Mesa's software switch, or a machine with no GPU render node at all.
+pub fn software_renderer() -> bool {
+    static SOFTWARE: LazyLock<bool> = LazyLock::new(|| {
+        let env = |k: &str| std::env::var(k).ok();
+        let nodes = std::fs::read_dir("/dev/dri")
+            .map(|d| d.flatten().any(|e| e.file_name().to_string_lossy().starts_with("renderD")))
+            .unwrap_or(false);
+        let software = software_from(env("VK_ICD_FILENAMES").or_else(|| env("VK_DRIVER_FILES")).as_deref(), env("LIBGL_ALWAYS_SOFTWARE").as_deref(), nodes);
+        if software {
+            log::info!("[cover] software rendering: animated covers are off unless turned on in Settings");
+        }
+        software
+    });
+    *SOFTWARE
+}
+
+/// `software_renderer`'s rule: `icds` is the Vulkan driver list when one is forced, `mesa` is
+/// LIBGL_ALWAYS_SOFTWARE, `render_node` whether /dev/dri has a render node.
+fn software_from(icds: Option<&str>, mesa: Option<&str>, render_node: bool) -> bool {
+    let only_lavapipe = icds.is_some_and(|l| {
+        let mut files = l.split(':').filter(|f| !f.is_empty()).peekable();
+        files.peek().is_some() && files.all(|f| f.contains("lvp_icd"))
+    });
+    only_lavapipe || mesa.is_some_and(|v| v == "1" || v.eq_ignore_ascii_case("true")) || !render_node
+}
+
+/// On unless the user said otherwise, except on a software renderer, where it is off unless the
+/// user turned it on.
+static ENABLED: LazyLock<AtomicBool> = LazyLock::new(|| AtomicBool::new(crate::shell::store_get(STORE_KEY).and_then(|v| v.as_bool()).unwrap_or(!software_renderer())));
 
 /// Settings' "Animated album covers" (React videoCoversAtom, default on).
 pub fn enabled() -> bool {
@@ -625,6 +657,22 @@ fn push(slot: Slot, sample: &gst::Sample) -> Option<(u32, u32)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn software_rendering_is_recognised() {
+        use super::software_from;
+        // a GPU machine with nothing forced
+        assert!(!software_from(None, None, true));
+        // wrap.sh's SONE_SOFTWARE_VULKAN: only lavapipe's driver file
+        assert!(software_from(Some("/nix/store/x-mesa/share/vulkan/icd.d/lvp_icd.x86_64.json"), None, true));
+        // a forced list that still has a hardware driver
+        assert!(!software_from(Some("/a/nvidia_icd.json:/b/lvp_icd.x86_64.json"), None, true));
+        assert!(!software_from(Some(""), None, true));
+        // Mesa's switch, and a machine without a render node
+        assert!(software_from(None, Some("1"), true));
+        assert!(!software_from(None, Some("0"), true));
+        assert!(software_from(None, None, false));
+    }
 
     #[test]
     fn urls_follow_get_tidal_video_url() {

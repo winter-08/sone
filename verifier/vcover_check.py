@@ -68,6 +68,9 @@ def main():
     def logged(label, needle):
         return any(needle in l for l in steps.get(label, {}).get("log", []))
 
+    if "software default" in steps:
+        check("software renderer: covers are off until turned on", still("software default", "page") and bus("software default") == 0,
+              f"{bus('software default')} pipeline(s)")
     check("album page: the cover animates", moves("album page", "page"), f"changed box {box('album page', 'page')}, {bus('album page')} pipeline(s)")
     check("album page: the 640 file, at the drawn size", logged("album page", "of 640"), "; ".join(l for l in steps.get("album page", {}).get("log", []) if "start" in l))
     check("toggle off: the cover stops and its pipeline goes", still("toggle off", "page") and logged("toggle off", "stop page") and bus("toggle off") == 0,

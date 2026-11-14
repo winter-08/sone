@@ -98,8 +98,10 @@ is `verifier/bench/states.sh` (see `verifier/bench/states.py`).
   Rune has no partial redraw, and never skips a frame with a video surface on screen). On a
   GPU that is cheap (album page 5.7% of a core, full player 7.8%, against 0.2% and 1.0% with
   a still cover); under software rendering (lavapipe) it is not (149% and 871%, against 0.5%
-  and 26%). Unfocused, it costs nothing. Settings > Playback > "Animated album covers" turns
-  it off. Numbers: `../verifier/bench/results/states-2026-11-14-114331-vcover.md`.
+  and 26%), so there they are off unless turned on in Settings > Playback ("Animated album
+  covers"); software rendering is recognised by a Vulkan driver list naming only lavapipe,
+  `LIBGL_ALWAYS_SOFTWARE`, or no GPU render node. Unfocused, a cover costs nothing.
+  Numbers: `../verifier/bench/results/states-2026-11-14-114331-vcover.md`.
 - **Not verified on real hardware:** `on_visibility` (the headless compositor never reports it;
   animated covers stop on it, unit-tested only),
   touchpads, profile picture upload (needs a file chooser), X11, and real music.
