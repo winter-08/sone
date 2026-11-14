@@ -411,8 +411,7 @@ fn open_create(s: &mut App, folder: Option<String>) {
 }
 
 /// Every list a folder change can touch: the library's playlist lists and folders, and the
-/// playlist pickers (after a folder change, a playlist favourited or unfavourited, an MCP
-/// client's playlist change).
+/// playlist pickers (after a folder change, an MCP client's playlist change).
 pub fn refresh_folders() {
     data::forget(&Key::Folders);
     data::forget(&Key::AllPlaylists);

@@ -252,13 +252,14 @@ pub fn toggle_fav(k: Fav, id: String, label: String, say: Say) {
     });
 }
 
-/// The list a favourite of kind `k` shows in, after the server took a change to `id` (React adds
-/// to and removes from its caches, useFavorites.ts):
+/// The lists a favourite of kind `k` shows in, after the server took a change to `id` (React adds
+/// to and removes from its caches, useFavorites.ts), patched in place so their paging keeps its
+/// place (the sidebar's pagers among them):
+/// - an addition goes into each loaded list of its kind that doesn't hold it yet, where the
+///   list's first page puts it (`paged::add_in_place`);
 /// - Loved Tracks, Loved Videos and the library's albums, artists and mixes hide what was
-///   removed already (they filter by the favourite ids), so only an addition fetches them again,
-///   and only when a loaded list doesn't hold it yet;
-/// - the playlist lists (folders) don't filter, so a playlist added or removed fetches them again.
-/// Only that kind's lists start over: the others keep their place.
+///   removed already (they filter by the favourite ids); the playlist lists don't filter, so a
+///   playlist removed is taken out of them, and the playlist pickers are fetched again.
 pub fn refresh_lists(k: Fav, id: &str, now_on: bool) {
     use crate::paged::{self, Lib, PKey};
     fn lib(l: Lib) -> impl Fn(&PKey) -> bool {
@@ -267,12 +268,29 @@ pub fn refresh_lists(k: Fav, id: &str, now_on: bool) {
     let loved = |key: &PKey| matches!(key, PKey::Loved { .. });
     let videos = |key: &PKey| *key == PKey::LovedVideos;
     match k {
-        Fav::Track if now_on && !paged::all_hold(loved, id) => paged::forget_where(loved),
-        Fav::Video if now_on && !paged::all_hold(videos, id) => paged::forget_where(videos),
-        Fav::Album if now_on && !paged::all_hold(lib(Lib::Albums), id) => data::forget(&Key::FavAlbums),
-        Fav::Artist if now_on && !paged::all_hold(lib(Lib::Artists), id) => data::forget(&Key::FavArtists),
-        Fav::Mix if now_on && !paged::all_hold(lib(Lib::Mixes), id) => data::forget(&Key::FavMixes),
-        Fav::Playlist if !(now_on && paged::all_hold(lib(Lib::Playlists), id)) => crate::library::refresh_folders(),
+        Fav::Track if now_on => paged::add_in_place(loved, id),
+        Fav::Video if now_on => paged::add_in_place(videos, id),
+        Fav::Album if now_on => {
+            data::forget_entry(&Key::FavAlbums);
+            paged::add_in_place(lib(Lib::Albums), id);
+        }
+        Fav::Artist if now_on => {
+            data::forget_entry(&Key::FavArtists);
+            paged::add_in_place(lib(Lib::Artists), id);
+        }
+        Fav::Mix if now_on => {
+            data::forget_entry(&Key::FavMixes);
+            paged::add_in_place(lib(Lib::Mixes), id);
+        }
+        Fav::Playlist => {
+            if now_on {
+                paged::add_in_place(lib(Lib::Playlists), id);
+            } else {
+                paged::remove_id(lib(Lib::Playlists), id);
+            }
+            data::forget(&Key::AllPlaylists);
+            data::forget(&Key::FlattenedPlaylists);
+        }
         _ => {}
     }
 }

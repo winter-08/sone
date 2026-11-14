@@ -248,14 +248,6 @@ pub fn forget_where(f: impl Fn(&PKey) -> bool) {
 }
 
 
-/// Whether every collection `f` picks already holds the item `id` (a track or album id, a
-/// playlist uuid, a mix id); true when none is loaded. A favourite added back after it was
-/// removed is still in its list, which then needn't be fetched again.
-pub fn all_hold(f: impl Fn(&PKey) -> bool, id: &str) -> bool {
-    let st = STORE.lock().unwrap();
-    st.iter().filter(|(k, e)| f(k) && !e.idle).all(|(_, e)| e.items.iter().any(|v| item_id(v) == id))
-}
-
 /// Takes one item out of every loaded collection `f` picks, the first for which `pick(place,
 /// item)` holds, at once (an optimistic removal; the server is told after). Paging goes on from
 /// one place earlier, and the total is one less.
@@ -268,6 +260,61 @@ pub fn remove_where(f: impl Fn(&PKey) -> bool, pick: impl Fn(usize, &Value) -> b
             e.total = e.total.map(|t| t.saturating_sub(1));
             e.mark();
         }
+    }
+}
+
+/// Takes the item `id` out of every loaded collection `f` picks (a playlist un-favourited).
+pub fn remove_id(f: impl Fn(&PKey) -> bool, id: &str) {
+    remove_where(f, |_, v| item_id(v) == id);
+}
+
+/// Puts `v` at `i` in a loaded collection (an item the server added there): paging goes on
+/// from one place later, and the total is one more.
+fn insert_into(key: &PKey, e: &mut Entry, i: usize, v: Value) {
+    if let Some(id) = ident(key, &v) {
+        e.seen.insert(id);
+    }
+    let i = i.min(e.items.len());
+    Arc::make_mut(&mut e.items).insert(i, v);
+    e.next += 1;
+    e.total = e.total.map(|t| t + 1);
+    e.mark();
+}
+
+/// Where the item `id` sits in the head of a list (its first page, as sorted), and the item
+/// as the server lists it.
+fn place(head: Vec<Value>, id: &str) -> Option<(usize, Value)> {
+    head.into_iter().enumerate().find(|(_, v)| item_id(v) == id)
+}
+
+/// A favourite the server just took, into every loaded collection `f` picks that doesn't hold
+/// it yet, in place (useFavorites puts it at the head of its caches): the list's first page,
+/// as it is sorted, says where it goes and gives the item, and paging goes on where it was.
+/// A list whose first page doesn't have it (sorted so that it lands further down) starts over
+/// alone; a playlist folder below the root, which a favourite never goes into, stays as it is.
+pub fn add_in_place(f: impl Fn(&PKey) -> bool, id: &str) {
+    let lists: Vec<(PKey, u64)> = {
+        let st = STORE.lock().unwrap();
+        st.iter().filter(|(k, e)| f(k) && !e.idle && !e.items.iter().any(|v| item_id(v) == id)).map(|(k, e)| (k.clone(), e.epoch)).collect()
+    };
+    for (key, epoch) in lists {
+        let id = id.to_string();
+        sone_host_shim::async_runtime::spawn(async move {
+            let head = fetch_page(&key, 0, None).await;
+            let mut st = STORE.lock().unwrap();
+            let Some(e) = st.get_mut(&key).filter(|e| e.epoch == epoch) else { return };
+            if e.items.iter().any(|v| item_id(v) == id) {
+                return;
+            }
+            match head.ok().and_then(|(items, ..)| place(items, &id)) {
+                Some((i, v)) => insert_into(&key, e, i, v),
+                None if matches!(&key, PKey::Library { kind: Lib::Playlists, folder, .. } if folder.as_str() != "root") => {}
+                None => {
+                    drop(st);
+                    forget_where(|k| *k == key);
+                }
+            }
+        });
     }
 }
 
@@ -374,7 +421,9 @@ fn spawn(key: PKey, epoch: u64) {
                     // A page of nothing but repeats ends a list the server keeps repeating.
                     let stalled = n > 0 && fresh.is_empty() && matches!(key, PKey::ArtistTracks(_) | PKey::ArtistViewAll(..));
                     Arc::make_mut(&mut e.items).extend(fresh);
-                    e.next = offset + n;
+                    // (relative: an item put in or taken out while the page was on its way
+                    // moved where paging goes on from)
+                    e.next += n;
                     e.cursor = cursor;
                     if total.is_some() {
                         e.total = total;
@@ -485,8 +534,32 @@ mod tests {
     }
 
     #[test]
-    fn a_list_nobody_loaded_holds_everything() {
-        assert!(all_hold(|k| matches!(k, PKey::ArtistViewAll(4242, _)), "1"));
+    fn a_favourite_goes_in_place_and_paging_moves_with_it() {
+        let key = PKey::ArtistViewAll(4243, "in-place-test".into());
+        let mut e = Entry::fresh(0);
+        e.items = Arc::new(vec![json!({"id": 1}), json!({"id": 2}), json!({"id": 3})]);
+        e.next = 3;
+        e.total = Some(10);
+        e.loading = false;
+        // the head of the list, as sorted, has the new item second
+        let head = vec![json!({"id": 1}), json!({"id": 9, "title": "new"}), json!({"id": 2})];
+        let (i, v) = place(head.clone(), "9").unwrap();
+        assert_eq!(i, 1);
+        assert!(place(head, "8").is_none());
+        insert_into(&key, &mut e, i, v);
+        let ids: Vec<String> = e.items.iter().map(item_id).collect();
+        assert_eq!(ids, ["1", "9", "2", "3"]);
+        assert_eq!((e.next, e.total), (4, Some(11)));
+        assert!(e.seen.contains("9"));
+        // and taken out again: one place back
+        STORE.lock().unwrap().insert(key.clone(), e);
+        remove_id(|k| *k == key, "9");
+        let st = STORE.lock().unwrap();
+        let e = &st[&key];
+        assert_eq!(e.items.iter().map(item_id).collect::<Vec<_>>(), ["1", "2", "3"]);
+        assert_eq!((e.next, e.total), (3, Some(10)));
+        drop(st);
+        STORE.lock().unwrap().remove(&key);
     }
 }
 
