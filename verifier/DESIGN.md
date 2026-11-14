@@ -699,6 +699,34 @@ Found on the way:
 - Rune exposes only on-screen content to AT-SPI (AccessKit), so at 1400x900 a results page's
   lower sections can't be found by name (the verifier uses a 1400x2000 display for this).
 
+## Rune upgrade and parity waves (2026-11-13 and 14)
+
+Earlier sections say videos, settings and most views aren't ported; that is history. As of
+`rune-port` at `29a3fe1`:
+
+- **Rune pin** moved from `58eeef5` to `6c3cb8a`. The view is five regions over tracked state,
+  track lists are virtual, and `bench/states.py` measures fixed states (player closed/open,
+  paused, unfocused, covered, hidden, a large track list) from `SONE_PERF` lines. Results are in
+  `bench/results/states-2026-11-13-*`: the ~100 % CPU spin with the window covered went away with
+  the pin, a 3000-row list that used to pass 3 GB holds near 500 MB, and scrolling no longer runs
+  the view per wheel notch. A playing track list still redraws the window at 60 fps (the playing
+  row's bars).
+- **Parity** against the React source was audited statically three times: before the work, after
+  the first wave (at `2d1bc21`) and after the fix wave (at `9bd8d26`), then the last findings were
+  fixed. Counts at the last audit, at parity of examined: playback core 91/103, now-playing
+  88/105, videos 48/63, collections ~113/~125, menus ~64/76, discovery ~61/77; the shell and
+  settings lists were closed except what `rune-app/README.md` lists under "Not done". Every backend
+  command the React frontend invokes is called or replaced.
+- **Harness changes:** `--ignore` now applies to the start-up state as it does to steps
+  (`harness/compare.py`, tests in `harness/test_compare.py`), which let Home gain named controls
+  and the player bar become a named landmark; `fake_tidal.py` gained opt-in fixtures
+  (`SPIKE_BENCH_BIG`, `SPIKE_FOLDERS`, `SPIKE_HOME_EXTRA`, `SPIKE_HOME_TABS`, `SPIKE_COLLECTIONS`,
+  `SPIKE_ARTIST_VIEWALL`, `SPIKE_RECS`, `SPIKE_PROFILE_ARTIST`, `SPIKE_PLAYLIST_VIDEO`); one waiver
+  was added (`button: Dismiss`, the legacy-sign-in toast's close button).
+- **Still true:** Rune builds need the 1400x2000 display; L3 (the full accessibility inventory,
+  without `--ignore`) fails on control names that differ from the reference; `verify.py run`
+  crashes after a scenario with `audio = false` (`audio.summary`, KeyError 'segments').
+
 ## Build order
 
 1. ~~Spikes~~, ~~sandbox completion~~, ~~harness v0~~, ~~port slice 1 (playback core)~~,

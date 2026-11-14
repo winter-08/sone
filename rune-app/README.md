@@ -1,56 +1,92 @@
 # SONE on Rune (no WebKitGTK)
 
 SONE's backend (`../src-tauri`, unchanged behaviour) under a native [Rune](https://github.com/anomalyco/rune)
-UI instead of Tauri's WebKitGTK webview. Work in progress: this is the **playback core slice**.
+UI instead of Tauri's WebKitGTK webview. The React frontend in `../src` is the specification: what
+a user can do there, they should be able to do here. Two audits against it are recorded in
+`../verifier/DESIGN.md`; what is still missing is listed at the end of this file.
 
 ```
 rune-app/
-  src/main.rs          boot the backend through host-shim, route its events, open the Rune window
-  src/controller.rs    SONE's React playback/queue logic re-implemented in Rust (one actor)
-  src/ui.rs, glyph.rs  the Afterglow kit from ~/dev/music-player, rebound to the controller
-  PLAYBACK_SPEC.md     the behavioural contract, written from the React sources
-  shell.nix, wrap.sh   build shell; wrapper with the runtime environment baked in
-../src-tauri/host-shim the slice of Tauri's API the backend uses, minus the webview
+  src/main.rs            boot the backend through host-shim, route its events, the view's panes
+  src/controller.rs      SONE's React playback/queue logic re-implemented in Rust (one actor)
+  src/content.rs         explicit / AI content filter        src/sources.rs   paged play sources
+  src/ui.rs, glyph.rs    the Afterglow kit, the player bar   src/icons.rs     lucide icons
+  src/views.rs           header, sidebar, search, album, artist, mix, feed, explore, drawer
+  src/home.rs            Home tabs and sections              src/viewall.rs   view-all pages
+  src/paged.rs, coll.rs  paged collections, sort, shared collection state
+  src/playlist.rs, loved.rs, library.rs                      playlist, Loved, library and folders
+  src/interact.rs        context menus, favourites, playlist dialogs, toasts
+  src/queue_ui.rs, drawer_tabs.rs, signal_path.rs            the now-playing panel
+  src/full_ui.rs, mini.rs                                    full-screen player, miniplayer
+  src/video.rs, video_ui.rs, hls_relay.rs                    music videos (GStreamer)
+  src/settings.rs, login.rs, profile.rs, theme.rs            settings, sign-in, profile, themes
+  src/shell.rs, keys.rs  title bar, window state, tray, deep links; shortcuts and rebinding
+  src/obs.rs, mcp_sync.rs, proxy_banner.rs, notices.rs, scheme.rs   integrations and notices
+  src/data.rs, art.rs, formats.rs, skeleton.rs               catalogue cache, artwork, formatting
+  src/perf.rs            SONE_PERF=1: one line every 5 s on what the window did
+  PLAYBACK_SPEC.md       the behavioural contract, written from the React sources
+  PLAYER_DESIGN.md       decisions on the full-screen player and miniplayer
+  shell.nix, wrap.sh     build shell; wrapper with the runtime environment baked in
+../src-tauri/host-shim   the slice of Tauri's API the backend uses, minus the webview
 ```
 
 How the backend runs without Tauri: `src-tauri` has two features. `tauri-ui` (default) is the
 shipping app, unchanged. `host` makes Tauri/WebKit/GTK optional and aliases `tauri::` to
 `host-shim`, an in-process event bus with managed state; `#[tauri::command]`s become plain
 functions the controller calls. `setup_core()` (in `src-tauri/src/lib.rs`) is the window-free
-part of startup, shared by both.
+part of startup, shared by both, and `on_exit()` the shared shutdown.
 
 ## Build and run
 
+`shell.nix` takes the floating nixpkgs, where the GStreamer patch no longer applies, so pin it:
+
 ```bash
-nix-shell rune-app/shell.nix --run 'cd rune-app && cargo build && ./wrap.sh'
+nix-shell rune-app/shell.nix --arg pkgs 'import (builtins.getFlake "github:NixOS/nixpkgs/f9a75f41be3a74eab55d3a7679d34ad6cc0da977") {}' --run 'cd rune-app && cargo build && ./wrap.sh'
 rune-app/target/debug/sone-rune-wrapped
 ```
 
-It uses your normal SONE profile (`~/.config/sone`). Rust 1.99.1 comes from `rust-toolchain.toml`.
+It uses your normal SONE profile (`~/.config/sone`) and keeps its own state beside
+`settings.json`: `rune-shell.json` (shortcut bindings, zoom, title bar, window and miniplayer
+geometry, under the keys the React app used in localStorage), `rune-ui.json`, `rune-library.json`,
+`rune-recent-playlists.json`, and `theme.json`. Rust comes from `rust-toolchain.toml`.
 
-Menus, the search dropdown, toasts and dialogs are frosted glass (a backdrop blur under a dark
-tint in the playing cover's hue, `theme::overlay_surface`); the page, sidebar, drawer and player
-bar stay opaque. `SONE_GLASS=0` (read at startup) draws the overlays on the plain opaque surface
-instead, as a Reduce Transparency setting would.
+- One instance at a time: a second launch raises the first and hands over a `tidal://` link.
+- A release build registers itself as the `tidal://` handler at launch (a `.desktop` file in
+  `~/.local/share/applications` and `xdg-mime default`), as the Tauri app does;
+  `SONE_NO_SCHEME_REGISTER=1` turns that off. Debug builds never register.
+- `SONE_PERF=1` logs frames, view runs, polls, region rebuilds, CPU and memory every 5 s.
+  `SONE_FX=0` turns the one-shot motion off. `SONE_GLASS=0` draws menus, toasts and dialogs on an
+  opaque surface instead of frosted glass. `SONE_SOFTWARE_VULKAN=1` renders on lavapipe.
+- `RUNE_REGION_MISS=1` prints why a pane rebuilt. The view is five Rune regions (header, page,
+  drawer, sidebar, nowbar) over tracked state; a playback position tick should rebuild only
+  `nowbar`, and a debug build warns (`rune: region …`) when a reused region is stale.
+
+Rune is pinned in `Cargo.toml`; `package.nix` carries a `cargoHash` that must be updated whenever
+`Cargo.lock` changes (`nix build .#rone` reports the wanted value).
 
 ## Verify against the original
 
 ```bash
-nix-shell verifier/harness/shell.nix --run \
-  'python3 -I verifier/verify.py check --ignore controls,unnamed_controls --bin rune-app/target/debug/sone-rune-wrapped'
+nix-shell verifier/harness/shell.nix --arg pkgs 'import (builtins.getFlake "github:NixOS/nixpkgs/f9a75f41be3a74eab55d3a7679d34ad6cc0da977") {}' --run \
+  'python3 -I verifier/verify.py check --display 1400x2000 --ignore controls,unnamed_controls --bin rune-app/target/debug/sone-rune-wrapped'
 ```
 
-`--ignore controls,unnamed_controls` judges behaviour (MPRIS, MCP, network, bit-exact audio) and
-leaves out the accessibility inventory, which can't match until SONE's other views are ported.
-The sandbox never touches real audio hardware.
+Rune exposes only on-screen content to assistive technology, so Rune builds are scored on a tall
+display. `--ignore controls,unnamed_controls` judges behaviour (MPRIS, MCP, network, bit-exact
+audio) and leaves out the accessibility inventory, whose control names still differ from the
+reference's. The sandbox never touches real audio hardware or your profile. The state benchmark
+is `verifier/bench/states.sh` (see `verifier/bench/states.py`).
 
-## Not in this slice yet
+## Not done
 
-Library/search/home/album/artist/playlist views, sign-in UI (an existing signed-in profile works),
-settings UI, miniplayer, lyrics, music videos (blocked on Rune Linux video, anomalyco/rune#30) and
-toasts beyond a one-line notice.
-
-The window shell (`src/shell.rs`) keeps what the React app kept in localStorage for it (shortcut
-bindings, zoom, the hidden title bar, the miniplayer's place) in `rune-shell.json` beside
-`settings.json`, under the same keys, with the main window's geometry. Keyboard shortcuts and
-their dialog are `src/keys.rs`.
+- **Animated album covers** (`videoCovers` in React) and their Playback toggle.
+- **Needs Rune changes:** top and left resize edges on a frameless window; switching to or from
+  the system title bar without a restart; global media keys (MPRIS still carries them on GNOME
+  and KDE); the Maximize/Restore label following the compositor on Wayland.
+- **Cannot exist without a webview:** the embedded TIDAL login window. "Sign in with TIDAL" and
+  "Open in browser instead" both run the browser flow.
+- **Deliberately different** from React: the album art in the player bar opens the full-screen
+  player (`PLAYER_DESIGN.md`); every press of Next counts; the track menu has "Go to album" and
+  "Go to artist"; a video's heart and menu act on the video, not on a track with its id.
+- **Not verified on real hardware:** `on_visibility` (the headless compositor never reports it),
+  touchpads, profile picture upload (needs a file chooser), X11, and real music.
