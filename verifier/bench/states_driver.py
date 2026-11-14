@@ -40,6 +40,13 @@ GPU = bool(os.environ.get("SPIKE_GPU"))
 ALL_STATES = ["idle_home", "closed_playing", "open_playing", "open_paused", "open_unfocused",
               "covered_playing", "hidden_workspace", "hidden_scratchpad",
               "biglist_playing", "biglist_scroll", "biglist_paused"]
+# Not in the default list (give them with --states):
+#   biglist_down, biglist_up, biglist_down2: the big list, paused, wheeled to the very bottom
+#     (every page loaded), back to the top, and to the bottom again; memory after each.
+#   region_home, region_playlist, region_drawer: playing on Home, on the fixture playlist, and
+#     there with the now-playing drawer open; with RUNE_REGION_MISS=1 in the build's env the
+#     app prints "rune-miss KEY WHY" for every region that builds again, counted per state.
+MISS = re.compile(r"^rune-miss (.+?) (version|state \S+ v\d+|layout .+|caret .+|selection)$")
 STATES = [s for s in os.environ.get("SPIKE_BENCH_STATES", ",".join(ALL_STATES)).split(",") if s]
 
 
@@ -193,7 +200,7 @@ class Guard:
     the RAM.) Checked every 0.1 s from /proc/PID/statm."""
 
     def __init__(self, pid: int):
-        self.pid, self.tripped = pid, None
+        self.pid, self.tripped, self.peak = pid, None, 0.0
         threading.Thread(target=self._run, daemon=True).start()
 
     def _run(self):
@@ -202,6 +209,7 @@ class Guard:
                 rss_mb = int(open(f"/proc/{self.pid}/statm").read().split()[1]) * PAGE / 2**20
             except (OSError, ValueError, IndexError):
                 return
+            self.peak = max(self.peak, rss_mb)
             if rss_mb > RSS_LIMIT_MB:
                 self.tripped = {"rss_mb": round(rss_mb), "t": boottime(), "phase": getattr(RUN_OBJ, "phase", "startup")}
                 try:
@@ -220,6 +228,8 @@ class Tail:
         self.root, self.sway = root, sway
         self.lines = []  # dicts: t (boottime), parsed, snap
         self.vis = []  # (boottime, line): the app's own "[rune] main window on/off screen" log lines
+        self.miss = []  # (boottime, key, why): RUNE_REGION_MISS lines
+        self.stale = []  # (boottime, line): debug builds' "rune: region ... was reused, but ..." warnings
         self.cv = threading.Condition()
         self.log_bytes = 0
         threading.Thread(target=self._run, daemon=True).start()
@@ -249,6 +259,11 @@ class Tail:
                     # the stderr copy only (the log::info copy carries a level prefix)
                     if "main window" in line and ("on screen" in line or "off screen" in line):
                         self.vis.append((boottime(), line[-120:]))
+                    if line.startswith("rune-miss "):
+                        mm = MISS.match(line)
+                        self.miss.append((boottime(), *(mm.groups() if mm else (line[10:], "?"))))
+                    elif "rune: region" in line:
+                        self.stale.append((boottime(), line[:400]))
                     if line.startswith("[perf]"):
                         rec = {"t": boottime(), "line": line, "p": parse_perf(line), "snap": self.snap()}
                         with self.cv:
@@ -423,6 +438,7 @@ class Run:
         self.m = None
         self.cover = None
         self.wheel = None
+        self.last_sweep = {}
 
     # -- startup: launch -> first map (sway), MCP up, Home button exposed, Home content
     def startup(self):
@@ -538,6 +554,8 @@ class Run:
             for want in expect.get("flags", []):
                 if want not in fl:
                     bad.append(f"perf line says {' '.join(fl)}, expected {want}")
+        if expect.get("focused") is not None and rec.get("sway_view", {}).get("focused") != expect["focused"]:
+            bad.append(f"sway says focused={rec.get('sway_view', {}).get('focused')}, expected {expect['focused']}")
         if expect.get("visible") is not None and rec.get("sway_view", {}).get("visible") != expect["visible"]:
             bad.append(f"sway says visible={rec.get('sway_view', {}).get('visible')}, expected {expect['visible']}")
         rec["notes"] += sorted(set(bad))
@@ -572,6 +590,18 @@ class Run:
         ext["load1_start"], ext["load1_end"] = ma["load1"], mb["load1"]
         ext["log_bytes_per_s"] = round((b["log_bytes"] - a["log_bytes"]) / secs)
         o["ext"] = ext
+        # region rebuilds (RUNE_REGION_MISS) inside the window, per second, by region key
+        misses = [(k, w) for t, k, w in self.tail.miss if a["t"] <= t <= b["t"]]
+        if self.tail.miss:
+            by = {}
+            for k, w in misses:
+                e = by.setdefault(k, {"n": 0, "why": {}})
+                e["n"] += 1
+                w0 = re.sub(r" v\d+$", "", w)
+                e["why"][w0] = e["why"].get(w0, 0) + 1
+            o["region_miss_per_s"] = {k: {"per_s": round(e["n"] / secs, 2), "why": e["why"]}
+                                      for k, e in sorted(by.items(), key=lambda kv: -kv[1]["n"])}
+            o["region_miss_total_per_s"] = round(len(misses) / secs, 2)
         return o
 
     def view_check(self):
@@ -621,7 +651,21 @@ class Run:
             v = app_view(self.root)
             if v:
                 swaymsg(f"[pid={v['pid']}]", "focus")
-        S["open_unfocused"] = (unfocus, {"flags": ["open", "playing", "unfocused"], "visible": True}, self.view_check, refocus)
+        # The focus is judged by sway's tree, not the perf line's flag: from the parity work on the
+        # app's perf focus handler sits on an element that is no longer the view's root (the shell
+        # frame wraps it), so Rune never calls it and the flag stays "focused" (rune-app main.rs).
+        S["open_unfocused"] = (unfocus, {"flags": ["open", "playing"], "focused": False, "visible": True}, self.view_check, refocus)
+
+        def unfocus_closed():  # diagnostic (not in the default list): the same, player closed
+            close_player()
+            m.call("resume")
+            outs = json.loads(swaymsg("-t", "get_outputs"))
+            if not any(o["name"] == "HEADLESS-2" for o in outs):
+                swaymsg("create_output")
+                time.sleep(0.3)
+            swaymsg("focus", "output", "HEADLESS-2")
+            time.sleep(0.3)
+        S["closed_unfocused"] = (unfocus_closed, {"flags": ["closed", "playing"], "focused": False, "visible": True}, self.view_check, refocus)
 
         def close_player():
             time.sleep(0.3)
@@ -687,7 +731,7 @@ class Run:
             # the first row's buttons (rows themselves are presentation; their hearts are not
             # named per track, so look for the count text the header shows)
             t1 = time.monotonic()
-            cnt = find_first(lambda r, n: n.endswith(" tracks") and n.split()[0].isdigit())
+            cnt = find_first(lambda r, n: n.endswith(" tracks") and n.split()[0].replace(",", "").isdigit())
             d["rows_total_text"] = cnt.name if cnt is not None else None
             d["count_lookup_s"] = round(time.monotonic() - t1, 3)
             return d
@@ -727,6 +771,71 @@ class Run:
         S["biglist_scroll"] = (scroll, {"flags": ["closed", "playing", "focused"], "visible": True}, scroll_check, unscroll)
         S["biglist_paused"] = (lambda: m.call("pause"), {"flags": ["closed", "paused", "focused"], "visible": True}, self.view_check, None)
 
+        # ---- stress: wheel the big list to the bottom (every page in), the top, the bottom again
+        def rows_requested() -> int:
+            fr = fav_requests()
+            return max((x["offset"] + x["rows_served"] for x in fr), default=0)
+
+        def sweep(direction: int, need_all: bool, max_s: float = 300.0) -> dict:
+            if find_first(lambda r, n: r == "heading" and n == "Loved Tracks") is None:
+                to_biglist()
+            m.call("pause")
+            swaymsg("seat", "-", "cursor", "set", "800", "620")
+            w = subprocess.Popen(["python3", "-I", os.path.join(HERE, "wheel.py")], stdin=subprocess.PIPE, text=True, bufsize=1)
+            time.sleep(0.5)
+            t0, notches, still, last = time.monotonic(), 0, 0, None
+            try:
+                while time.monotonic() - t0 < max_s:
+                    for _ in range(20):
+                        w.stdin.write(f"{direction}\n")
+                        notches += 1
+                        time.sleep(0.005)
+                    time.sleep(0.15)
+                    if need_all and rows_requested() < BIG:
+                        still, last = 0, None
+                        continue
+                    h = shot("sweep")
+                    still = still + 1 if h is not None and h == last else 0
+                    last = h
+                    if still >= 3:
+                        break
+            finally:
+                w.stdin.close()
+                w.wait(5)
+            self.last_sweep = {"sweep_s": round(time.monotonic() - t0, 1), "sweep_notches": notches, "sweep_end_reached": still >= 3,
+                               "rows_requested": rows_requested(), "fav_requests_n": len(fav_requests())}
+            return self.last_sweep
+
+        def sweep_check():
+            d = self.view_check()
+            d["rss_peak_mb_so_far"] = round(self.guard.peak)
+            if not self.last_sweep.get("sweep_end_reached"):
+                raise RuntimeError("the sweep never reached the end of the list")
+            return d
+        exp_paused = {"flags": ["closed", "paused", "focused"], "visible": True}
+        S["biglist_down"] = (lambda: sweep(1, True), exp_paused, sweep_check, None)
+        S["biglist_up"] = (lambda: sweep(-1, False), exp_paused, sweep_check, None)
+        S["biglist_down2"] = (lambda: sweep(1, False), exp_paused, sweep_check, None)
+
+        # ---- regions: what builds again per position tick, on Home, a playlist, with the drawer
+        def reg_home():
+            close_player()
+            atspi.press("Home")
+            play()
+        S["region_home"] = (reg_home, {"flags": ["closed", "playing", "focused"], "visible": True}, self.view_check, None)
+
+        def reg_playlist():
+            atspi.press("Fixture Mixtape Fixture Mixtape You · 4 Tracks")
+            time.sleep(2.0)
+            ensure_playing()
+        S["region_playlist"] = (reg_playlist, {"flags": ["closed", "playing", "focused"], "visible": True}, self.view_check, None)
+
+        def reg_drawer():
+            atspi.press("Play queue")
+            time.sleep(1.5)
+            ensure_playing()
+        S["region_drawer"] = (reg_drawer, {"flags": ["closed", "playing", "focused"], "visible": True}, self.view_check, None)
+
         for name in STATES:
             if name not in S:
                 self.out["errors"].append(f"unknown state {name}")
@@ -742,6 +851,9 @@ class Run:
                 self.out["fav_requests"] = fav_requests()
         self.out["perf_all"] = [{"t": round(r["t"] - self.t_launch, 2), "line": r["line"]} for r in self.tail.lines]
         self.out["visibility_log_all"] = [{"t": round(t - self.t_launch, 2), "line": ln} for t, ln in self.tail.vis]
+        self.out["region_stale_warnings"] = [{"t": round(t - self.t_launch, 2), "line": ln} for t, ln in self.tail.stale]
+        self.out["region_miss_lines"] = len(self.tail.miss)
+        self.out["rss_peak_mb"] = round(self.guard.peak)
         self.quit()
 
     # -- quit: the compositor asks the window to close (xdg_toplevel.close, as the title bar's

@@ -47,6 +47,12 @@ STATE_LABELS = {
     "biglist_playing": "Big list open, playing (row shows playing bars)",
     "biglist_scroll": "Big list, wheel-scrolling, playing",
     "biglist_paused": "Big list open, paused",
+    "biglist_down": "Big list, paused, after wheeling to the bottom (all pages in)",
+    "biglist_up": "Big list, paused, after wheeling back to the top",
+    "biglist_down2": "Big list, paused, after wheeling to the bottom again",
+    "region_home": "Playing on Home (region check)",
+    "region_playlist": "Playing on a playlist page (region check)",
+    "region_drawer": "Playing on a playlist, now-playing drawer open (region check)",
 }
 
 # (key in a state's record, label, number format)
@@ -358,8 +364,20 @@ def main():
                          + f"; rows served {sum(x['rows_served'] for x in fr)}"
                          + f"; on/off-screen log lines {len(vis)}"
                          + (f"; KILLED by guard at {g['killed_at_rss_mb']} MB during {g.get('phase')}" if g else "")
+                         + (f"; RSS peak {r['rss_peak_mb']} MB" if r.get("rss_peak_mb") else "")
+                         + (f"; region stale warnings {len(r['region_stale_warnings'])}" if r.get("region_stale_warnings") else "")
+                         + "".join(f"; {s} {v['sweep_notches']} notches {v['sweep_s']} s rows {v['rows_requested']}" + ("" if v.get("sweep_end_reached") else " END NOT REACHED")
+                                   for s, v in r["states"].items() if "sweep_notches" in v)
                          + (f"; errors {len(r.get('errors', []))}" if r.get("errors") else ""))
         L.append("")
+        rm = [(n, i, s, v) for n in names for i, r in enumerate(results[m][n]) for s, v in r["states"].items() if "region_miss_per_s" in v]
+        if rm:
+            L.append("Region rebuilds (RUNE_REGION_MISS) per second in the kept window, by region (first stale read):")
+            L.append("")
+            for n, i, s, v in rm:
+                L.append(f"- {n} run{i} {s}: total {v['region_miss_total_per_s']}/s: " + (", ".join(
+                    f"`{k}` {e['per_s']}/s ({'; '.join(f'{w} ×{c}' for w, c in list(e['why'].items())[:2])})" for k, e in v["region_miss_per_s"].items()) or "none"))
+            L.append("")
         L.append("Sessions (machine load, 1-min loadavg at start → end):")
         L.append("")
         for n in names:
