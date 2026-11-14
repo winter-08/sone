@@ -368,7 +368,9 @@ fn view(s: &App, cx: &mut Cx<App>) -> El {
     // corner; the drawer sits beside the page below it, or over the page's right edge.
     let mut content = row().grow(1.0).min_h(0.0).w_full().child(page);
     if s.nav.drawer.is_some() {
-        content = content.child(pane("drawer", (shell_in, stores), || views::drawer(s, &s.ctl, shell).unwrap_or_else(el)));
+        // (its colour wash can come from the cover's pixels, which land without a state change)
+        let tinted = crate::art::cover_color(Tracked::untracked(&s.ctl).cover.as_deref()).is_some();
+        content = content.child(pane("drawer", (shell_in, stores, tinted), || views::drawer(s, &s.ctl, shell).unwrap_or_else(el)));
     }
     let main = col().grow(1.0).min_w(0.0).h_full().child(header).child(content);
     // "Your Library" collapses the sidebar to its icons (React's 60 px sidebar).
