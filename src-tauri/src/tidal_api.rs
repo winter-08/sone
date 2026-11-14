@@ -52,6 +52,19 @@ fn rate_limited_error(secs: u64) -> SoneError {
 }
 
 const TIDAL_AUTH_URL: &str = "https://auth.tidal.com/v1/oauth2";
+
+/// Tests point the token refresh at a local server.
+#[cfg(test)]
+static TEST_AUTH_URL: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+
+/// Where a token refresh goes.
+fn auth_url() -> String {
+    #[cfg(test)]
+    if let Some(u) = TEST_AUTH_URL.get() {
+        return u.clone();
+    }
+    TIDAL_AUTH_URL.to_string()
+}
 const TIDAL_API_URL: &str = "https://api.tidal.com/v1";
 const TIDAL_API_V2_URL: &str = "https://api.tidal.com/v2";
 const TIDAL_OPENAPI_URL: &str = "https://openapi.tidal.com/v2";
@@ -1292,6 +1305,29 @@ pub struct DeviceAuthResponse {
 /// Invoked with freshly refreshed tokens so the caller can persist them.
 pub type TokenPersist = Arc<dyn Fn(&AuthTokens) + Send + Sync>;
 
+/// How many requests the client has in flight at once, across every handle: enough that a page's
+/// requests and a play don't queue behind each other, few enough that a burst (start-up asks for
+/// a dozen things) can't flood TIDAL into rate-limiting.
+pub const MAX_IN_FLIGHT: usize = 6;
+
+/// What every handle of one client shares. The session state lives here, each part behind its
+/// own lock held only to read or swap it, never across a request.
+struct ClientShared {
+    tokens: std::sync::RwLock<Option<AuthTokens>>,
+    credentials: std::sync::RwLock<(String, String)>,
+    country_code: std::sync::RwLock<String>,
+    /// Held while a token refresh runs: requests that saw the same expired token wait here, then
+    /// take the new one instead of refreshing again (TIDAL may rotate the refresh token, and a
+    /// second refresh with the old one would fail and sign the user out).
+    refresh: tokio::sync::Mutex<()>,
+    /// [`MAX_IN_FLIGHT`] permits; a request holds one while it is sent.
+    slots: tokio::sync::Semaphore,
+}
+
+/// A handle on the TIDAL client. Handles are cheap to clone and are used concurrently: the
+/// public fields are this handle's copy of the session as of when it was taken (see
+/// [`TidalClientCell::lock`]), and the setters write through to every handle.
+#[derive(Clone)]
 pub struct TidalClient {
     /// The shared cell, not a client: when the proxy plan is blocked there is
     /// nothing to hand out, and that must stay unrepresentable here.
@@ -1304,6 +1340,25 @@ pub struct TidalClient {
     pub country_code: String,
     token_persist: Option<TokenPersist>,
     gate: Arc<crate::rate_gate::RateGate>,
+    shared: Arc<ClientShared>,
+}
+
+/// Where the app keeps its TIDAL client (`AppState::tidal_client`). It used to be a mutex held
+/// across every HTTP request, so all of TIDAL went one request at a time; `lock` now hands out
+/// a fresh handle and holds nothing, and requests run concurrently (up to [`MAX_IN_FLIGHT`]).
+pub struct TidalClientCell(std::sync::Mutex<TidalClient>);
+
+impl TidalClientCell {
+    pub fn new(client: TidalClient) -> Self {
+        Self(std::sync::Mutex::new(client))
+    }
+
+    /// A handle with the current session. (Named and awaited like the mutex it replaced, so
+    /// `state.tidal_client.lock().await` still reads naturally at its many call sites; it no
+    /// longer excludes anything.)
+    pub async fn lock(&self) -> TidalClient {
+        self.0.lock().unwrap().handle()
+    }
 }
 
 impl TidalClient {
@@ -1316,7 +1371,23 @@ impl TidalClient {
             country_code: "US".to_string(),
             token_persist: None,
             gate: Arc::new(crate::rate_gate::RateGate::new()),
+            shared: Arc::new(ClientShared {
+                tokens: std::sync::RwLock::new(None),
+                credentials: std::sync::RwLock::new((String::new(), String::new())),
+                country_code: std::sync::RwLock::new("US".to_string()),
+                refresh: tokio::sync::Mutex::new(()),
+                slots: tokio::sync::Semaphore::new(MAX_IN_FLIGHT),
+            }),
         }
+    }
+
+    /// A handle with the session as it is now (every handle's setters write it).
+    pub fn handle(&self) -> TidalClient {
+        let mut h = self.clone();
+        h.tokens = self.shared.tokens.read().unwrap().clone();
+        (h.client_id, h.client_secret) = self.shared.credentials.read().unwrap().clone();
+        h.country_code = self.shared.country_code.read().unwrap().clone();
+        h
     }
 
     /// Register the hook that writes refreshed tokens to disk.
@@ -1327,6 +1398,19 @@ impl TidalClient {
     pub fn set_credentials(&mut self, client_id: &str, client_secret: &str) {
         self.client_id = client_id.to_string();
         self.client_secret = client_secret.to_string();
+        *self.shared.credentials.write().unwrap() = (self.client_id.clone(), self.client_secret.clone());
+    }
+
+    /// Sets the session's tokens, for this handle and every handle taken after.
+    pub fn set_tokens(&mut self, tokens: Option<AuthTokens>) {
+        self.tokens = tokens.clone();
+        *self.shared.tokens.write().unwrap() = tokens;
+    }
+
+    /// Sets the session's country code, for this handle and every handle taken after.
+    pub fn set_country_code(&mut self, cc: String) {
+        self.country_code = cc.clone();
+        *self.shared.country_code.write().unwrap() = cc;
     }
 
     /// The one place a request this client makes is actually sent.
@@ -1345,6 +1429,8 @@ impl TidalClient {
         generation: crate::proxy_http::Generation,
         req: reqwest::RequestBuilder,
     ) -> Result<reqwest::Response, SoneError> {
+        // (a slot only while sending: one never closes, so this can't fail)
+        let _slot = self.shared.slots.acquire().await.ok();
         Ok(self.http.observe_at(generation, req.send().await)?)
     }
 
@@ -1401,7 +1487,20 @@ impl TidalClient {
         Ok((generation, client))
     }
 
+    /// Refresh the session's access token. Single-flight across handles: a caller whose token
+    /// was already replaced while it waited (another request refreshed it, or a new sign-in)
+    /// gets the current tokens without a second refresh.
     pub async fn refresh_token(&mut self) -> Result<AuthTokens, SoneError> {
+        let seen = self.tokens.as_ref().map(|t| t.access_token.clone());
+        let shared = self.shared.clone();
+        let _refreshing = shared.refresh.lock().await;
+        // The session as it is now, not as this handle saw it: after a sign-out there is
+        // nothing to refresh, whatever this handle still holds.
+        self.tokens = self.shared.tokens.read().unwrap().clone();
+        (self.client_id, self.client_secret) = self.shared.credentials.read().unwrap().clone();
+        if let Some(t) = self.tokens.as_ref().filter(|t| Some(&t.access_token) != seen.as_ref()) {
+            return Ok(t.clone());
+        }
         if self.client_id.is_empty() {
             return Err(SoneError::NotConfigured("Client ID".into()));
         }
@@ -1423,7 +1522,7 @@ impl TidalClient {
 
         let (generation, client) = self.client_at()?;
         let request = client
-            .post(format!("{}/token", TIDAL_AUTH_URL))
+            .post(format!("{}/token", auth_url()))
             .form(&form_params);
         let response = self.dispatch(generation, request).await?;
 
@@ -1461,7 +1560,7 @@ impl TidalClient {
             user_id: parsed.user_id.or(old_user_id),
         };
 
-        self.tokens = Some(new_tokens.clone());
+        self.set_tokens(Some(new_tokens.clone()));
         // Persist immediately: the auto-refresh on 401 is the common path, and
         // without this the stored token stays stale forever.
         if let Some(persist) = &self.token_persist {
@@ -1677,7 +1776,7 @@ impl TidalClient {
         let tokens = serde_json::from_str::<AuthTokens>(&body)
             .map_err(|e| SoneError::Parse(format!("{} - Body: {}", e, body)))?;
 
-        self.tokens = Some(tokens.clone());
+        self.set_tokens(Some(tokens.clone()));
         Ok(Some(tokens))
     }
 
@@ -1719,7 +1818,7 @@ impl TidalClient {
         let tokens = serde_json::from_str::<AuthTokens>(&body)
             .map_err(|e| SoneError::Parse(format!("{} - Body: {}", e, body)))?;
 
-        self.tokens = Some(tokens.clone());
+        self.set_tokens(Some(tokens.clone()));
         Ok(tokens)
     }
 
@@ -1778,7 +1877,7 @@ impl TidalClient {
         // Store the user's country code for all subsequent API calls
         if let Some(cc) = data.country_code {
             if !cc.is_empty() {
-                self.country_code = cc;
+                self.set_country_code(cc);
             }
         }
         Ok(data.user_id)
@@ -7401,5 +7500,155 @@ mod playlist_add_tests {
         let modes: Vec<OnDupes> = serde_json::from_str(r#"["FAIL","SKIP","ADD"]"#).unwrap();
         assert_eq!(modes, vec![OnDupes::Fail, OnDupes::Skip, OnDupes::Add]);
         assert_eq!(OnDupes::Fail.as_str(), "FAIL");
+    }
+}
+
+/// The client's handles used concurrently: one token refresh for many expired requests, and at
+/// most MAX_IN_FLIGHT requests on the wire, against a small local HTTP server.
+#[cfg(test)]
+mod concurrency_tests {
+    use super::*;
+    use crate::proxy::HostCaps;
+    use crate::proxy_http::ProxiedHttp;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    #[derive(Default)]
+    struct Seen {
+        refreshes: AtomicUsize,
+        in_flight: AtomicUsize,
+        max_in_flight: AtomicUsize,
+        stale_refresh_tokens: AtomicUsize,
+    }
+
+    /// GET with "Bearer old": 401. GET with "Bearer new": 200 after 120 ms. POST /token: new
+    /// tokens after 120 ms, with the refresh token rotated from r1 to r2 (r1 used twice counts
+    /// as a stale use, the race a single-flight refresh prevents).
+    async fn serve(seen: Arc<Seen>) -> String {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            loop {
+                let Ok((mut sock, _)) = listener.accept().await else { return };
+                let seen = seen.clone();
+                tokio::spawn(async move {
+                    let mut buf = Vec::new();
+                    let mut chunk = [0u8; 4096];
+                    let head_end = loop {
+                        let n = sock.read(&mut chunk).await.unwrap_or(0);
+                        if n == 0 {
+                            return;
+                        }
+                        buf.extend_from_slice(&chunk[..n]);
+                        if let Some(i) = buf.windows(4).position(|w| w == b"\r\n\r\n") {
+                            break i + 4;
+                        }
+                    };
+                    let head = String::from_utf8_lossy(&buf[..head_end]).to_string();
+                    let len = head
+                        .lines()
+                        .find_map(|l| l.to_ascii_lowercase().strip_prefix("content-length:").map(|v| v.trim().parse::<usize>().unwrap_or(0)))
+                        .unwrap_or(0);
+                    while buf.len() < head_end + len {
+                        let n = sock.read(&mut chunk).await.unwrap_or(0);
+                        if n == 0 {
+                            break;
+                        }
+                        buf.extend_from_slice(&chunk[..n]);
+                    }
+                    let body = String::from_utf8_lossy(&buf[head_end..]).to_string();
+                    let now = seen.in_flight.fetch_add(1, Ordering::SeqCst) + 1;
+                    seen.max_in_flight.fetch_max(now, Ordering::SeqCst);
+                    let (status, reply) = if head.starts_with("POST /token") {
+                        tokio::time::sleep(std::time::Duration::from_millis(120)).await;
+                        let n = seen.refreshes.fetch_add(1, Ordering::SeqCst) + 1;
+                        if !body.contains("refresh_token=r1") || n > 1 {
+                            seen.stale_refresh_tokens.fetch_add(1, Ordering::SeqCst);
+                        }
+                        ("200 OK", r#"{"access_token":"new","refresh_token":"r2","expires_in":3600,"token_type":"Bearer"}"#)
+                    } else if head.contains("Bearer old") {
+                        ("401 Unauthorized", r#"{"status":401,"subStatus":11003,"userMessage":"expired"}"#)
+                    } else {
+                        tokio::time::sleep(std::time::Duration::from_millis(120)).await;
+                        ("200 OK", "{}")
+                    };
+                    seen.in_flight.fetch_sub(1, Ordering::SeqCst);
+                    let out = format!(
+                        "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{reply}",
+                        reply.len()
+                    );
+                    let _ = sock.write_all(out.as_bytes()).await;
+                });
+            }
+        });
+        format!("http://{addr}")
+    }
+
+    fn client(tokens: AuthTokens) -> TidalClient {
+        let caps = HostCaps::assume_all_present();
+        let mut c = TidalClient::new(ProxiedHttp::from_plan(&crate::proxy::ProxyPlan::Direct, &caps));
+        c.set_credentials("test-id", "");
+        c.set_tokens(Some(tokens));
+        c
+    }
+
+    fn tokens(access: &str) -> AuthTokens {
+        AuthTokens { access_token: access.into(), refresh_token: "r1".into(), expires_in: 0, token_type: "Bearer".into(), user_id: Some(1) }
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn expired_requests_share_one_refresh() {
+        let seen = Arc::new(Seen::default());
+        let base = serve(seen.clone()).await;
+        let _ = TEST_AUTH_URL.set(base.clone());
+        let persisted = Arc::new(AtomicUsize::new(0));
+        let mut first = client(tokens("old"));
+        let p = persisted.clone();
+        first.set_token_persist(Arc::new(move |_| {
+            p.fetch_add(1, Ordering::SeqCst);
+        }));
+        let cell = Arc::new(TidalClientCell::new(first));
+        let mut tasks = vec![];
+        for i in 0..5 {
+            let (cell, url) = (cell.clone(), format!("{base}/v1/thing/{i}"));
+            tasks.push(tokio::spawn(async move { cell.lock().await.api_get_body(&url, &[]).await }));
+        }
+        for t in tasks {
+            assert!(t.await.unwrap().is_ok());
+        }
+        assert_eq!(seen.refreshes.load(Ordering::SeqCst), 1, "one refresh for five expired requests");
+        assert_eq!(seen.stale_refresh_tokens.load(Ordering::SeqCst), 0, "the rotated refresh token was never reused");
+        assert_eq!(persisted.load(Ordering::SeqCst), 1, "the new tokens were saved once");
+        let after = cell.lock().await;
+        assert_eq!(after.tokens.as_ref().map(|t| t.access_token.as_str()), Some("new"));
+        assert_eq!(after.tokens.as_ref().map(|t| t.refresh_token.as_str()), Some("r2"));
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn no_more_than_max_in_flight_requests() {
+        let seen = Arc::new(Seen::default());
+        let base = serve(seen.clone()).await;
+        let cell = Arc::new(TidalClientCell::new(client(tokens("new"))));
+        let started = std::time::Instant::now();
+        let mut tasks = vec![];
+        for i in 0..(MAX_IN_FLIGHT * 3) {
+            let (cell, url) = (cell.clone(), format!("{base}/v1/slow/{i}"));
+            tasks.push(tokio::spawn(async move { cell.lock().await.api_get_body(&url, &[]).await }));
+        }
+        for t in tasks {
+            assert!(t.await.unwrap().is_ok());
+        }
+        assert_eq!(seen.max_in_flight.load(Ordering::SeqCst), MAX_IN_FLIGHT, "concurrent, but capped");
+        // three rounds of 120 ms, not eighteen one after another
+        assert!(started.elapsed() < std::time::Duration::from_millis(120 * 9), "{:?}", started.elapsed());
+    }
+
+    #[tokio::test]
+    async fn a_refresh_after_sign_out_does_not_sign_back_in() {
+        let cell = TidalClientCell::new(client(tokens("old")));
+        let mut stale = cell.lock().await;
+        cell.lock().await.set_tokens(None);
+        assert!(matches!(stale.refresh_token().await, Err(SoneError::NotAuthenticated)));
+        assert!(cell.lock().await.tokens.is_none());
     }
 }

@@ -232,7 +232,7 @@ impl Default for Settings {
 pub struct AppState {
     pub audio_player: Arc<AudioPlayer>,
     pub pipeline_probe: Arc<crate::pipeline_probe::PipelineProbe>,
-    pub tidal_client: Mutex<TidalClient>,
+    pub tidal_client: crate::tidal_api::TidalClientCell,
     /// The one reqwest client every consumer shares. Blocked plans hold an
     /// `Err`, so no caller can fall back to an unproxied client.
     pub proxied_http: crate::proxy_http::ProxiedHttp,
@@ -507,7 +507,7 @@ impl AppState {
         Self {
             audio_player,
             pipeline_probe,
-            tidal_client: Mutex::new(tidal_client),
+            tidal_client: crate::tidal_api::TidalClientCell::new(tidal_client),
             proxied_http,
             host_caps: std::sync::Mutex::new(host_caps),
             settings_path,

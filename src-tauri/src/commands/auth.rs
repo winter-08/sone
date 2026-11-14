@@ -129,7 +129,7 @@ pub async fn load_saved_auth(state: State<'_, AppState>) -> Result<Option<AuthTo
         if let Some(ref tokens) = settings.auth_tokens {
             let (id, secret) = resolve_credentials(&settings);
             let mut client = state.tidal_client.lock().await;
-            client.tokens = Some(tokens.clone());
+            client.set_tokens(Some(tokens.clone()));
             client.set_credentials(&id, &secret);
             // Fetch session info to populate country_code for search
             match client.get_session_info().await {
@@ -235,19 +235,19 @@ pub async fn import_session(
             token_type: "Bearer".to_string(),
             user_id: None,
         };
-        client.tokens = Some(tokens.clone());
+        client.set_tokens(Some(tokens.clone()));
         let user_id = client.get_session_info().await.ok();
         let tokens = AuthTokens { user_id, ..tokens };
-        client.tokens = Some(tokens.clone());
+        client.set_tokens(Some(tokens.clone()));
         tokens
     } else {
-        client.tokens = Some(AuthTokens {
+        client.set_tokens(Some(AuthTokens {
             access_token: String::new(),
             refresh_token: refresh_token.clone(),
             expires_in: 0,
             token_type: "Bearer".to_string(),
             user_id: None,
-        });
+        }));
         let tokens = client.refresh_token().await?;
         // Refresh the session country for the refresh-only path too.
         if let Err(e) = client.get_session_info().await {
@@ -443,8 +443,8 @@ pub async fn logout(state: State<'_, AppState>) -> Result<(), SoneError> {
     // credentials (client_id/secret) for the next login.
     {
         let mut client = state.tidal_client.lock().await;
-        client.tokens = None;
-        client.country_code = "US".to_string();
+        client.set_tokens(None);
+        client.set_country_code("US".to_string());
     }
 
     // Clear auth tokens + purge scrobble creds from settings; keep the rest

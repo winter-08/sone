@@ -8,13 +8,16 @@ use crate::AppState;
 /// Invalidation tag for every cached feed entry. Intentionally undiscriminated —
 /// `mark_feed_seen` drops the whole tag, so it must cover all users' entries.
 ///
-/// Ordering assumption: on page open, `get_feed`'s `put` and `mark_feed_seen`'s
-/// `invalidate_tag` are unordered, and a `put` landing second would re-tag a body
-/// with the stale nonzero `unseenCount` for a full TTL. Safe today only because
-/// `mark_feed_seen` waits on the `tidal_client` mutex `get_feed` holds across its
-/// fetch and then makes its own network round-trip, while the `put` is a local
-/// disk write. Reintroducing SWR to `get_feed` makes that race live.
+/// Ordering: on page open, `get_feed`'s `put` and `mark_feed_seen`'s
+/// `invalidate_tag` would be unordered, and a `put` landing second would re-tag a
+/// body with the stale nonzero `unseenCount` for a full TTL. This used to be safe
+/// only because the `tidal_client` mutex serialised every request; requests are
+/// concurrent now, so the two take [`FEED_ORDER`] around fetch-and-put and
+/// mark-and-invalidate. Reintroducing SWR to `get_feed` would reopen the race.
 const FEED_CACHE_TAG: &str = "feed";
+
+/// Serialises `get_feed`'s fetch-and-put with `mark_feed_seen` (see [`FEED_CACHE_TAG`]).
+static FEED_ORDER: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
 /// Cache key for the activity feed. Scoped per user, matching the
 /// convention of every other user-scoped cache in this codebase
@@ -46,6 +49,7 @@ pub async fn get_feed(state: State<'_, AppState>, user_id: u64) -> Result<FeedRe
         }
     }
 
+    let _order = FEED_ORDER.lock().await;
     let mut client = state.tidal_client.lock().await;
     let feed = client.fetch_feed(user_id).await?;
     drop(client);
@@ -65,6 +69,7 @@ pub async fn get_feed(state: State<'_, AppState>, user_id: u64) -> Result<FeedRe
 /// `get_feed` refetches instead of replaying a body with a nonzero count.
 #[tauri::command(rename_all = "camelCase")]
 pub async fn mark_feed_seen(state: State<'_, AppState>, user_id: u64) -> Result<(), SoneError> {
+    let _order = FEED_ORDER.lock().await;
     let client = state.tidal_client.lock().await;
     let result = client.mark_feed_seen(user_id).await;
     drop(client);
