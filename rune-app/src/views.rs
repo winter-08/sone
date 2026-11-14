@@ -1019,15 +1019,19 @@ pub fn dropdown(s: &App) -> Option<El> {
                     .child(hit_thumb(look))
                     .child(el().absolute(0.0, 0.0).size(48.0, 48.0).radius(4.0).fill(theme::black(0.4)).items_center().justify_center().group_opacity(0.0, 1.0)
                         .child(glyph(G::Play, 16.0, rune::color::hex("#ffffff").unwrap_or(white(1.0)))));
-                let mut title_row = row().min_w(0.0).gap(6.0).items_center().child(text(t.clone()).font(t_(13.0, 600.0)).color(white(0.95)).truncate().shrink().a11y_hidden());
+                // Only a track with an album opens something (React returns without albumId):
+                // without one the title is plain text, not a button that does nothing.
+                let opens = track["album"]["id"].as_u64().is_some();
+                let title = text(t.clone()).font(t_(13.0, 600.0)).color(white(0.95)).truncate().shrink();
+                let mut title_row = row().min_w(0.0).gap(6.0).items_center().child(if opens { title.a11y_hidden() } else { title });
                 if let Some(b) = crate::content::badges_for(track) {
                     title_row = title_row.child(b);
                 }
                 // (the title is the row's button, beside the picture's and More's, not around them)
-                let mut body = row().role("button").label(t.as_str()).grow(1.0).min_w(0.0).h_full().items_center().preserve_focus_on_press(true)
+                let mut body = row().grow(1.0).min_w(0.0).h_full().items_center().preserve_focus_on_press(true)
                     .child(col().grow(1.0).min_w(0.0).gap(2.0).child(title_row).child(hit_sub(look)));
-                if track["album"]["id"].as_u64().is_some() {
-                    body = body.cursor(rune::Cursor::Pointer).on_press(move |s: &mut App| pick(s, ec.clone()));
+                if opens {
+                    body = body.role("button").label(t.as_str()).cursor(rune::Cursor::Pointer).on_press(move |s: &mut App| pick(s, ec.clone()));
                 }
                 let r = row().key(tk).h(60.0).px(10.0).gap(10.0).radius(theme::inset_radius(8.0)).items_center().fill(fill).hover(white(0.08))
                     .hover_group()
