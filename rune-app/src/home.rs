@@ -403,8 +403,9 @@ fn shortcuts(items: &[Value], w: f32) -> El {
     grid
 }
 
-/// Tracks from a section as a playable list (the My Tracks shortcut isn't one).
-fn section_tracks(items: &[Value]) -> Vec<Value> {
+/// Tracks from a section as a playable list (the My Tracks shortcut isn't one), shared by every
+/// row and card of the section that plays it.
+fn section_tracks(items: &[Value]) -> Rc<[Value]> {
     items.iter().filter(|it| data::kind(it) == "TRACK").map(|it| data::data(it).clone()).collect()
 }
 
@@ -454,7 +455,7 @@ fn row_grid(si: usize, title: &str, items: &[Value], w: f32, grid: Grid) -> El {
 /// target for the pointer, and its parts are what assistive technology and the keyboard reach:
 /// "Play <title>" on the cover, the title as a link (to the album for a track), each artist as
 /// a link, and "More options".
-fn grid_row(key: String, it: &Value, title: &str, tracks: &[Value], grid: Grid) -> El {
+fn grid_row(key: String, it: &Value, title: &str, tracks: &Rc<[Value]>, grid: Grid) -> El {
     let d = data::data(it).clone();
     let kind = data::kind(it);
     let my = is_my_tracks(it);
@@ -469,7 +470,7 @@ fn grid_row(key: String, it: &Value, title: &str, tracks: &[Value], grid: Grid) 
     let can_play = !my && !restricted && (is_track || media.is_some());
     let section = title.to_string();
     let play: Rc<dyn Fn()> = {
-        let (tr, ttl, item) = (tracks.to_vec(), section.clone(), it.clone());
+        let (tr, ttl, item) = (tracks.clone(), section.clone(), it.clone());
         Rc::new(move || match media {
             Some(m) => interact::play_media(&item, m),
             None => play_from(&ttl, &tr, id),
@@ -632,11 +633,11 @@ fn card_row(si: usize, row_key: &str, title: &str, items: &[Value], w: f32, prom
 
 /// A track as a card: its cover, title and artists; pressing it plays the section's tracks
 /// from it (React HomeSection track cards, which have no accessible name of their own).
-fn track_card(key: String, it: &Value, cw: f32, title: &str, tracks: &[Value]) -> El {
+fn track_card(key: String, it: &Value, cw: f32, title: &str, tracks: &Rc<[Value]>) -> El {
     let d = data::data(it).clone();
     let id = d["id"].as_u64().unwrap_or(0);
     let a = cw - 16.0;
-    let (tr, ttl) = (tracks.to_vec(), title.to_string());
+    let (tr, ttl) = (tracks.clone(), title.to_string());
     // (a blocked track dims and neither plays nor opens its menu; its badges follow the title)
     let blocked = crate::content::blocked(&d);
     let mut words = row().w_full().min_w(0.0).gap(6.0).items_center().child(text(data::name(it)).font(t(13.0, 600.0)).color(white(0.9)).truncate().shrink());
