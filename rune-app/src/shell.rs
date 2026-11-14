@@ -255,10 +255,22 @@ pub fn on_window(w: &rune::WindowHandle) {
 pub fn note_size(view: (f32, f32), zoom: f32) {
     let size = ((view.0 * zoom).round(), (view.1 * zoom).round());
     let mut g = GEOMETRY.lock().unwrap();
-    // A maximized or full-screen window keeps the size it restores to.
-    if !g.maximized && !FULL_SCREEN.load(Ordering::Relaxed) && g.size != Some(size) {
+    let by_edges = EDGE_AT.get().is_some_and(|t| t.elapsed() < Duration::from_millis(500));
+    if g.size != Some(size) && keeps_size(PLACEMENT_KNOWN.load(Ordering::Relaxed), g.maximized, FULL_SCREEN.load(Ordering::Relaxed), g.size.is_some(), by_edges) {
         g.size = Some(size);
     }
+}
+
+/// Whether a new content size is the one the window restores to. A full-screen window keeps
+/// the one it had. Where the platform says whether the window is maximized (X11 and others),
+/// any size of a restored window is. On Wayland the maximized flag is only a guess from the
+/// title bar's button (a maximize the compositor does itself isn't seen), so whatever it says,
+/// only a size the app gave the window counts: its first, or one its resize edges set.
+fn keeps_size(placement_known: bool, maximized: bool, full_screen: bool, have_size: bool, by_edges: bool) -> bool {
+    if full_screen {
+        return false;
+    }
+    if placement_known { !maximized } else { !have_size || by_edges }
 }
 
 /// Where the main window is, where the platform says (X11 and others; not Wayland). Called from
@@ -662,6 +674,8 @@ pub fn title_bar() -> Option<El> {
 thread_local! {
     /// The window's size when an edge's drag started.
     static GRAB: Cell<Option<(f32, f32)>> = const { Cell::new(None) };
+    /// When an edge's drag last resized the window (the size it lands at is noted after).
+    static EDGE_AT: Cell<Option<Instant>> = const { Cell::new(None) };
 }
 
 /// A frameless window's edges to resize it by (React ResizeEdges), since there's no native frame
@@ -684,6 +698,7 @@ pub fn resize_edges(size: (f32, f32)) -> Vec<El> {
             let z = zoom();
             let (w, h) = GRAB.get().unwrap_or((size.0 * z, size.1 * z));
             GRAB.set(Some((w, h)));
+            EDGE_AT.set(Some(Instant::now()));
             tx.instant();
             tx.resize_window_instant((if dx { w + d.dx * z } else { w }, if dy { h + d.dy * z } else { h }));
         }
@@ -777,6 +792,26 @@ pub fn frame_covered(body: El, size: (f32, f32)) -> El {
         None => body,
     };
     col().key(FRAME_KEY).w_full().h_full().child(inner).children(resize_edges(size))
+}
+
+#[cfg(test)]
+mod size_tests {
+    #[test]
+    fn the_restore_size_survives_a_wrong_maximized_flag() {
+        use super::keeps_size;
+        // X11: the platform's flag decides
+        assert!(keeps_size(true, false, false, true, false));
+        assert!(!keeps_size(true, true, false, true, false));
+        // full screen never
+        assert!(!keeps_size(true, false, true, true, true));
+        assert!(!keeps_size(false, false, true, false, true));
+        // Wayland: a compositor maximize with the flag still "restored" isn't kept
+        assert!(!keeps_size(false, false, false, true, false));
+        // the edges' sizes are, even with the flag wrongly "maximized"
+        assert!(keeps_size(false, true, false, true, true));
+        // and the first one
+        assert!(keeps_size(false, false, false, false, false));
+    }
 }
 
 #[cfg(test)]
