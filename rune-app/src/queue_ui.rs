@@ -114,6 +114,10 @@ fn list_dy(e: &Edge, offset: f32) -> f32 {
 /// follows. Whether anything the view draws changed.
 pub fn tick(tx: &mut Tx) -> bool {
     let Some((qid, e)) = EDGE.with(|c| c.take()) else { return false };
+    // (the drag is over however it ended: nothing scrolls on)
+    if held().is_none() {
+        return false;
+    }
     EDGE.with(|c| c.set(Some((qid.clone(), e))));
     let v = VIEWPORT.with(|c| c.get());
     let speed = edge_speed(e.y, v.top, v.h);
