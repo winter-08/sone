@@ -75,10 +75,12 @@ def main():
     check("toggle on: it plays again", moves("toggle on", "page") and bus("toggle on") == 1)
     check("drawer: its cover animates beside the page's (two pipelines)", moves("drawer open", "drawer") and moves("drawer open", "page") and bus("drawer open") == 2,
           f"drawer box {box('drawer open', 'drawer')}, {bus('drawer open')} pipeline(s)")
+    check("narrower window: the drawer's cover is rescaled in place and keeps moving", moves("window narrower", "drawer") and logged("window narrower", "resize now"),
+          "; ".join(l for l in steps.get("window narrower", {}).get("log", []) if "resize" in l or "start" in l))
     check("full player: the cover animates; the page cover stops under it", moves("full player", "centre") and logged("full player", "stop page") and bus("full player") == 1,
           "; ".join(steps.get("full player", {}).get("log", [])))
     check("full player: drawn large, so the 1280 file", logged("full player", "of 1280"))
-    check("unfocused: the cover holds its frame", still("full player unfocused", "centre") and logged("full player unfocused", "pause now"))
+    check("unfocused: the pipeline pauses and the still shows", still("full player unfocused", "centre") and logged("full player unfocused", "pause now"))
     check("refocused: it moves again", moves("full player refocused", "centre") and logged("full player refocused", "resume now"))
     check("drawer closed: one pipeline (the page's)", bus("drawer closed") == 1 and logged("drawer closed", "stop now"))
     check("page left: no pipeline", bus("home") == 0 and logged("home", "stop page"))

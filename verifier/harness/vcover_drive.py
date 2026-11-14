@@ -180,6 +180,21 @@ def main():
         dx = w - 820
     step("drawer open", n, {"page": [300, 0, dx, h - 110], "drawer": [dx, 0, w, h - 110]}, first_frame=first, drawer_x=dx)
 
+    # -- a narrower window: the drawer's cover column steps down (412 -> 332 pt), the same
+    # file is rescaled in place
+    n = log_len()
+    # (floating, so the window can be narrower than the output; it stays at the top left)
+    pid = app_pid()
+    r = subprocess.run(["swaymsg", f"[pid={pid}]", "floating", "enable, resize set 1700 px", f"{h} px, move position 0 0"], capture_output=True, text=True)
+    time.sleep(2.0)
+    try:
+        dx2 = extents("Now playing panel")[0]
+    except Exception:  # noqa: BLE001
+        dx2 = 1700 - 820
+    step("window narrower", n, {"drawer": [dx2, 0, 1700, h - 110]}, drawer_x=dx2, swaymsg=r.stdout.strip())
+    subprocess.run(["swaymsg", f"[pid={pid}]", "floating", "disable"], capture_output=True)
+    time.sleep(2.0)
+
     # -- the full-screen player: the page cover stops (covered), the shared one goes large
     n = log_len()
     atspi.press("Open full-screen player")
