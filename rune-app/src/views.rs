@@ -967,7 +967,8 @@ pub fn dropdown(s: &App) -> Option<El> {
     }
     let entries = dropdown_entries(s, &q);
     // Peek only: the debounce in App::poll decides when to fetch (rendering mid-typing must not).
-    let pending = !q.is_empty() && data::peek(&Key::Suggest(q.clone())).is_none();
+    // A failed fetch has answered: "No results found", as React's catch empties the hits.
+    let pending = !q.is_empty() && !matches!(data::peek_load(&Key::Suggest(q.clone())), Some(data::Load::Ready(_) | data::Load::Failed(_)));
     if q.is_empty() && entries.is_empty() {
         return None;
     }

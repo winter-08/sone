@@ -183,6 +183,16 @@ pub fn peek(key: &Key) -> Option<Value> {
     }
 }
 
+/// Where the key's fetch stands, without starting one: None when it was never asked for. One
+/// that landed after the view read the version is still loading for that view.
+pub fn peek_load(key: &Key) -> Option<Load> {
+    match CACHE.lock().unwrap().get(key) {
+        Some(e) if after_frozen(e.version) => Some(Load::Loading),
+        Some(e) => Some(e.load.clone()),
+        None => None,
+    }
+}
+
 pub fn ready(key: Key) -> Option<Value> {
     match want(key) {
         Load::Ready(v) => Some(v),
@@ -412,6 +422,20 @@ fn locale_tag(var: impl Fn(&str) -> Option<String>) -> String {
 mod tests {
     use super::{locale_tag, matches};
     use rune_kit::search::Fold;
+
+    #[test]
+    fn a_failed_fetch_peeks_as_failed_not_loading() {
+        use super::{CACHE, Entry, Key, Load, peek, peek_load};
+        let key = Key::Suggest("peek-failed-test".into());
+        assert!(peek_load(&key).is_none());
+        let entry = |load| Entry { load, fetch: 0, at: std::time::Instant::now(), retries: 0, nudged: false, version: 0 };
+        CACHE.lock().unwrap().insert(key.clone(), entry(Load::Loading));
+        assert!(matches!(peek_load(&key), Some(Load::Loading)));
+        CACHE.lock().unwrap().insert(key.clone(), entry(Load::Failed("offline".into())));
+        assert!(peek(&key).is_none());
+        assert!(matches!(peek_load(&key), Some(Load::Failed(_))));
+        CACHE.lock().unwrap().remove(&key);
+    }
 
     #[test]
     fn filters_fold_case_and_accents() {
