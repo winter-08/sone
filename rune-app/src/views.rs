@@ -2145,10 +2145,13 @@ pub fn drawer(s: &App, v: &View, shell: Shell) -> Option<El> {
         LY_SCROLL.with(|c| c.set(None));
     }
     let lyrics_tab = tab == Drawer::Lyrics;
+    let queue_tab = tab == Drawer::Queue;
+    // (the queue's drag scrolls the viewport at its edges: queue_ui::tick)
+    let scroller = if queue_tab { scroller.on_layout_tx(|_: &mut App, r, tx: &mut Tx| { crate::queue_ui::note_viewport(r); tx.live_only(); }) } else { scroller };
     let d = if wide { d } else { wash(d.fill(theme::drawer_bg())) };
     let mut d = d.padding(16.0).gap(12.0)
         .child(head)
-        .child(ui::smooth_wheel_watching::<App>(scroller, "drawer-scroll".into(), move |p| if lyrics_tab { watch_lyrics_scroll(p) })
+        .child(ui::smooth_wheel_watching::<App>(scroller, "drawer-scroll".into(), move |p| if lyrics_tab { watch_lyrics_scroll(p) } else if queue_tab { crate::queue_ui::note_scroll(p) })
             .labelled_by(match tab { Drawer::Queue => "dr-queue", Drawer::Suggested => "dr-suggested", Drawer::Lyrics => "dr-lyrics", Drawer::Credits => "dr-credits" })
             .busy(took_loading()));
     if tab == Drawer::Lyrics && *s.nav.lyrics_scrolled && v.current.as_ref().and_then(|c| synced_lyrics(c.id)).is_some() {

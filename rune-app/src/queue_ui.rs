@@ -45,6 +45,90 @@ fn held() -> Option<Held> {
     HELD.with_borrow(|h| (**h).clone())
 }
 
+/// The drawer's scroll viewport while the queue shows (it's keyed "drawer-scroll"): its top and
+/// height in the window, and how far it is scrolled of how far it can be.
+#[derive(Clone, Copy, Default)]
+struct Viewport {
+    top: f32,
+    h: f32,
+    offset: f32,
+    max: f32,
+}
+
+/// A drag's edge scrolling (dnd-kit's autoScroll in React's queue): the pointer's window y, the
+/// viewport's offset at the press, and what `drop_index` needs to place the row again as the
+/// list scrolls under a pointer held still.
+#[derive(Clone, Copy)]
+struct Edge {
+    y: f32,
+    from_offset: f32,
+    dy: f32,
+    from: usize,
+    len: usize,
+    mc: usize,
+    divider: bool,
+}
+
+thread_local! {
+    static VIEWPORT: std::cell::Cell<Viewport> = std::cell::Cell::new(Viewport::default());
+    static EDGE: std::cell::Cell<Option<(String, Edge)>> = const { std::cell::Cell::new(None) };
+}
+
+/// Where the drawer's viewport is in the window (its layout; the queue tab only).
+pub fn note_viewport(r: [f32; 4]) {
+    VIEWPORT.with(|v| v.set(Viewport { top: r[1], h: r[3], ..v.get() }));
+}
+
+/// Where the drawer's viewport is scrolled (the queue tab only).
+pub fn note_scroll(p: rune::ScrollPos) {
+    VIEWPORT.with(|v| v.set(Viewport { offset: p.offset[1], max: p.max[1], ..v.get() }));
+}
+
+/// How far to scroll this frame with the pointer at window y `y` in a viewport from `top`,
+/// `h` tall: nothing outside the 48 pt bands at its ends, up to 14 pt a frame at the very edge
+/// (and beyond it), upward negative.
+fn edge_speed(y: f32, top: f32, h: f32) -> f32 {
+    const BAND: f32 = 48.0;
+    const MAX: f32 = 14.0;
+    if h <= 2.0 * BAND {
+        return 0.0;
+    }
+    let up = top + BAND - y;
+    let down = y - (top + h - BAND);
+    if up > 0.0 {
+        -MAX * (up / BAND).min(1.0)
+    } else if down > 0.0 {
+        MAX * (down / BAND).min(1.0)
+    } else {
+        0.0
+    }
+}
+
+/// The pointer's travel through the list: its own, plus how far the list scrolled under it.
+fn list_dy(e: &Edge, offset: f32) -> f32 {
+    e.dy + (offset - e.from_offset)
+}
+
+/// From the window's poll while a row is dragged: near the viewport's top or bottom edge the
+/// list scrolls, a step each frame while the pointer stays there, and the row's landing place
+/// follows. Whether anything the view draws changed.
+pub fn tick(tx: &mut Tx) -> bool {
+    let Some((qid, e)) = EDGE.with(|c| c.take()) else { return false };
+    EDGE.with(|c| c.set(Some((qid.clone(), e))));
+    let v = VIEWPORT.with(|c| c.get());
+    let speed = edge_speed(e.y, v.top, v.h);
+    let to = (v.offset + speed).clamp(0.0, v.max.max(0.0));
+    if speed == 0.0 || (to - v.offset).abs() < 0.5 {
+        return false;
+    }
+    tx.scroll_to_y("drawer-scroll", to);
+    VIEWPORT.with(|c| c.set(Viewport { offset: to, ..v }));
+    let dy = list_dy(&e, to);
+    set_held(Some(Held { qid, from: e.from, to: drop_index(e.from, dy, e.len, e.mc, e.divider), dy }));
+    tx.wake_after(std::time::Duration::from_millis(16));
+    true
+}
+
 fn set_held(v: Option<Held>) {
     HELD.with_borrow_mut(|h| {
         if *Tracked::untracked(h) != v {
@@ -219,14 +303,21 @@ fn queued_row(v: &View, items: &Rc<Vec<QItem>>, i: usize, mc: usize, divider: bo
     let grip = theme::focusable(el().key(format!("qp-{}-grip", item.qid)).role("button").label(format!("Move {title}")))
         .size(24.0, ROW_H).radius(6.0).items_center().justify_center().cursor(if dragged { rune::Cursor::Grabbing } else { rune::Cursor::Grab })
         .on_drag(move |_: &mut App, d: &mut Drag, tx: &mut Tx| match d.phase {
-            Phase::Down => {}
+            // (the viewport's offset at the press, so a list scrolled under the drag counts)
+            Phase::Down => d.data = VIEWPORT.with(|c| c.get().offset),
             Phase::Move => {
-                let to = drop_index(i, d.dy, len, mc, divider);
-                set_held(Some(Held { qid: qid.clone(), from: i, to, dy: d.dy }));
+                let e = Edge { y: d.window_point()[1], from_offset: d.data, dy: d.dy, from: i, len, mc, divider };
+                let dy = list_dy(&e, VIEWPORT.with(|c| c.get().offset));
+                EDGE.with(|c| c.set(Some((qid.clone(), e))));
+                let to = drop_index(i, dy, len, mc, divider);
+                set_held(Some(Held { qid: qid.clone(), from: i, to, dy }));
                 tx.instant();
+                // the poll scrolls at an edge, even with the pointer held still
+                tx.wake_after(std::time::Duration::ZERO);
             }
             Phase::Up => {
                 let h = held();
+                EDGE.with(|c| c.set(None));
                 set_held(None);
                 if let Some(h) = h.filter(|h| !d.cancelled() && h.to != h.from) {
                     controller::send(Cmd::MoveQueued { qid: h.qid, to: h.to });
@@ -329,6 +420,20 @@ fn track_row(v: &View, item: &QItem, kind: Kind, key: String) -> El {
 #[cfg(test)]
 mod tests {
     use super::drop_index;
+
+    #[test]
+    fn a_drag_scrolls_only_near_the_edges() {
+        assert_eq!(super::edge_speed(300.0, 100.0, 600.0), 0.0);
+        assert!(super::edge_speed(110.0, 100.0, 600.0) < 0.0);
+        assert_eq!(super::edge_speed(40.0, 100.0, 600.0), -14.0);
+        assert!(super::edge_speed(690.0, 100.0, 600.0) > 0.0);
+        assert_eq!(super::edge_speed(900.0, 100.0, 600.0), 14.0);
+        // a viewport too short for both bands doesn't scroll
+        assert_eq!(super::edge_speed(100.0, 100.0, 90.0), 0.0);
+        // the landing place counts the list scrolled under the pointer
+        let e = super::Edge { y: 0.0, from_offset: 100.0, dy: 20.0, from: 0, len: 5, mc: 0, divider: false };
+        assert_eq!(super::list_dy(&e, 212.0), 132.0);
+    }
 
     #[test]
     fn drags_land_by_whole_rows() {
