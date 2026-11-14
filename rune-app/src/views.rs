@@ -2274,6 +2274,12 @@ thread_local! {
 }
 static LY_USER_SCROLLED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
+/// The drawer is closed: its Lyrics tab, opened again, starts from the top, which is not the
+/// user scrolling away from where it was.
+pub fn forget_lyrics_scroll() {
+    LY_SCROLL.with(|c| c.set(None));
+}
+
 /// The app is about to glide the Lyrics tab to a line: the scrolling that follows is its own.
 pub fn lyrics_auto_scroll() {
     LY_AUTO_UNTIL.with(|c| c.set(Some(std::time::Instant::now() + std::time::Duration::from_millis(1000))));

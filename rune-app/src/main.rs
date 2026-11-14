@@ -371,6 +371,8 @@ fn view(s: &App, cx: &mut Cx<App>) -> El {
         // (its colour wash can come from the cover's pixels, which land without a state change)
         let tinted = crate::art::cover_color(Tracked::untracked(&s.ctl).cover.as_deref()).is_some();
         content = content.child(pane("drawer", (shell_in, stores, tinted), || views::drawer(s, &s.ctl, shell).unwrap_or_else(el)));
+    } else {
+        views::forget_lyrics_scroll();
     }
     let main = col().grow(1.0).min_w(0.0).h_full().child(header).child(content);
     // "Your Library" collapses the sidebar to its icons (React's 60 px sidebar).
