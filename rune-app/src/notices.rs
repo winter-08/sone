@@ -6,15 +6,15 @@ use crate::controller::{self, Cmd};
 use crate::data::{self, Key, Load};
 use crate::interact::{self, Kind};
 use serde_json::{Value, json};
-use sone_host_shim::Manager;
+use sone_core::host::Manager;
 use std::time::Duration;
-use tauri_app_lib::AppState;
-use tauri_app_lib::commands::{auth, updates};
+use sone_core::AppState;
+use sone_core::commands::{auth, updates};
 
 const SEEN_KEY: &str = "sone.updateToast.v1";
 const MAX_UPDATE_TOAST_SHOWS: u64 = 3;
 
-fn st() -> sone_host_shim::State<'static, AppState> {
+fn st() -> sone_core::host::State<'static, AppState> {
     crate::host().state::<AppState>()
 }
 
@@ -33,7 +33,7 @@ pub fn should_show(available: bool, latest: &str, seen: &Value) -> (bool, Value)
 
 /// The launch check for a newer GitHub release (silent on any failure).
 pub fn check_for_update() {
-    sone_host_shim::async_runtime::spawn(async {
+    sone_core::host::async_runtime::spawn(async {
         let Ok(info) = crate::sched::bg(None, updates::check_for_update(st())).await else { return };
         let seen = crate::shell::store_get(SEEN_KEY).unwrap_or_else(|| json!({"version": "", "count": 0}));
         let (show, next) = should_show(info.available, &info.latest, &seen);
@@ -49,7 +49,7 @@ pub fn check_for_update() {
 /// After a saved sign-in was loaded at launch: the legacy device-code nudge, and the
 /// playlists' 401 check.
 pub fn after_saved_sign_in() {
-    sone_host_shim::async_runtime::spawn(async {
+    sone_core::host::async_runtime::spawn(async {
         if auth::consume_legacy_auth_notice(st()).unwrap_or(false) {
             interact::toast_long("Old sign-in detection, logout and sign in again with PKCE for lossless quality".into(), Kind::Info, Duration::from_secs(10), None);
         }

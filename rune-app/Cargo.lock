@@ -5010,7 +5010,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "sone"
+name = "sone-core"
 version = "0.23.0"
 dependencies = [
  "aes-gcm",
@@ -5043,36 +5043,16 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
- "sone-host-shim",
  "thiserror 2.0.21",
  "tokio",
  "tokio-stream",
  "tokio-util",
  "uuid 1.29.1",
  "walkdir",
- "wayland-backend",
- "wayland-client",
- "wayland-protocols",
  "x11rb",
  "zbus 5.19.0",
  "zeroize",
 ]
-
-[[package]]
-name = "sone-host-shim"
-version = "0.1.0"
-dependencies = [
- "serde",
- "serde_json",
- "sone-host-shim-macros",
- "thiserror 2.0.21",
- "tokio",
- "url",
-]
-
-[[package]]
-name = "sone-host-shim-macros"
-version = "0.1.0"
 
 [[package]]
 name = "sone-rune"
@@ -5089,8 +5069,7 @@ dependencies = [
  "rune-kit",
  "serde",
  "serde_json",
- "sone",
- "sone-host-shim",
+ "sone-core",
  "tokio",
 ]
 

@@ -30,8 +30,8 @@ use std::time::{Duration, Instant};
 
 use rune::Pixels;
 use serde_json::Value;
-use sone_host_shim::Manager;
-use tauri_app_lib::AppState;
+use sone_core::host::Manager;
+use sone_core::AppState;
 
 const KEEP: usize = 200;
 const DOWNLOADS: usize = 6;
@@ -245,7 +245,7 @@ fn slot(url: &str, cut: Cut) -> Option<Pixels> {
         drop(held);
         let s = slot.clone();
         let url = url.to_string();
-        sone_host_shim::async_runtime::spawn(async move {
+        sone_core::host::async_runtime::spawn(async move {
             // a prune racing this read just leaves the placeholder this time
             if let Ok(bytes) = tokio::fs::read(&path).await {
                 fill(url, bytes, vec![(cut, s)]).await;
@@ -384,7 +384,7 @@ fn measure(img: &image::RgbaImage) -> CoverColor {
 }
 
 fn download(url: String, path: PathBuf) {
-    sone_host_shim::async_runtime::spawn(async move {
+    sone_core::host::async_runtime::spawn(async move {
         // Err(true): a transport failure, worth asking again later; Err(false): the server's answer.
         let bytes: Result<Vec<u8>, bool> = {
             let _permit = NET.acquire().await;

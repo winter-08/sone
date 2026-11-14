@@ -5,7 +5,6 @@
 
 [![License: GPL-3.0](https://img.shields.io/badge/License-GPL--3.0-blue.svg)](LICENSE)
 [![Platform: Linux](https://img.shields.io/badge/Platform-Linux-yellow.svg)]()
-[![Built with Tauri 2](https://img.shields.io/badge/Built_with-Tauri_2-orange.svg)](https://v2.tauri.app/)
 
   <div align="center">
     <a href="https://flathub.org/apps/io.github.lullabyX.sone">
@@ -19,6 +18,9 @@
 
 > [!IMPORTANT]
 > Requires an active [TIDAL](https://tidal.com) subscription. Not affiliated with TIDAL.
+
+> [!NOTE]
+> On this branch SONE is the native Rune app in [`rune-app/`](rune-app/README.md) over the backend in `core/`; the Tauri and React build is gone from it (it is on `main`). Build and run instructions are in `rune-app/README.md`. The installation, packaging and tech-stack sections below still describe the Tauri releases.
 
 https://github.com/user-attachments/assets/67d7a8ed-352b-4ce6-8b9c-70b7427a5f22
 

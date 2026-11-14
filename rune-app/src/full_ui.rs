@@ -24,7 +24,7 @@ use crate::theme;
 use crate::ui::{self, caps, t, tnum, white};
 use crate::App;
 use rune::{Align, Curve, Easing, El, ScrollSpec, Shadow, Spring, SpringPair, Transition, Tx, col, el, oklch, row, text};
-use sone_host_shim::Manager;
+use sone_core::host::Manager;
 use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use std::time::{Duration, Instant};
 
@@ -155,7 +155,7 @@ pub fn tick(s: &mut App, tx: &mut Tx) -> (bool, Option<Duration>) {
     }
     if f.told_mpris != Some(f.open) {
         f.told_mpris = Some(f.open);
-        if let Err(e) = tauri_app_lib::commands::playback::update_mpris_fullscreen(crate::host().state::<tauri_app_lib::AppState>(), f.open) {
+        if let Err(e) = sone_core::commands::playback::update_mpris_fullscreen(crate::host().state::<sone_core::AppState>(), f.open) {
             log::warn!("[rune] update_mpris_fullscreen: {e}");
         }
     }

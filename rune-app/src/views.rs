@@ -1140,19 +1140,19 @@ fn feed_opened() {
     }
     let h = crate::host().clone();
     let again = data::peek(&Key::Feed).is_some();
-    sone_host_shim::async_runtime::spawn(async move {
-        use sone_host_shim::Manager;
-        let st = || h.state::<tauri_app_lib::AppState>();
+    sone_core::host::async_runtime::spawn(async move {
+        use sone_core::host::Manager;
+        let st = || h.state::<sone_core::AppState>();
         // the feed first (from the backend's cache when it's fresh), then the seen mark, which
         // drops that cache for the next visit
         if again
-            && let Ok(f) = tauri_app_lib::commands::feed::get_feed(st(), data::user_id()).await
+            && let Ok(f) = sone_core::commands::feed::get_feed(st(), data::user_id()).await
             && let Ok(mut v) = serde_json::to_value(f)
         {
             v["unseenCount"] = json!(0);
             data::replace(Key::Feed, v);
         }
-        let _ = tauri_app_lib::commands::feed::mark_feed_seen(st(), data::user_id()).await;
+        let _ = sone_core::commands::feed::mark_feed_seen(st(), data::user_id()).await;
     });
 }
 
@@ -2639,7 +2639,7 @@ fn feed_row(i: usize, it: &Value) -> El {
 
 pub(crate) fn play_feed_item(kind: &str, id: Value, title: &str) {
     let (kind, title) = (kind.to_string(), title.to_string());
-    sone_host_shim::async_runtime::spawn(async move {
+    sone_core::host::async_runtime::spawn(async move {
         match kind.as_str() {
             "album" => {
                 let Some(aid) = id.as_u64() else { return };
@@ -2659,9 +2659,9 @@ pub(crate) fn play_feed_item(kind: &str, id: Value, title: &str) {
             }
             _ => {
                 let mid = id.as_str().map(str::to_string).unwrap_or_else(|| id.to_string());
-                use sone_host_shim::Manager;
+                use sone_core::host::Manager;
                 let h = crate::host().clone();
-                match tauri_app_lib::commands::pages::get_mix_items(h.state::<tauri_app_lib::AppState>(), mid.clone()).await {
+                match sone_core::commands::pages::get_mix_items(h.state::<sone_core::AppState>(), mid.clone()).await {
                     Ok(m) => {
                         let v = serde_json::to_value(m).unwrap_or(Value::Null);
                         let tracks = v["tracks"].as_array().or(v["items"].as_array()).cloned().unwrap_or_default();

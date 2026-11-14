@@ -727,6 +727,24 @@ Earlier sections say videos, settings and most views aren't ported; that is hist
   without `--ignore`) fails on control names that differ from the reference; `verify.py run`
   crashes after a scenario with `audio = false` (`audio.summary`, KeyError 'segments').
 
+## Tauri removed (2026-11-14)
+
+The Rune app replaces the Tauri app on this branch; `main` keeps the Tauri build.
+
+- **Removed:** the React frontend, its tooling, the Tauri packaging and CI, the `tauri-ui`
+  feature and every Tauri, WebKit and GTK dependency, the stand-in crate `host-shim` (now the
+  module `core/src/host.rs`), and the code only a webview window could reach (the embedded
+  sign-in window, the webview proxy credentials, the Wayland idle-inhibit layer that needed the
+  webview's surface). `src-tauri` is now `core`, the crate `sone-core`.
+- **Found while removing it:** the Tauri entry point settled the proxy environment and set
+  `SOUP_FORCE_HTTP1` before starting; the Rune app never did either. Both now run from
+  `core/src/launch.rs`, called first in `main()`, under the same source guards.
+- **The reference is frozen.** The goldens were recorded from the Tauri build and can no longer
+  be re-recorded from this branch. They are the regression baseline for the Rune app; a golden
+  that has to change is changed by hand, with the reason in the commit.
+- **Checked after the removal:** backend tests 414 pass (391 unit, 23 integration and source
+  guards), app tests 109 pass.
+
 ## Build order
 
 1. ~~Spikes~~, ~~sandbox completion~~, ~~harness v0~~, ~~port slice 1 (playback core)~~,

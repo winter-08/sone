@@ -1,7 +1,8 @@
 # SONE playback / queue behavioural spec (for the pure-Rust UI port)
 
-Source of truth: the React frontend in `src/` as of this writing. All references are
-`file:line` relative to the repo root (`/home/winter/dev/sone`). Abbreviations:
+Source of truth: the React frontend as it was before it was removed from this branch (it is on
+`main`, in `src/`, with the backend then in `src-tauri/`, now `core/`). All references are
+`file:line` in that tree. Abbreviations:
 
 - `UPA` = `src/hooks/usePlaybackActions.ts`
 - `AI`  = `src/components/AppInitializer.tsx`

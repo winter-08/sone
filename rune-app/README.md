@@ -1,13 +1,13 @@
-# SONE on Rune (no WebKitGTK)
+# SONE on Rune
 
-SONE's backend (`../src-tauri`, unchanged behaviour) under a native [Rune](https://github.com/anomalyco/rune)
-UI instead of Tauri's WebKitGTK webview. The React frontend in `../src` is the specification: what
-a user can do there, they should be able to do here. Two audits against it are recorded in
-`../verifier/DESIGN.md`; what is still missing is listed at the end of this file.
+SONE with a native [Rune](https://github.com/anomalyco/rune) UI over the `sone-core` backend
+(`../core`). This is the app: the Tauri/React build it replaced is on the `main` branch, and its
+React frontend was the specification this UI was written and audited against (the audits are
+recorded in `../verifier/DESIGN.md`). What is still missing is listed at the end of this file.
 
 ```
 rune-app/
-  src/main.rs            boot the backend through host-shim, route its events, the view's panes
+  src/main.rs            boot the backend, route its events, the view's panes
   src/controller.rs      SONE's React playback/queue logic re-implemented in Rust (one actor)
   src/content.rs         explicit / AI content filter        src/sources.rs   paged play sources
   src/ui.rs, glyph.rs    the Afterglow kit, the player bar   src/icons.rs     lucide icons
@@ -29,14 +29,15 @@ rune-app/
   PLAYBACK_SPEC.md       the behavioural contract, written from the React sources
   PLAYER_DESIGN.md       decisions on the full-screen player and miniplayer
   shell.nix, wrap.sh     build shell; wrapper with the runtime environment baked in
-../src-tauri/host-shim   the slice of Tauri's API the backend uses, minus the webview
+../core                the backend library (sone-core)
 ```
 
-How the backend runs without Tauri: `src-tauri` has two features. `tauri-ui` (default) is the
-shipping app, unchanged. `host` makes Tauri/WebKit/GTK optional and aliases `tauri::` to
-`host-shim`, an in-process event bus with managed state; `#[tauri::command]`s become plain
-functions the controller calls. `setup_core()` (in `src-tauri/src/lib.rs`) is the window-free
-part of startup, shared by both, and `on_exit()` the shared shutdown.
+How the app and the backend meet (`core/src/host.rs`): an `AppHandle` carries the backend's
+shared state and an in-process event bus. `setup_core()` starts everything that needs no window,
+the controller calls the functions in `core/src/commands` directly and hears events through
+`listen_any`, and `on_exit()` is the shutdown. `launch::prepare_environment()` runs first in
+`main()`: the proxy environment and libsoup's HTTP/1.1 switch must be settled before any thread
+exists.
 
 ## Build and run
 
@@ -55,7 +56,7 @@ geometry, under the keys the React app used in localStorage), `rune-ui.json`, `r
 
 - One instance at a time: a second launch raises the first and hands over a `tidal://` link.
 - A release build registers itself as the `tidal://` handler at launch (a `.desktop` file in
-  `~/.local/share/applications` and `xdg-mime default`), as the Tauri app does;
+  `~/.local/share/applications` and `xdg-mime default`), as the Tauri app did;
   `SONE_NO_SCHEME_REGISTER=1` turns that off. Debug builds never register.
 - `SONE_PERF=1` logs frames, view runs, polls, region rebuilds, CPU and memory every 5 s.
   `SONE_FX=0` turns the one-shot motion off. `SONE_GLASS=0` draws menus, toasts and dialogs on an
@@ -85,7 +86,7 @@ against a slow TIDAL (300 ms a request by default, as the real service is) are
 `verifier/bench/latency.py`: the command to rerun is at the top of that file.
 
 The backend sends TIDAL requests concurrently (at most six at once, one token refresh for many
-expired requests: `TidalClientCell` in `src-tauri/src/tidal_api.rs`). Work the user hasn't asked
+expired requests: `TidalClientCell` in `core/src/tidal_api.rs`). Work the user hasn't asked
 for yet (other Home tabs, the feed, the profile, favourite ids) holds at most two of those
 slots (`src/sched.rs`).
 

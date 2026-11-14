@@ -5,13 +5,13 @@
 //! them step by step). Results are kept as JSON, which is what the React views rendered from.
 
 use serde_json::Value;
-use sone_host_shim::Manager;
+use sone_core::host::Manager;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{LazyLock, Mutex};
 use std::time::{Duration, Instant};
-use tauri_app_lib::AppState;
-use tauri_app_lib::commands::{library, metadata, pages, search};
+use sone_core::AppState;
+use sone_core::commands::{library, metadata, pages, search};
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum Key {
@@ -237,7 +237,7 @@ fn want_in(key: Key, lane: Lane) -> Load {
         drop(c);
         LANDED.notify_waiters();
     };
-    sone_host_shim::async_runtime::spawn(async move {
+    sone_core::host::async_runtime::spawn(async move {
         match &promote {
             Some(p) => crate::sched::bg(Some(p), work).await,
             None => work.await,
@@ -402,7 +402,7 @@ fn revalidate(c: &mut HashMap<Key, Entry>, key: &Key) {
         e.fetch = fetch_id;
     }
     let key = key.clone();
-    sone_host_shim::async_runtime::spawn(async move {
+    sone_core::host::async_runtime::spawn(async move {
         let res = fetch(&key).await;
         let mut c = CACHE.lock().unwrap();
         if c.get(&key).is_some_and(|e| e.fetch == fetch_id) {
@@ -518,15 +518,15 @@ async fn fetch(key: &Key) -> Result<Value, String> {
             // request get_user_profile makes (GET /users/{id}), with the same name and handle:
             // no need to make it a third time.
             Some(p) if p["artistId"].is_null() && p["name"].is_string() => Ok(serde_json::json!([p["name"], p["handle"]])),
-            _ => v!(tauri_app_lib::commands::auth::get_user_profile(st(), uid().await?)),
+            _ => v!(sone_core::commands::auth::get_user_profile(st(), uid().await?)),
         },
         Key::Lyrics(id) => v!(metadata::get_track_lyrics(st(), *id)),
         Key::Page(path) => v!(pages::get_page_section(st(), h.clone(), path.clone())),
-        Key::Feed => v!(tauri_app_lib::commands::feed::get_feed(st(), uid().await?)),
+        Key::Feed => v!(sone_core::commands::feed::get_feed(st(), uid().await?)),
         Key::Credits(id) => v!(metadata::get_track_credits(st(), *id)),
         Key::ArtistBio(id) => v!(pages::get_artist_bio(st(), h.clone(), *id)),
         Key::Mix(id) => v!(pages::get_mix_items(st(), id.clone())),
-        Key::UserProfile => v!(tauri_app_lib::commands::profile::get_profile(st(), uid().await?)),
+        Key::UserProfile => v!(sone_core::commands::profile::get_profile(st(), uid().await?)),
         // AddToPlaylistMenu: the first 500, then every further page (the picker lists them all).
         Key::AllPlaylists => {
             const PAGE: u32 = 500;

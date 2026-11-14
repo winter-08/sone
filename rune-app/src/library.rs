@@ -10,9 +10,9 @@
 
 use rune::{El, Side, TextEdit, col, el, row, spacer, text, text_input};
 use serde_json::{Value, json};
-use sone_host_shim::Manager;
-use tauri_app_lib::AppState;
-use tauri_app_lib::commands::library;
+use sone_core::host::Manager;
+use sone_core::AppState;
+use sone_core::commands::library;
 
 use crate::App;
 use crate::coll::{self, FolderDialog, FolderMenu, Sort, SortMenu};
@@ -506,7 +506,7 @@ fn dialog_field(s: &mut App) -> &mut TextEdit {
     }
 }
 
-fn st() -> sone_host_shim::State<'static, AppState> {
+fn st() -> sone_core::host::State<'static, AppState> {
     crate::host().state::<AppState>()
 }
 
@@ -530,7 +530,7 @@ fn rename_folder(s: &mut App) {
     *saving = true;
     *error = None;
     let id = id.clone();
-    sone_host_shim::async_runtime::spawn(async move {
+    sone_core::host::async_runtime::spawn(async move {
         match library::rename_playlist_folder(st(), format!("trn:folder:{id}"), new.clone()).await {
             Ok(()) => {
                 refresh_folders();
@@ -560,7 +560,7 @@ fn delete_folder(s: &mut App) {
     }
     *busy = true;
     let (id, name) = (id.clone(), name.clone());
-    sone_host_shim::async_runtime::spawn(async move {
+    sone_core::host::async_runtime::spawn(async move {
         let res = library::delete_playlist_folder(st(), format!("trn:folder:{id}")).await;
         let ok = res.is_ok();
         match res {
@@ -597,7 +597,7 @@ fn create_folder(s: &mut App) {
     *saving = true;
     *error = None;
     let (playlist, label) = (playlist.clone(), label.clone());
-    sone_host_shim::async_runtime::spawn(async move {
+    sone_core::host::async_runtime::spawn(async move {
         match library::create_playlist_folder(st(), "root".into(), name.clone(), format!("trn:playlist:{playlist}")).await {
             Ok(v) => {
                 // The new folder's id, from the answer when it says (useFolders.createFolder).
@@ -633,7 +633,7 @@ fn push_recent(s: &mut App, id: &str) {
 pub fn created_playlist(uuid: String) {
     coll::later(move |s| {
         let Some(folder) = s.nav.coll.create_in.take() else { return };
-        sone_host_shim::async_runtime::spawn(async move {
+        sone_core::host::async_runtime::spawn(async move {
             if library::move_playlist_to_folder(st(), folder, format!("trn:playlist:{uuid}")).await.is_err() {
                 interact::toast("Playlist created but could not be moved to folder".into(), Kind::Error);
             }
@@ -741,7 +741,7 @@ pub fn move_menu(s: &App, uuid: &str, label: &str, all: bool, query: &TextEdit, 
 }
 
 fn move_to(uuid: String, label: String, folder: String, folder_name: String) {
-    sone_host_shim::async_runtime::spawn(async move {
+    sone_core::host::async_runtime::spawn(async move {
         match library::move_playlist_to_folder(st(), folder.clone(), format!("trn:playlist:{uuid}")).await {
             Ok(()) => {
                 refresh_folders();

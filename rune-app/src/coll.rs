@@ -102,7 +102,7 @@ pub struct Coll {
 }
 
 fn prefs_path() -> Option<std::path::PathBuf> {
-    tauri_app_lib::config_dir_for_env().map(|d| d.join("rune-library.json"))
+    sone_core::config_dir_for_env().map(|d| d.join("rune-library.json"))
 }
 
 impl Coll {

@@ -15,18 +15,18 @@ use crate::ui::{self, caps, t, white};
 use crate::views::{heading, open_url};
 use rune::{El, TextEdit, Tx, col, el, row, spacer, text, text_input};
 use serde_json::Value;
-use sone_host_shim::Manager;
+use sone_core::host::Manager;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
-use tauri_app_lib::AppState;
-use tauri_app_lib::commands::{mcp, overlay, scrobble, utility};
+use sone_core::AppState;
+use sone_core::commands::{mcp, overlay, scrobble, utility};
 
 /// [`ui::pill`], primary or secondary.
 fn button<S: 'static>(key: &str, label: &str, g: Option<G>, primary: bool) -> El {
     ui::pill(key, label, g, if primary { ui::Pill::Primary } else { ui::Pill::Secondary })
 }
 
-fn st() -> sone_host_shim::State<'static, AppState> {
+fn st() -> sone_core::host::State<'static, AppState> {
     crate::host().state::<AppState>()
 }
 
@@ -126,7 +126,7 @@ pub struct Form {
     lastfm: Auth,
     librefm: Auth,
     // Network
-    proxy: tauri_app_lib::ProxySettings,
+    proxy: sone_core::ProxySettings,
     proxy_host: TextEdit,
     proxy_port: TextEdit,
     proxy_user: TextEdit,
@@ -182,7 +182,7 @@ static RESULTS: Mutex<Vec<Apply>> = Mutex::new(Vec::new());
 
 /// Runs `fut` on the backend's runtime and hands its output to `apply` on the window's thread.
 fn run<T: Send + 'static>(fut: impl std::future::Future<Output = T> + Send + 'static, apply: impl FnOnce(&mut Form, T) + Send + 'static) {
-    sone_host_shim::async_runtime::spawn(async move {
+    sone_core::host::async_runtime::spawn(async move {
         let v = fut.await;
         RESULTS.lock().unwrap().push(Box::new(move |f: &mut Form| apply(f, v)));
         controller::bump();
@@ -400,7 +400,7 @@ pub fn flush_settings(s: &mut App) {
     }
 }
 
-fn should_submit_proxy(p: &tauri_app_lib::ProxySettings) -> bool {
+fn should_submit_proxy(p: &sone_core::ProxySettings) -> bool {
     !p.enabled || (!p.host.trim().is_empty() && p.port > 0)
 }
 
@@ -421,7 +421,7 @@ fn load_devices() {
     if DEVICES_ASKED.swap(true, std::sync::atomic::Ordering::Relaxed) {
         return;
     }
-    sone_host_shim::async_runtime::spawn_blocking(|| {
+    sone_core::host::async_runtime::spawn_blocking(|| {
         let list: Vec<(String, String)> = utility::list_audio_devices(st()).ok().and_then(|d| serde_json::to_value(d).ok())
             .and_then(|v| v.as_array().cloned()).unwrap_or_default().iter()
             .filter_map(|d| Some((d["id"].as_str()?.to_string(), d["name"].as_str().unwrap_or("").to_string()))).collect();
@@ -787,7 +787,7 @@ fn network_tab(s: &App) -> El {
     // of a bad one), so its refusal must show with the switch already off.
     if enabled || f.banner == Banner::Err {
         let tone = match f.banner { Banner::Ok => Some(theme::accent()), Banner::Err => Some(theme::danger()), _ => None };
-        let proto = match p.proxy_type { tauri_app_lib::ProxyType::Http => "http", tauri_app_lib::ProxyType::Socks5 => "socks5" };
+        let proto = match p.proxy_type { sone_core::ProxyType::Http => "http", sone_core::ProxyType::Socks5 => "socks5" };
         let endpoint = format!("{proto}://{}:{}", if p.host.is_empty() { "host" } else { &p.host }, if p.port > 0 { p.port.to_string() } else { "port".into() });
         let mut banner = row().key("px-banner").w_full().px(13.0).py(11.0).gap(10.0).radius(11.0).items_center()
             .fill(match tone { Some(c) => c.alpha(0.1), None => white(0.04) }).border(1.0, match tone { Some(c) => c.alpha(0.22), None => white(0.06) })
@@ -799,13 +799,13 @@ fn network_tab(s: &App) -> El {
         c = c.child(banner);
     }
     if enabled {
-        let label = match p.proxy_type { tauri_app_lib::ProxyType::Http => "HTTP", tauri_app_lib::ProxyType::Socks5 => "SOCKS5" };
-        let socks = p.proxy_type == tauri_app_lib::ProxyType::Socks5;
+        let label = match p.proxy_type { sone_core::ProxyType::Http => "HTTP", sone_core::ProxyType::Socks5 => "SOCKS5" };
+        let socks = p.proxy_type == sone_core::ProxyType::Socks5;
         let protocol = theme::focusable(row().key("px-protocol").role("button").label(label)).h(38.0).px(12.0).gap(6.0).radius(10.0).items_center()
             .fill(theme::accent().alpha(0.1)).hover(theme::accent().alpha(0.16)).cursor(rune::Cursor::Pointer)
             .help("Switch between HTTP and SOCKS5")
             .on_press(move |s: &mut App| {
-                s.nav.set.proxy.proxy_type = if socks { tauri_app_lib::ProxyType::Http } else { tauri_app_lib::ProxyType::Socks5 };
+                s.nav.set.proxy.proxy_type = if socks { sone_core::ProxyType::Http } else { sone_core::ProxyType::Socks5 };
                 proxy_changed(s);
             })
             .child(text(label.to_string()).font(t(11.5, 700.0)).color(theme::accent()).a11y_hidden())
@@ -1600,7 +1600,7 @@ mod tests {
 
     #[test]
     fn half_typed_proxy_settings_are_withheld() {
-        let mut p = tauri_app_lib::ProxySettings { enabled: true, host: "1".into(), port: 0, ..Default::default() };
+        let mut p = sone_core::ProxySettings { enabled: true, host: "1".into(), port: 0, ..Default::default() };
         assert!(!should_submit_proxy(&p));
         p.port = 8080;
         assert!(should_submit_proxy(&p));

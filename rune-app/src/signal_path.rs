@@ -12,7 +12,7 @@ use crate::theme;
 use crate::ui::{self, t, white};
 use rune::{Color, El, Tracked, col, el, oklch, row, text};
 use serde_json::Value;
-use sone_host_shim::Manager;
+use sone_core::host::Manager;
 use std::mem::ManuallyDrop;
 use std::cell::RefCell;
 use std::sync::Mutex;
@@ -73,8 +73,8 @@ pub fn is_open() -> bool {
 
 fn refresh() {
     NEXT_REFRESH.set(Some(Instant::now() + HEARTBEAT));
-    sone_host_shim::async_runtime::spawn(async move {
-        let sp = tauri_app_lib::commands::utility::refresh_signal_path(crate::host().state::<tauri_app_lib::AppState>());
+    sone_core::host::async_runtime::spawn(async move {
+        let sp = sone_core::commands::utility::refresh_signal_path(crate::host().state::<sone_core::AppState>());
         *SNAPSHOT.lock().unwrap() = serde_json::to_value(sp).ok();
         FRESH.store(true, Ordering::Relaxed);
     });

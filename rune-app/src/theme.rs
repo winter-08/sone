@@ -446,19 +446,19 @@ pub fn save_current() {
 }
 
 /// themeToFile: a preset's name when the theme is one (by name and colours), else "custom".
-pub fn to_file(t: &Theme) -> tauri_app_lib::theme_config::ThemeFile {
+pub fn to_file(t: &Theme) -> sone_core::theme_config::ThemeFile {
     let accent = normalize_hex(&t.accent).unwrap_or_else(|| t.accent.to_uppercase());
     let bg = normalize_hex(&t.bg).unwrap_or_else(|| t.bg.to_uppercase());
     let preset = PRESETS.iter().any(|(n, a, b)| *n == t.name && a.eq_ignore_ascii_case(&accent) && b.eq_ignore_ascii_case(&bg));
-    tauri_app_lib::theme_config::ThemeFile {
+    sone_core::theme_config::ThemeFile {
         version: Some(1),
         preset: if preset { t.name.clone() } else { "custom".into() },
-        custom: tauri_app_lib::theme_config::ThemeCustom { accent, background: bg },
+        custom: sone_core::theme_config::ThemeCustom { accent, background: bg },
     }
 }
 
 /// resolveThemeFile: the file's preset, or its custom colours.
-pub fn from_file(f: &tauri_app_lib::theme_config::ThemeFile) -> Option<Theme> {
+pub fn from_file(f: &sone_core::theme_config::ThemeFile) -> Option<Theme> {
     if f.version.is_some_and(|v| v != 1) {
         return None;
     }
@@ -471,7 +471,7 @@ pub fn from_file(f: &tauri_app_lib::theme_config::ThemeFile) -> Option<Theme> {
 }
 
 fn save(t: &Theme) {
-    if let Err(e) = tauri_app_lib::theme_config::theme_file_set(to_file(t)) {
+    if let Err(e) = sone_core::theme_config::theme_file_set(to_file(t)) {
         log::warn!("[theme] theme.json unavailable: {e}");
     }
 }
@@ -479,7 +479,7 @@ fn save(t: &Theme) {
 /// At launch (React bootstrapThemeFile): the theme in `theme.json`; with no file, the default
 /// is written there; an invalid file is left alone (the user may be editing it).
 pub fn init() {
-    match tauri_app_lib::theme_config::theme_file_get() {
+    match sone_core::theme_config::theme_file_get() {
         Ok(Some(f)) => {
             if let Some(t) = from_file(&f) {
                 apply(t);
@@ -494,7 +494,7 @@ pub fn init() {
 /// The backend's watcher saw `theme.json` change (`theme-file-changed`): apply it, or, deleted
 /// while running, write it back from the theme in use.
 pub fn on_file_changed(payload: &str) {
-    match serde_json::from_str::<Option<tauri_app_lib::theme_config::ThemeFile>>(payload) {
+    match serde_json::from_str::<Option<sone_core::theme_config::ThemeFile>>(payload) {
         Ok(Some(f)) => {
             if let Some(t) = from_file(&f) {
                 apply(t);
@@ -569,9 +569,9 @@ pub fn overlay_css(t: &Theme) -> String {
 /// Hand the overlay server the theme's stylesheet (React useOverlayBridge's theme effect).
 fn publish_overlay_css() {
     let css = overlay_css(&current());
-    sone_host_shim::async_runtime::spawn(async move {
-        use sone_host_shim::Manager;
-        let _ = tauri_app_lib::commands::overlay::overlay_publish_theme(crate::host().state::<tauri_app_lib::AppState>(), css).await;
+    sone_core::host::async_runtime::spawn(async move {
+        use sone_core::host::Manager;
+        let _ = sone_core::commands::overlay::overlay_publish_theme(crate::host().state::<sone_core::AppState>(), css).await;
     });
 }
 

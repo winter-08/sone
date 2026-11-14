@@ -18,15 +18,15 @@
 //! `shuffle_source`) in sources.rs; autoplay radio is `autoplay_radio`.
 
 use serde_json::{Value, json};
-use sone_host_shim::{AppHandle, Manager};
+use sone_core::host::{AppHandle, Manager};
 use std::collections::HashSet;
 use std::sync::atomic::{AtomicU8, AtomicU64, Ordering};
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
-use tauri_app_lib::AppState;
-use tauri_app_lib::commands::{auth, mcp as mcp_cmd, metadata, playback, scrobble, utility};
-use tauri_app_lib::error::SoneError;
-use tauri_app_lib::mcp::{NowPlayingSnapshot, QueueTrackSnapshot};
+use sone_core::AppState;
+use sone_core::commands::{auth, mcp as mcp_cmd, metadata, playback, scrobble, utility};
+use sone_core::error::SoneError;
+use sone_core::mcp::{NowPlayingSnapshot, QueueTrackSnapshot};
 use tokio::sync::mpsc;
 
 // ------------------------------------------------------------------ public surface (UI)
@@ -428,7 +428,7 @@ pub fn start(handle: AppHandle) {
     let (tx, rx) = mpsc::unbounded_channel();
     let _ = TX.set(tx.clone());
     let _ = POSITION.set(Mutex::new(Position::default()));
-    sone_host_shim::async_runtime::spawn(async move {
+    sone_core::host::async_runtime::spawn(async move {
         let mut p = Player::new(handle, tx);
         p.startup().await;
         p.run(rx).await;
@@ -789,7 +789,7 @@ impl Default for Prefs {
     }
 }
 fn prefs_path() -> Option<std::path::PathBuf> {
-    tauri_app_lib::config_dir_for_env().map(|d| d.join("rune-ui.json"))
+    sone_core::config_dir_for_env().map(|d| d.join("rune-ui.json"))
 }
 
 #[derive(Default, PartialEq, Clone)]
@@ -916,7 +916,7 @@ impl Player {
         }
     }
 
-    fn state(&self) -> sone_host_shim::State<'_, AppState> {
+    fn state(&self) -> sone_core::host::State<'_, AppState> {
         self.h.state::<AppState>()
     }
 
@@ -1047,7 +1047,7 @@ impl Player {
 
     fn later(&self, after: Duration, msg: Msg) {
         let tx = self.tx.clone();
-        sone_host_shim::async_runtime::spawn(async move {
+        sone_core::host::async_runtime::spawn(async move {
             tokio::time::sleep(after).await;
             let _ = tx.send(msg);
         });
@@ -1071,8 +1071,8 @@ impl Player {
         // them in atoms; here nothing reads them (the library tabs and Loved Tracks ask for their
         // own, larger, pages), so they wait behind everything else.
         let h = self.h.clone();
-        sone_host_shim::async_runtime::spawn(async move {
-            use tauri_app_lib::commands::library;
+        sone_core::host::async_runtime::spawn(async move {
+            use sone_core::commands::library;
             let Ok(uid) = data::uid().await else { return };
             let st = || h.state::<AppState>();
             let _ = tokio::join!(
@@ -1480,7 +1480,7 @@ impl Player {
                     v => v.to_string(),
                 };
                 let (tx, h, shuffle) = (self.tx.clone(), self.h.clone(), name == "mcp:shuffle-source");
-                sone_host_shim::async_runtime::spawn(async move {
+                sone_core::host::async_runtime::spawn(async move {
                     match crate::sources::build(&h, &kind, &id).await {
                         Some(l) => {
                             let _ = tx.send(Msg::SourceBuilt { loader: Box::new(l), shuffle });
@@ -1671,7 +1671,7 @@ impl Player {
     /// `Msg::VideoMeta`, and the publish after it carries it to the bar and MPRIS.
     fn fill_video_meta(&self, t: &Value) {
         let (id, qid, h, tx) = (tid(t), qid_of(t), self.h.clone(), self.tx.clone());
-        sone_host_shim::async_runtime::spawn(async move {
+        sone_core::host::async_runtime::spawn(async move {
             let Ok(meta) = playback::get_video_metadata(h.state::<AppState>(), id).await else { return };
             let Ok(meta) = serde_json::to_value(meta) else { return };
             let _ = tx.send(Msg::VideoMeta { id, qid, meta });
@@ -1832,7 +1832,7 @@ impl Player {
             }),
         };
         let h = self.h.clone();
-        sone_host_shim::async_runtime::spawn(async move {
+        sone_core::host::async_runtime::spawn(async move {
             let _ = scrobble::notify_track_started(h.state::<AppState>(), payload).await;
         });
     }
@@ -1971,7 +1971,7 @@ impl Player {
             self.fetch_seq += 1;
         }
         let (tx, h, action, asked, seq) = (self.tx.clone(), self.h.clone(), action.to_string(), ids.len(), self.fetch_seq);
-        sone_host_shim::async_runtime::spawn(async move {
+        sone_core::host::async_runtime::spawn(async move {
             // Keep the successful ones in their original order (MCPB:221-251).
             let futs = ids.into_iter().map(|id| {
                 let h = h.clone();
@@ -2064,7 +2064,7 @@ impl Player {
         self.source_req += 1;
         let (request, epoch) = (self.source_req, EPOCH.load(Ordering::Relaxed));
         let (tx, h, ae, aa) = (self.tx.clone(), self.h.clone(), self.prefs.allow_explicit, self.prefs.allow_ai);
-        sone_host_shim::async_runtime::spawn(async move {
+        sone_core::host::async_runtime::spawn(async move {
             let playable = move |t: &Value| !unavailable(t) && crate::content::reason_with(t, ae, aa).is_none();
             loader.start(&h, &playable).await;
             let _ = tx.send(Msg::SourceReady { loader: Box::new(loader), request, epoch, restore });
@@ -2117,7 +2117,7 @@ impl Player {
         let ours = epoch + 1;
         let owner = (loader.meta["type"].clone(), loader.meta["id"].clone());
         let (tx, h, ae, aa) = (self.tx.clone(), self.h.clone(), self.prefs.allow_explicit, self.prefs.allow_ai);
-        sone_host_shim::async_runtime::spawn(async move {
+        sone_core::host::async_runtime::spawn(async move {
             let playable = move |t: &Value| !unavailable(t) && crate::content::reason_with(t, ae, aa).is_none();
             while loader.has_more && EPOCH.load(Ordering::Relaxed) == ours {
                 let fresh = match loader.next_page(&h, &playable).await {
@@ -2424,7 +2424,7 @@ impl Player {
         let Some(cur) = self.current.clone() else { return false };
         let Some(mix) = cur["mixes"]["TRACK_MIX"].as_str().filter(|m| !m.is_empty()).map(str::to_string) else { return false };
         let h = self.h.clone();
-        let items = match tauri_app_lib::commands::pages::get_mix_items(h.state::<AppState>(), mix).await {
+        let items = match sone_core::commands::pages::get_mix_items(h.state::<AppState>(), mix).await {
             Ok(m) => serde_json::to_value(m).unwrap_or(Value::Null),
             Err(e) => {
                 match classify(&e) {
@@ -3027,7 +3027,7 @@ impl Player {
         if self.pubd.tooltip.as_ref() != Some(&tip) {
             let h = self.h.clone();
             let t2 = tip.clone();
-            sone_host_shim::async_runtime::spawn(async move {
+            sone_core::host::async_runtime::spawn(async move {
                 let _ = utility::update_tray_tooltip(h, t2).await;
             });
             want.tooltip = Some(tip);

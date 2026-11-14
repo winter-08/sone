@@ -450,17 +450,17 @@ pub fn run(s: &mut App, id: Action, tx: &mut Tx) {
 fn exclusive_on() {
     controller::send(Cmd::SetExclusive(true));
     // (Off the UI thread: listing the devices may probe GStreamer when nothing is cached yet.)
-    sone_host_shim::async_runtime::spawn_blocking(|| {
-        use sone_host_shim::Manager;
-        use tauri_app_lib::commands::utility;
+    sone_core::host::async_runtime::spawn_blocking(|| {
+        use sone_core::host::Manager;
+        use sone_core::commands::utility;
         let h = crate::host();
-        let st = h.state::<tauri_app_lib::AppState>();
+        let st = h.state::<sone_core::AppState>();
         if st.exclusive_device.lock().unwrap().is_some() {
             return;
         }
-        if let Ok(devices) = utility::list_audio_devices(h.state::<tauri_app_lib::AppState>()) {
+        if let Ok(devices) = utility::list_audio_devices(h.state::<sone_core::AppState>()) {
             if let Some(first) = devices.first() {
-                let _ = utility::set_exclusive_device(h.state::<tauri_app_lib::AppState>(), first.id.clone());
+                let _ = utility::set_exclusive_device(h.state::<sone_core::AppState>(), first.id.clone());
             }
         }
     });

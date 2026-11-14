@@ -11,11 +11,11 @@
 //! read the version (`data::freeze`), as with the catalogue cache.
 
 use serde_json::Value;
-use sone_host_shim::Manager;
+use sone_core::host::Manager;
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, LazyLock, Mutex};
-use tauri_app_lib::AppState;
-use tauri_app_lib::commands::{library, pages};
+use sone_core::AppState;
+use sone_core::commands::{library, pages};
 
 use crate::data;
 
@@ -327,7 +327,7 @@ pub fn add_in_place(f: impl Fn(&PKey) -> bool, id: &str) {
     };
     for (key, epoch) in lists {
         let id = id.to_string();
-        sone_host_shim::async_runtime::spawn(async move {
+        sone_core::host::async_runtime::spawn(async move {
             let head = fetch_page(&key, 0, None).await;
             let mut st = STORE.lock().unwrap();
             let Some(e) = st.get_mut(&key).filter(|e| e.epoch == epoch) else { return };
@@ -375,7 +375,7 @@ pub async fn fetch_page(key: &PKey, offset: usize, cursor: Option<String>) -> Re
     let st = || h.state::<AppState>();
     let limit = key.page_size();
     let off = offset as u32;
-    fn to<T: serde::Serialize>(x: Result<T, tauri_app_lib::SoneError>) -> Result<Value, String> {
+    fn to<T: serde::Serialize>(x: Result<T, sone_core::SoneError>) -> Result<Value, String> {
         x.map_err(|e| e.to_string()).and_then(|v| serde_json::to_value(v).map_err(|e| e.to_string()))
     }
     // A page with a total: more while short of it.
@@ -456,7 +456,7 @@ pub fn prefetch(key: &PKey) {
 }
 
 fn spawn_in(key: PKey, epoch: u64, bg: Option<crate::sched::Promote>) {
-    sone_host_shim::async_runtime::spawn(async move {
+    sone_core::host::async_runtime::spawn(async move {
         let mut bg = bg;
         loop {
             let (offset, cursor) = {

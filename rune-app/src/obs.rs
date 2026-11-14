@@ -5,10 +5,10 @@
 //! snapshot directly, so it costs the window nothing: no version bump, no rebuild.
 
 use serde_json::Value;
-use sone_host_shim::Manager;
+use sone_core::host::Manager;
 use std::time::{Duration, Instant};
-use tauri_app_lib::AppState;
-use tauri_app_lib::overlay::OverlayTrackState;
+use sone_core::AppState;
+use sone_core::overlay::OverlayTrackState;
 
 /// How often the feed looks at playback while the overlay runs (a change lands within this),
 /// and how often it checks whether the overlay was switched on while it doesn't.
@@ -18,7 +18,7 @@ const IDLE_EVERY: Duration = Duration::from_secs(1);
 const PUSH_EVERY: Duration = Duration::from_secs(1);
 
 pub fn start() {
-    sone_host_shim::async_runtime::spawn(async move {
+    sone_core::host::async_runtime::spawn(async move {
         let mut feed = Feed::default();
         loop {
             let st = crate::host().state::<AppState>();
@@ -30,7 +30,7 @@ pub fn start() {
             }
             let now = controller_state();
             if let Some(track) = feed.due(now, Instant::now()) {
-                let _ = tauri_app_lib::commands::overlay::overlay_publish_state(st, track).await;
+                let _ = sone_core::commands::overlay::overlay_publish_state(st, track).await;
             }
             tokio::time::sleep(LOOK_EVERY).await;
         }

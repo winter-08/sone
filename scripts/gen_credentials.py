@@ -6,7 +6,7 @@ Usage:
 
 Outputs a complete embedded_config.rs file to stdout.
 Redirect to overwrite the module:
-    python3 scripts/gen_credentials.py KEY_A KEY_B > src-tauri/src/embedded_config.rs
+    python3 scripts/gen_credentials.py KEY_A KEY_B > core/src/embedded_config.rs
 """
 
 import os

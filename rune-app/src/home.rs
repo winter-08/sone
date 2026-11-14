@@ -201,14 +201,14 @@ fn refresh_if_stale(slug: &str, first: &Value) {
         return;
     }
     let (slug, old_tabs) = (slug.to_string(), first["home"]["tabs"].clone());
-    sone_host_shim::async_runtime::spawn(async move {
-        use sone_host_shim::Manager;
+    sone_core::host::async_runtime::spawn(async move {
+        use sone_core::host::Manager;
         let h = crate::host().clone();
-        let st = || h.state::<tauri_app_lib::AppState>();
+        let st = || h.state::<sone_core::AppState>();
         let mut fresh = None;
         for wait in [1u64, 2, 4] {
             tokio::time::sleep(std::time::Duration::from_secs(wait)).await;
-            if let Ok(p) = crate::sched::bg(None, tauri_app_lib::commands::pages::get_home_page(st(), h.clone(), Some(slug.clone()))).await
+            if let Ok(p) = crate::sched::bg(None, sone_core::commands::pages::get_home_page(st(), h.clone(), Some(slug.clone()))).await
                 && let Ok(v) = serde_json::to_value(p)
                 && v["isStale"].as_bool() == Some(false)
             {
@@ -218,7 +218,7 @@ fn refresh_if_stale(slug: &str, first: &Value) {
         }
         let fresh = match fresh {
             Some(f) => f,
-            None => crate::sched::bg(None, tauri_app_lib::commands::pages::refresh_home_page(st(), Some(slug.clone()))).await
+            None => crate::sched::bg(None, sone_core::commands::pages::refresh_home_page(st(), Some(slug.clone()))).await
                 .map_err(|e| e.to_string()).and_then(|x| serde_json::to_value(x).map_err(|e| e.to_string())),
         };
         match fresh {
@@ -249,10 +249,10 @@ pub fn revalidate(s: &App) {
     if BUSY.swap(true, std::sync::atomic::Ordering::Relaxed) {
         return;
     }
-    sone_host_shim::async_runtime::spawn(async move {
-        use sone_host_shim::Manager;
+    sone_core::host::async_runtime::spawn(async move {
+        use sone_core::host::Manager;
         let h = crate::host().clone();
-        let got = crate::sched::bg(None, tauri_app_lib::commands::pages::get_home_page(h.state::<tauri_app_lib::AppState>(), h.clone(), Some(slug.clone()))).await;
+        let got = crate::sched::bg(None, sone_core::commands::pages::get_home_page(h.state::<sone_core::AppState>(), h.clone(), Some(slug.clone()))).await;
         if let Ok(v) = got.map_err(|e| e.to_string()).and_then(|x| serde_json::to_value(x).map_err(|e| e.to_string()))
             && !PAGED.lock().unwrap().contains(&slug)
         {

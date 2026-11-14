@@ -13,8 +13,8 @@
 use std::sync::OnceLock;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
-use tauri_app_lib::AppState;
-use sone_host_shim::Manager;
+use sone_core::AppState;
+use sone_core::host::Manager;
 
 static BASE: OnceLock<Result<String, String>> = OnceLock::new();
 
@@ -25,12 +25,12 @@ fn base() -> Result<String, String> {
         let port = listener.local_addr().map_err(|e| format!("relay: {e}"))?.port();
         let token = format!("{:032x}", rand::random::<u128>());
         let t = token.clone();
-        sone_host_shim::async_runtime::spawn(async move {
+        sone_core::host::async_runtime::spawn(async move {
             let Ok(listener) = tokio::net::TcpListener::from_std(listener) else { return };
             loop {
                 let Ok((sock, _)) = listener.accept().await else { continue };
                 let t = t.clone();
-                sone_host_shim::async_runtime::spawn(async move {
+                sone_core::host::async_runtime::spawn(async move {
                     if let Err(e) = serve(sock, &t).await {
                         log::debug!("[video relay] {e}");
                     }

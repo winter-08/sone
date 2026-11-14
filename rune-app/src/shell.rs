@@ -21,17 +21,17 @@ use crate::views::{self, Page};
 use crate::{App, controller, interact, theme};
 use rune::{Cx, Drag, El, Phase, Tx, col, el, row, text};
 use serde_json::{Map, Value, json};
-use sone_host_shim::Manager;
+use sone_core::host::Manager;
 use std::cell::{Cell, RefCell};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{LazyLock, Mutex, OnceLock};
 use std::time::{Duration, Instant};
-use tauri_app_lib::AppState;
+use sone_core::AppState;
 
 // ------------------------------------------------------------------ the store
 
 fn store_path() -> Option<std::path::PathBuf> {
-    tauri_app_lib::config_dir_for_env().map(|d| d.join("rune-shell.json"))
+    sone_core::config_dir_for_env().map(|d| d.join("rune-shell.json"))
 }
 
 static STORE: LazyLock<Mutex<Map<String, Value>>> = LazyLock::new(|| {
@@ -455,8 +455,8 @@ pub fn on_exit() {
     // (On a thread of its own: the backend's exit can come from inside the async runtime,
     // the tray's Quit and MPRIS Quit among them, where blocking on it would panic.)
     join_off_runtime(|| {
-        sone_host_shim::async_runtime::block_on(async {
-            tauri_app_lib::on_exit(&crate::host().state::<AppState>()).await;
+        sone_core::host::async_runtime::block_on(async {
+            sone_core::on_exit(&crate::host().state::<AppState>()).await;
         })
     });
     rune::release_instance();
@@ -478,7 +478,7 @@ fn join_off_runtime<R: Send>(f: impl FnOnce() -> R + Send) -> R {
 /// Quit does, so the queue and pending scrobbles are written (Tauri's GTK loop died on them).
 pub fn on_terminate_signals() {
     use tokio::signal::unix::{SignalKind, signal};
-    sone_host_shim::async_runtime::spawn(async {
+    sone_core::host::async_runtime::spawn(async {
         let (Ok(mut term), Ok(mut int)) = (signal(SignalKind::terminate()), signal(SignalKind::interrupt())) else {
             log::warn!("[rune] can't listen for SIGTERM/SIGINT");
             return;
@@ -586,10 +586,10 @@ pub fn tick(s: &mut App) {
     if want != INHIBITED.load(Ordering::Relaxed) {
         INHIBITED.store(want, Ordering::Relaxed);
         crate::mini::hide_for_full(want);
-        sone_host_shim::async_runtime::spawn(async move {
+        sone_core::host::async_runtime::spawn(async move {
             let st = crate::host().state::<AppState>();
             let mut inhibitor = st.idle_inhibitor.lock().await;
-            if want { inhibitor.inhibit_without_window().await } else { inhibitor.uninhibit().await }
+            if want { inhibitor.inhibit().await } else { inhibitor.uninhibit().await }
         });
     }
 }
@@ -598,8 +598,8 @@ pub fn tick(s: &mut App) {
 /// and every page's data are dropped, so what shows is fetched again (React refreshApp clears
 /// both caches and reloads the webview; playback carries on either way).
 pub fn refresh_app(_: &mut App) {
-    sone_host_shim::async_runtime::spawn(async {
-        let _ = tauri_app_lib::commands::utility::clear_disk_cache(crate::host().state::<AppState>()).await;
+    sone_core::host::async_runtime::spawn(async {
+        let _ = sone_core::commands::utility::clear_disk_cache(crate::host().state::<AppState>()).await;
         crate::data::clear();
         crate::interact::reload_favorites();
     });
@@ -613,7 +613,7 @@ pub const TITLE_BAR_H: f32 = 32.0;
 fn icon() -> Option<rune::Pixels> {
     static ICON: OnceLock<Option<rune::Pixels>> = OnceLock::new();
     ICON.get_or_init(|| {
-        let img = image::load_from_memory(include_bytes!("../../src-tauri/icons/32x32.png")).ok()?.to_rgba8();
+        let img = image::load_from_memory(include_bytes!("../../core/icons/32x32.png")).ok()?.to_rgba8();
         let px = rune::Pixels::new();
         px.set(img.width(), img.height(), img.into_raw());
         Some(px)

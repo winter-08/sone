@@ -9,9 +9,9 @@ use crate::glyph::G;
 use crate::theme;
 use crate::ui::{self, t, white};
 use rune::{El, TextEdit, Tx, col, el, row, spacer, text, text_input};
-use sone_host_shim::Manager;
-use tauri_app_lib::AppState;
-use tauri_app_lib::commands::auth;
+use sone_core::host::Manager;
+use sone_core::AppState;
+use sone_core::commands::auth;
 
 #[derive(Clone, Copy, Debug, PartialEq, Default)]
 pub enum Method {

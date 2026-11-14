@@ -7,11 +7,11 @@
 //! to the queue for as long as that queue is still the one this source started (its epoch).
 
 use serde_json::{Value, json};
-use sone_host_shim::{AppHandle, Manager};
+use sone_core::host::{AppHandle, Manager};
 use std::collections::HashSet;
-use tauri_app_lib::AppState;
-use tauri_app_lib::commands::{library, metadata, pages};
-use tauri_app_lib::error::SoneError;
+use sone_core::AppState;
+use sone_core::commands::{library, metadata, pages};
+use sone_core::error::SoneError;
 
 const START_BATCH: usize = 50;
 const MAX_PAGES: usize = 200;

@@ -1,10 +1,8 @@
 //! SONE with a native Rune UI.
 //!
-//! The backend is SONE's own `src-tauri` library, unchanged, built with the `host` feature so
-//! `tauri::` resolves to a webview-free stand-in (host-shim). Where the React frontend used to
-//! listen to backend events and call `#[tauri::command]`s, the Rust playback controller does
-//! (controller.rs), the views fetch catalogue data through the same commands (data.rs), and
-//! the Rune window draws both (views.rs, ui.rs).
+//! The backend is the `sone-core` library (../core). The playback controller listens to its
+//! events and calls its commands (controller.rs), the views fetch catalogue data through the
+//! same commands (data.rs), and the Rune window draws both (views.rs, ui.rs).
 
 mod art;
 mod bio;
@@ -52,10 +50,10 @@ mod views;
 mod viewall;
 
 use rune::{AppSpec, Cx, El, Key, KeyEvent, ScrollSpec, Tracked, Tx, col, el, row};
-use sone_host_shim::{AppHandle, Listener};
+use sone_core::host::{AppHandle, Listener};
 use std::sync::OnceLock;
 use std::time::Duration;
-use tauri_app_lib as backend;
+use sone_core as backend;
 
 static HOST: OnceLock<AppHandle> = OnceLock::new();
 
@@ -497,6 +495,8 @@ pub const TITLE: &str = match option_env!("SONE_RUNE_TITLE") {
 };
 
 fn main() {
+    // Before any thread exists: the proxy environment and libsoup's HTTP/1.1 switch (core/src/launch.rs).
+    backend::launch::prepare_environment();
     // One process per user, as Tauri's single-instance plugin kept it: a second launch hands its
     // `tidal://` link (or, without one, a reopen) to the running app, which raises its window,
     // and ends here before it starts a backend of its own.

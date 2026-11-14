@@ -64,7 +64,7 @@ pub fn on_event(name: &str, payload: &str) {
             }
             crate::library::refresh_folders();
             if again_later {
-                sone_host_shim::async_runtime::spawn(async {
+                sone_core::host::async_runtime::spawn(async {
                     tokio::time::sleep(Duration::from_secs(3)).await;
                     crate::library::refresh_folders();
                 });

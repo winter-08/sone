@@ -13,12 +13,12 @@ use crate::ui::{self, t, white};
 use crate::views::{self, Page, heading, open_url};
 use rune::{El, TextEdit, Tx, col, el, row, spacer, text, text_input};
 use serde_json::Value;
-use sone_host_shim::Manager;
+use sone_core::host::Manager;
 use std::sync::Mutex;
-use tauri_app_lib::AppState;
-use tauri_app_lib::commands::profile as cmd;
+use sone_core::AppState;
+use sone_core::commands::profile as cmd;
 
-fn st() -> sone_host_shim::State<'static, AppState> {
+fn st() -> sone_core::host::State<'static, AppState> {
     crate::host().state::<AppState>()
 }
 
@@ -89,16 +89,16 @@ fn split_links(links: &[Value]) -> (String, Vec<(String, String)>) {
 }
 
 /// assembleExternalLinks: the website first, then the socials in their fixed order, blanks left out.
-fn assemble_links(website: &str, socials: &[(String, String)]) -> Vec<tauri_app_lib::tidal_api::ExternalLink> {
+fn assemble_links(website: &str, socials: &[(String, String)]) -> Vec<sone_core::tidal_api::ExternalLink> {
     let mut out = Vec::new();
     if !website.trim().is_empty() {
-        out.push(tauri_app_lib::tidal_api::ExternalLink { href: website.trim().to_string(), link_type: WEBSITE.to_string() });
+        out.push(sone_core::tidal_api::ExternalLink { href: website.trim().to_string(), link_type: WEBSITE.to_string() });
     }
     for (ty, _) in SOCIALS {
         if let Some((_, v)) = socials.iter().find(|(t, _)| t == ty)
             && !v.trim().is_empty()
         {
-            out.push(tauri_app_lib::tidal_api::ExternalLink { href: v.trim().to_string(), link_type: ty.to_string() });
+            out.push(sone_core::tidal_api::ExternalLink { href: v.trim().to_string(), link_type: ty.to_string() });
         }
     }
     out
@@ -425,7 +425,7 @@ pub fn apply_results(s: &mut App) {
 }
 
 fn later(fut: impl std::future::Future<Output = Result<(), String>> + Send + 'static, then: impl FnOnce(&mut App, Result<(), String>) + Send + 'static) {
-    sone_host_shim::async_runtime::spawn(async move {
+    sone_core::host::async_runtime::spawn(async move {
         let r = fut.await;
         DONE.lock().unwrap().push(Box::new(move |s: &mut App| then(s, r)));
         crate::controller::bump();
@@ -603,7 +603,7 @@ fn choose_picture(s: &mut App, tx: &mut Tx) {
     let options = rune::FileDialogOptions { title: "Choose profile picture".into(), ..Default::default() }.filter("Images", &["jpg", "jpeg", "png"]);
     tx.open_file(options, move |_: &mut App, result, _| match result {
         Ok(Some(path)) => {
-            sone_host_shim::async_runtime::spawn(async move {
+            sone_core::host::async_runtime::spawn(async move {
                 let loaded = tokio::task::spawn_blocking(move || load_for_crop(&path)).await.map_err(|e| e.to_string()).and_then(|r| r);
                 DONE.lock().unwrap().push(Box::new(move |s: &mut App| match loaded {
                     Ok((img, px)) => {

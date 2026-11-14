@@ -35,7 +35,7 @@ let
   # Opened with dlopen by Rune (winit, wgpu) and the backend, so they go on LD_LIBRARY_PATH.
   runtime = [ wayland libxkbcommon vulkan-loader libGL libx11 libxcursor libxi libxrandr alsa-lib fontconfig freetype dbus ];
   appId = "rone";
-  icons = src + "/src-tauri/icons";
+  icons = src + "/core/icons";
   # Shared by the two derivations below. crane (not buildRustPackage) so the ~480 dependency
   # crates build once, in `rone-deps`, and a change to this crate or the backend recompiles
   # only those two. It vendors each source into its own directory, which also copes with Rune
@@ -49,10 +49,10 @@ let
     src = lib.fileset.toSource {
       root = src;
       fileset = lib.fileset.difference
-        (lib.fileset.unions [ (src + "/rune-app") (src + "/src-tauri") ])
+        (lib.fileset.unions [ (src + "/rune-app") (src + "/core") ])
         (lib.fileset.unions [
           (lib.fileset.maybeMissing (src + "/rune-app/target"))
-          (lib.fileset.maybeMissing (src + "/src-tauri/target"))
+          (lib.fileset.maybeMissing (src + "/core/target"))
         ]);
     };
     # The crate is not at the source root.

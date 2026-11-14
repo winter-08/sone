@@ -13,11 +13,11 @@ use crate::views::SettingsTab;
 use crate::{App, theme};
 use rune::{El, col, el, row, text};
 use serde_json::Value;
-use sone_host_shim::Manager;
+use sone_core::host::Manager;
 use std::sync::{LazyLock, Mutex};
 use std::time::Duration;
-use tauri_app_lib::AppState;
-use tauri_app_lib::commands::utility;
+use sone_core::AppState;
+use sone_core::commands::utility;
 use tokio::sync::Notify;
 
 const POLL: Duration = Duration::from_secs(15);
@@ -42,7 +42,7 @@ pub fn reset_after_logout() {
     s.error = None;
 }
 
-fn st() -> sone_host_shim::State<'static, AppState> {
+fn st() -> sone_core::host::State<'static, AppState> {
     crate::host().state::<AppState>()
 }
 
@@ -91,7 +91,7 @@ pub fn notice_key(status: &Value) -> Option<String> {
 
 /// Starts the status poll (once, at start).
 pub fn start() {
-    sone_host_shim::async_runtime::spawn(async {
+    sone_core::host::async_runtime::spawn(async {
         loop {
             read_status();
             let (configured, unreachable) = {
@@ -173,7 +173,7 @@ fn disable_proxy() {
         s.error = None;
     }
     crate::controller::bump();
-    sone_host_shim::async_runtime::spawn(async {
+    sone_core::host::async_runtime::spawn(async {
         // The saved host, port and credentials stay: the user turns the proxy off, nothing more.
         let mut p = utility::get_proxy_settings(st());
         p.enabled = false;

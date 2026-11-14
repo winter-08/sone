@@ -13,44 +13,24 @@
     in
     {
       packages.${system} = {
-        sone = pkgs.callPackage ./nix/package.nix { src = self; };
-        # The Rune build (rune-app/), installed as RONE.
+        # The app (rune-app/), installed as RONE.
         rone = pkgs.callPackage ./rune-app/package.nix {
           src = ./.;
           craneLib = crane.mkLib pkgs;
         };
-        default = self.packages.${system}.sone;
+        default = self.packages.${system}.rone;
       };
 
       apps.${system}.default = {
         type = "app";
-        program = "${self.packages.${system}.sone}/bin/sone";
+        program = "${self.packages.${system}.rone}/bin/rone";
       };
 
-      devShells.${system}.default = pkgs.mkShell {
-        inputsFrom = [ self.packages.${system}.sone ];
-        packages = [
-          pkgs.nodejs
-          pkgs.pnpm_11
-          pkgs.cargo
-          pkgs.rustc
-          pkgs.cargo-tauri
-        ];
-        shellHook = ''
-          export GST_PLUGIN_SYSTEM_PATH_1_0="${
-            pkgs.lib.makeSearchPath "lib/gstreamer-1.0" [
-              pkgs.gst_all_1.gstreamer
-              pkgs.gst_all_1.gst-plugins-base
-              pkgs.gst_all_1.gst-plugins-good
-              pkgs.gst_all_1.gst-plugins-bad
-              pkgs.gst_all_1.gst-libav
-            ]
-          }"
-        '';
-      };
+      # The build shell (lld, sccache, the libraries the app opens at run time).
+      devShells.${system}.default = import ./rune-app/shell.nix { inherit pkgs; };
 
       formatter.${system} = pkgs.nixfmt;
 
-      checks.${system}.build = self.packages.${system}.sone;
+      checks.${system}.build = self.packages.${system}.rone;
     };
 }

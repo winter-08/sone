@@ -39,12 +39,12 @@ use gst::prelude::*;
 use gst_video::prelude::*;
 use rune::native_surface::{ByteFrame, ColorInfo, Format, Matrix, Transfer};
 use rune::{El, NativeSurface, Waker, el};
-use sone_host_shim::Manager;
+use sone_core::host::Manager;
 use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, LazyLock, Mutex, OnceLock};
-use tauri_app_lib::AppState;
+use sone_core::AppState;
 
 /// The React localStorage key, kept in the shell store (rune-shell.json).
 const STORE_KEY: &str = "sone.videoCovers.v1";
@@ -466,7 +466,7 @@ fn fetch(slot: Slot, want: Want, alive: Arc<AtomicBool>) {
         return;
     }
     let Some(url) = video_url(&want.uuid, want.variant) else { return };
-    sone_host_shim::async_runtime::spawn(async move {
+    sone_core::host::async_runtime::spawn(async move {
         let got: Result<Vec<u8>, String> = async {
             let client = crate::host().state::<AppState>().proxied_http.client().map_err(|e| e.to_string())?;
             let r = client.get(&url).send().await.map_err(|e| e.to_string())?;

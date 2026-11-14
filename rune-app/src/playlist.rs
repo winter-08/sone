@@ -10,9 +10,9 @@ use std::sync::{LazyLock, Mutex};
 
 use rune::{El, TextEdit, Tx, col, el, row, spacer, text, text_input};
 use serde_json::{Value, json};
-use sone_host_shim::Manager;
-use tauri_app_lib::AppState;
-use tauri_app_lib::commands::library;
+use sone_core::host::Manager;
+use sone_core::AppState;
+use sone_core::commands::library;
 
 use crate::App;
 use crate::coll::{self, Edit};
@@ -193,7 +193,7 @@ fn is_public(d: &Value) -> bool {
 fn set_access(uuid: String, title: String, desc: String, public: bool) {
     ACCESS.lock().unwrap().insert(uuid.clone(), public);
     data::bump_version();
-    sone_host_shim::async_runtime::spawn(async move {
+    sone_core::host::async_runtime::spawn(async move {
         let st = crate::host().state::<AppState>();
         match library::update_playlist(st, uuid.clone(), title, desc, (if public { "PUBLIC" } else { "UNLISTED" }).into()).await {
             Ok(_) => {
@@ -280,7 +280,7 @@ fn add_rec(uuid: String, track: Value) {
     let title = data::name(&track);
     RECS_ADDED.lock().unwrap().insert((uuid.clone(), id));
     data::bump_version();
-    sone_host_shim::async_runtime::spawn(async move {
+    sone_core::host::async_runtime::spawn(async move {
         match library::add_track_to_playlist(crate::host().state::<AppState>(), uuid.clone(), id).await {
             Ok(()) => {
                 paged::forget_where(|k| matches!(k, PKey::Playlist { uuid: u, .. } if *u == uuid));
@@ -339,7 +339,7 @@ fn save_edit(s: &mut App) {
     e.saving = true;
     e.error = None;
     let (uuid, desc, public) = (e.uuid.clone(), e.desc.text.chars().take(500).collect::<String>(), e.public);
-    sone_host_shim::async_runtime::spawn(async move {
+    sone_core::host::async_runtime::spawn(async move {
         let st = crate::host().state::<AppState>();
         match library::update_playlist(st, uuid.clone(), title.clone(), desc, (if public { "PUBLIC" } else { "UNLISTED" }).into()).await {
             Ok(_) => {

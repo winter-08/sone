@@ -16,9 +16,9 @@ use std::time::{Duration, Instant};
 
 use rune::{El, Side, TextEdit, Tx, col, el, row, spacer, text, text_input};
 use serde_json::{Value, json};
-use sone_host_shim::Manager;
-use tauri_app_lib::AppState;
-use tauri_app_lib::commands::library;
+use sone_core::host::Manager;
+use sone_core::AppState;
+use sone_core::commands::library;
 
 use crate::App;
 use crate::controller::{self, Cmd};
@@ -51,7 +51,7 @@ fn bump_toasts() {
     TOAST_VERSION.fetch_add(1, Ordering::Relaxed);
 }
 
-fn state() -> sone_host_shim::State<'static, AppState> {
+fn state() -> sone_core::host::State<'static, AppState> {
     crate::host().state::<AppState>()
 }
 
@@ -107,7 +107,7 @@ pub fn load_favorites_once() {
     // AppInitializer: the unified favourite-ids endpoint (tracks, albums, artists, playlists),
     // then mixes and videos, which it doesn't cover. As background work (sched.rs): the
     // hearts fill in after the first screen.
-    sone_host_shim::async_runtime::spawn(async move {
+    sone_core::host::async_runtime::spawn(async move {
         let u = data::user_id();
         let s = state;
         let (all, mx, videos) = tokio::join!(
@@ -200,7 +200,7 @@ pub fn toggle_fav(k: Fav, id: String, label: String, say: Say) {
         on
     };
     favs_changed();
-    sone_host_shim::async_runtime::spawn(async move {
+    sone_core::host::async_runtime::spawn(async move {
         let u = data::user_id();
         let num = id.parse::<u64>().unwrap_or(0);
         let s = state;
@@ -830,8 +830,8 @@ fn track_menu(track: &Value, playlist: Option<&InPlaylist>, c: &Ctx, page: &Page
                 None => {
                     // React fetches the track for its mixes first; this port asks the same.
                     let (t5, a5) = (t4.clone(), artist.clone());
-                    sone_host_shim::async_runtime::spawn(async move {
-                        let found = tauri_app_lib::commands::metadata::get_track(state(), id).await.ok()
+                    sone_core::host::async_runtime::spawn(async move {
+                        let found = sone_core::commands::metadata::get_track(state(), id).await.ok()
                             .and_then(|t| t["mixes"]["TRACK_MIX"].as_str().map(str::to_string));
                         match found {
                             Some(mid) => {
@@ -900,8 +900,8 @@ fn queue_track(t: Value, next: bool) {
         return;
     }
     let id = track_id(&t);
-    sone_host_shim::async_runtime::spawn(async move {
-        match tauri_app_lib::commands::metadata::get_track(state(), id).await.ok().and_then(|t| serde_json::to_value(t).ok()) {
+    sone_core::host::async_runtime::spawn(async move {
+        match sone_core::commands::metadata::get_track(state(), id).await.ok().and_then(|t| serde_json::to_value(t).ok()) {
             Some(full) => {
                 let source = album_source(&full);
                 controller::send(Cmd::QueueTracks { tracks: vec![full], source, next });
@@ -922,7 +922,7 @@ fn remove_from_playlist(p: InPlaylist, id: u64, title: String) {
     let own_order = |u: &str| { let u = u.to_string(); move |k: &PKey| matches!(k, PKey::Playlist { uuid, order: None, .. } if *uuid == u) };
     let sorted_lists = |u: &str| { let u = u.to_string(); move |k: &PKey| matches!(k, PKey::Playlist { uuid, order: Some(_), .. } if *uuid == u) };
     let holds = move |v: &Value| paged::track_of(v)["id"].as_u64() == Some(id);
-    sone_host_shim::async_runtime::spawn(async move {
+    sone_core::host::async_runtime::spawn(async move {
         let index = if p.sorted {
             match paged::fetch_all(&PKey::Playlist { uuid: uuid.clone(), order: None, dir: None }).await.ok().and_then(|all| all.iter().position(holds)) {
                 Some(i) => i,
@@ -1178,7 +1178,7 @@ fn media_source(item: &Value, kind: Media) -> Option<Value> {
 /// MediaContextMenu's Play next / Add to queue: the item's tracks as fetched, tagged with the
 /// item as their source, blocked ones left out (all blocked: why, instead).
 fn queue_media(item: Value, kind: Media, next: bool, done: String, failed: &'static str) {
-    sone_host_shim::async_runtime::spawn(async move {
+    sone_core::host::async_runtime::spawn(async move {
         let Some(all) = media_tracks(&item, kind).await else {
             toast(failed.into(), Kind::Error);
             return;
@@ -1206,7 +1206,7 @@ static RECENT: LazyLock<Mutex<Vec<String>>> = LazyLock::new(|| {
 });
 
 fn recent_path() -> Option<std::path::PathBuf> {
-    tauri_app_lib::config_dir_for_env().map(|d| d.join("rune-recent-playlists.json"))
+    sone_core::config_dir_for_env().map(|d| d.join("rune-recent-playlists.json"))
 }
 
 fn save_recent(r: &[String]) {
@@ -1262,7 +1262,7 @@ fn open_sub(s: &mut App, which: Which) {
                 *sub = SubIds { menu_no, ids: None, pending: false };
             }
             bump();
-            sone_host_shim::async_runtime::spawn(async move {
+            sone_core::host::async_runtime::spawn(async move {
                 let ids = media_track_ids(&item, kind).await;
                 let mut sub = SUB_IDS.lock().unwrap();
                 if sub.menu_no != menu_no {
@@ -1428,8 +1428,8 @@ fn add_again_toast(requested: usize, skipped: usize, l: &str) -> String {
 /// to add the skipped ones anyway. `again` is the size of the first request when this is that
 /// "Add anyway".
 fn add_to_playlist(uuid: String, label: String, ids: Vec<u64>, again: Option<usize>) {
-    sone_host_shim::async_runtime::spawn(async move {
-        let dupes = if again.is_some() { tauri_app_lib::tidal_api::OnDupes::Add } else { tauri_app_lib::tidal_api::OnDupes::Skip };
+    sone_core::host::async_runtime::spawn(async move {
+        let dupes = if again.is_some() { sone_core::tidal_api::OnDupes::Add } else { sone_core::tidal_api::OnDupes::Skip };
         let l = clip(&label, 23);
         let res = library::add_tracks_to_playlist(state(), uuid.clone(), ids.clone(), dupes).await;
         if res.is_ok() {
@@ -1504,7 +1504,7 @@ fn confirm_delete(c: &Ctx) -> El {
                 }
                 bump();
                 let (u, l) = (uuid.clone(), title.clone());
-                sone_host_shim::async_runtime::spawn(async move {
+                sone_core::host::async_runtime::spawn(async move {
                     let res = library::delete_playlist(state(), data::user_id(), u.clone()).await;
                     let ok = res.is_ok();
                     match res {
@@ -1569,13 +1569,13 @@ fn save_playlist(s: &mut App) {
     c.saving = true;
     let save_no = CREATE_GEN.fetch_add(1, Ordering::Relaxed) + 1;
     let (desc, public, ids) = (c.desc.text.trim().to_string(), c.public, c.ids.clone());
-    sone_host_shim::async_runtime::spawn(async move {
+    sone_core::host::async_runtime::spawn(async move {
         let access = if public { "PUBLIC" } else { "UNLISTED" };
         match library::create_playlist(state(), title.clone(), desc, access.into()).await {
             Ok(p) => {
                 let uuid = serde_json::to_value(&p).ok().and_then(|v| data::data(&v)["uuid"].as_str().map(str::to_string)).unwrap_or_default();
                 if !ids.is_empty() && !uuid.is_empty() {
-                    let _ = library::add_tracks_to_playlist(state(), uuid.clone(), ids, tauri_app_lib::tidal_api::OnDupes::Add).await;
+                    let _ = library::add_tracks_to_playlist(state(), uuid.clone(), ids, sone_core::tidal_api::OnDupes::Add).await;
                 }
                 // Made from a folder's menu: into that folder (library.rs).
                 if !uuid.is_empty() {
