@@ -67,6 +67,8 @@ fn count_line(tracks: u64, videos: u64, secs: Option<u64>) -> String {
 pub fn page(s: &App, uuid: &str, v: &View) -> El {
     // Everything the page shows is asked for together: the details, the first page of tracks
     // (not after the details land), and the recommendations under them, which wait for both.
+    // The details first: the backend answers in the order asked, and the header shows on them.
+    data::want(Key::Playlist(uuid.to_string()));
     let key = key_for(s, uuid);
     let snap = paged::get(&key);
     data::want_bg(Key::PlaylistRecs(uuid.to_string(), 0));
