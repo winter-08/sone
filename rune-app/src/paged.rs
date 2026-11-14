@@ -295,7 +295,7 @@ fn place(head: Vec<Value>, id: &str) -> Option<(usize, Value)> {
 pub fn add_in_place(f: impl Fn(&PKey) -> bool, id: &str) {
     let lists: Vec<(PKey, u64)> = {
         let st = STORE.lock().unwrap();
-        st.iter().filter(|(k, e)| f(k) && !e.idle && !e.items.iter().any(|v| item_id(v) == id)).map(|(k, e)| (k.clone(), e.epoch)).collect()
+        st.iter().filter(|(k, e)| f(k) && !e.idle && !first_page_coming(e) && !e.items.iter().any(|v| item_id(v) == id)).map(|(k, e)| (k.clone(), e.epoch)).collect()
     };
     for (key, epoch) in lists {
         let id = id.to_string();
@@ -303,7 +303,8 @@ pub fn add_in_place(f: impl Fn(&PKey) -> bool, id: &str) {
             let head = fetch_page(&key, 0, None).await;
             let mut st = STORE.lock().unwrap();
             let Some(e) = st.get_mut(&key).filter(|e| e.epoch == epoch) else { return };
-            if e.items.iter().any(|v| item_id(v) == id) {
+            // (a first page on its way brings it itself)
+            if first_page_coming(e) || e.items.iter().any(|v| item_id(v) == id) {
                 return;
             }
             match head.ok().and_then(|(items, ..)| place(items, &id)) {
@@ -316,6 +317,11 @@ pub fn add_in_place(f: impl Fn(&PKey) -> bool, id: &str) {
             }
         });
     }
+}
+
+/// The collection's first page is still on its way: it will hold whatever the server has.
+fn first_page_coming(e: &Entry) -> bool {
+    e.loading && e.items.is_empty()
 }
 
 /// A collection item's id as favourites name it: a playlist's uuid, else its id.
