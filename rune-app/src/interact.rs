@@ -1454,6 +1454,11 @@ fn forget_page(s: &mut App, gone: &Page) {
     }
 }
 
+/// Whether `c` is the delete confirmation for the playlist `uuid`.
+fn asks_to_delete(c: &Ctx, uuid: &str) -> bool {
+    c.confirm_delete && matches!(&c.target, Target::Media { item, .. } if data::data(item)["uuid"].as_str() == Some(uuid))
+}
+
 fn confirm_delete(c: &Ctx) -> El {
     let Target::Media { item, .. } = &c.target else { return el() };
     let title = data::name(item);
@@ -1485,7 +1490,10 @@ fn confirm_delete(c: &Ctx) -> El {
                     }
                     crate::coll::later(move |s| {
                         *DELETING.lock().unwrap() = None;
-                        close(s);
+                        // only the dialog that asked: the user may have opened another menu since
+                        if s.nav.ctx.as_ref().is_some_and(|c| asks_to_delete(c, &u)) {
+                            close(s);
+                        }
                         if ok {
                             forget_page(s, &Page::Playlist(u));
                         }
