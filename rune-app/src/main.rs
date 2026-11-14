@@ -36,6 +36,7 @@ mod perf;
 mod profile;
 mod proxy_banner;
 mod queue_ui;
+mod sched;
 mod scheme;
 mod settings;
 mod shell;
