@@ -12,6 +12,7 @@ pages, home and activity feeds, lyrics, credits) is served from fixtures/catalog
 wins. The device code sign-in is stateful and lives here, not in routes.json.
 See fixtures/catalog/README.md.
 """
+import asyncio
 import base64
 import json
 import os
@@ -61,6 +62,30 @@ BIG_FILE, BIG_SECONDS = "bench/long_44k16.flac", 600
 EXPLICIT_IDS = {int(x) for x in os.environ.get("SPIKE_EXPLICIT_IDS", "").split(",") if x.strip().isdigit()}
 DUET_ID = 1909  # a two-artist track (track_json)
 AI_IDS = {int(x) for x in os.environ.get("SPIKE_AI_IDS", "").split(",") if x.strip().isdigit()}
+
+
+# Latency, for timing runs (verifier/bench/latency.py): SPIKE_LATENCY_MS=N holds every answer
+# from a TIDAL API host (api., auth., openapi.tidal.com) N ms, as the real service takes a few
+# hundred; SPIKE_LATENCY_SLOW="REGEX=MS,..." gives requests whose path matches REGEX that many
+# ms instead (e.g. "/feed/activities=2000"). Requests wait concurrently, as at a real server.
+# Unset (the default), every answer is immediate and the goldens stay as recorded.
+LATENCY_MS = int(os.environ.get("SPIKE_LATENCY_MS", "0") or 0)
+LATENCY_SLOW = [(re.compile(k), int(v)) for k, _, v in
+                (x.rpartition("=") for x in os.environ.get("SPIKE_LATENCY_SLOW", "").split(",") if "=" in x)]
+LATENCY_HOSTS = {"api.tidal.com", "auth.tidal.com", "openapi.tidal.com"}
+# SPIKE_HOME_TABS=1: the home feed has three tabs (For You, Staff Picks, Uploads), as the real one
+# does; Staff Picks and Uploads rename "Fixture Albums" to "Staff Picks Albums" / "Uploads Albums"
+# so a timing run can tell which tab is showing. Off by default (one tab, as recorded).
+HOME_TABS = bool(os.environ.get("SPIKE_HOME_TABS"))
+
+
+def latency_s(flow: http.HTTPFlow) -> float:
+    if flow.request.pretty_host not in LATENCY_HOSTS:
+        return 0.0
+    for rx, ms in LATENCY_SLOW:
+        if rx.search(flow.request.path):
+            return ms / 1000
+    return LATENCY_MS / 1000
 
 
 def load(loader):
@@ -261,6 +286,18 @@ def extras_route(flow: http.HTTPFlow, host: str, path: str, method: str) -> bool
         return True
     if host != "api.tidal.com":
         return False
+    if HOME_TABS and method == "GET" and (m := re.fullmatch(r"/v2/home/feed/([A-Za-z_]+)", path)):
+        home = catalog_json("home_feed.json")
+        home["header"] = {"vibes": {"items": [{"name": "For You", "type": "STATIC"},
+                                              {"name": "Staff Picks", "type": "EDITORIAL"},
+                                              {"name": "Uploads", "type": "UPLOADS"}]}}
+        prefix = {"editorial": "Staff Picks ", "uploads": "Uploads "}.get(m.group(1).lower())
+        if prefix:
+            for it in home["items"]:
+                if it.get("title") == "Fixture Albums":
+                    it["title"] = prefix + "Albums"
+        respond(flow, 200, home)
+        return True
     if COLLECTIONS and method == "GET" and collections_route(flow, path, method):
         return True
     # Removing a playlist item (Remove from playlist) is answered 204; the playlist isn't changed.
@@ -611,13 +648,16 @@ def route(flow: http.HTTPFlow) -> bool:
     return serve_catalog(flow, host, path, method)
 
 
-def request(flow: http.HTTPFlow):
+async def request(flow: http.HTTPFlow):
+    t0 = time.time()
+    if (delay := latency_s(flow)) > 0:
+        await asyncio.sleep(delay)
     handled = route(flow)
     if not handled:
         respond(flow, 404, {"status": 404, "userMessage": "spike: no fixture"})
     with open(os.environ.get("SPIKE_LOG", "flows.jsonl"), "a") as f:
         f.write(json.dumps({
-            "t": time.time(), "method": flow.request.method, "host": flow.request.pretty_host,
+            "t": time.time(), **({"t0": t0} if delay > 0 else {}), "method": flow.request.method, "host": flow.request.pretty_host,
             "path": flow.request.path, "status": flow.response.status_code, "handled": handled,
             "ua": flow.request.headers.get("User-Agent", "")[:60],
         }) + "\n")
