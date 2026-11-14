@@ -453,14 +453,25 @@ pub fn on_exit() {
     }
     save_geometry(true);
     // (On a thread of its own: the backend's exit can come from inside the async runtime,
-    // the tray's Quit among them, where blocking on it would panic.)
-    let _ = std::thread::spawn(|| {
+    // the tray's Quit and MPRIS Quit among them, where blocking on it would panic.)
+    join_off_runtime(|| {
         sone_host_shim::async_runtime::block_on(async {
             tauri_app_lib::on_exit(&crate::host().state::<AppState>()).await;
         })
-    })
-    .join();
+    });
     rune::release_instance();
+}
+
+/// Runs `f` on a thread of its own and waits for it. Called on one of the runtime's workers
+/// (the tray's and MPRIS's Quit run there), the wait first hands that worker's tasks and the
+/// I/O and timer driving to another thread, so the futures `f` blocks on still make progress
+/// however few workers the runtime has.
+fn join_off_runtime<R: Send>(f: impl FnOnce() -> R + Send) -> R {
+    let run = || std::thread::scope(|s| s.spawn(f).join().expect("exit thread panicked"));
+    match tokio::runtime::Handle::try_current() {
+        Ok(h) if h.runtime_flavor() == tokio::runtime::RuntimeFlavor::MultiThread => tokio::task::block_in_place(run),
+        _ => run(),
+    }
 }
 
 /// SIGTERM and SIGINT (a session logout, `kill`, Ctrl+C in a terminal) end the app the way its
@@ -792,6 +803,26 @@ pub fn frame_covered(body: El, size: (f32, f32)) -> El {
         None => body,
     };
     col().key(FRAME_KEY).w_full().h_full().child(inner).children(resize_edges(size))
+}
+
+#[cfg(test)]
+mod exit_tests {
+    #[test]
+    fn waiting_on_the_exit_from_a_lone_worker_does_not_stall_the_runtime() {
+        // One worker, and the wait runs on it, as the tray's Quit does: the exit work needs
+        // the runtime's timer, which only a worker drives.
+        let rt = tokio::runtime::Builder::new_multi_thread().worker_threads(1).enable_all().build().unwrap();
+        let h = rt.handle().clone();
+        let (tx, rx) = std::sync::mpsc::channel();
+        rt.spawn(async move {
+            let v = super::join_off_runtime(move || h.block_on(async {
+                tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+                7
+            }));
+            let _ = tx.send(v);
+        });
+        assert_eq!(rx.recv_timeout(std::time::Duration::from_secs(5)), Ok(7));
+    }
 }
 
 #[cfg(test)]
