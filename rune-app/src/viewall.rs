@@ -114,7 +114,7 @@ pub fn page(s: &App, title: &str, path: &str, artist: Option<u64>) -> El {
                 c = c.child(el().key(format!("va-more-{n}")).w_full().h(8.0).a11y_hidden().on_visible(move |_: &mut App, on, _| if on { paged::more(&key) }));
             }
             if snap.loading && snap.len > 0 {
-                c = c.child(views::loading());
+                c = c.child(crate::skeleton::card_grid(6));
             }
             let _ = s;
             c

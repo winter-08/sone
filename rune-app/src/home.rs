@@ -112,8 +112,8 @@ pub fn home(s: &App) -> El {
     let first = match load {
         data::Load::Ready(v) => v,
         // A tab still loading or that failed keeps the bar above it.
-        data::Load::Loading if !tabs.is_empty() => return col().w_full().gap(32.0).child(tab_bar(&tabs, &slug)).child(views::loading()),
-        data::Load::Loading => return views::loading(),
+        data::Load::Loading if !tabs.is_empty() => return col().w_full().gap(32.0).child(tab_bar(&tabs, &slug)).child(crate::skeleton::home(true, slug == "static")),
+        data::Load::Loading => return crate::skeleton::home(false, slug == "static"),
         data::Load::Failed(e) => return failed(&tabs, &slug, &e),
     };
     let home = &first["home"];
@@ -159,7 +159,7 @@ pub fn home(s: &App) -> El {
         }
     }
     if waiting {
-        c = c.child(views::loading());
+        c = c.child(crate::skeleton::home_more());
     } else if cursor.is_some() {
         // The sentinel: reaching the end asks for the next page.
         let n = *s.nav.home_pages;

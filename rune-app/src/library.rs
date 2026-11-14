@@ -158,7 +158,7 @@ pub fn sidebar_list(s: &App) -> El {
         list = list.child(views::lib_row("lib-loved", "Loved Tracks Collection", "Loved Tracks", "Collection", 9, None, None, Some(Page::Loved), false).fill(if on { white(0.08) } else { white(0.0) }));
     }
     if snap.first_pending() {
-        return list.child(views::loading().px(8.0).py(8.0));
+        return list.child(crate::skeleton::lib_rows(5));
     }
     if snap.failed.is_some() && snap.len == 0 {
         let k2 = key.clone();
@@ -194,7 +194,7 @@ pub fn sidebar_list(s: &App) -> El {
         list = list.child(el().key(format!("lib-more-{n}")).w_full().h(8.0).a11y_hidden().on_visible(move |_: &mut App, on, _| if on { paged::more(&k2) }));
     }
     if snap.loading && snap.len > 0 {
-        list = list.child(views::loading().px(8.0).py(6.0));
+        list = list.child(crate::skeleton::lib_rows(2));
     }
     list
 }
@@ -343,7 +343,7 @@ pub fn page(s: &App, k: Lib, folder: Option<&(String, String)>) -> El {
     let mut c = col().w_full().gap(16.0).child(col().gap(6.0).child(head).child(meta))
         .child(row().h(40.0).px(12.0).radius(10.0).items_center().fill(white(0.06)).child(filter));
     if snap.first_pending() {
-        return c.child(views::loading());
+        return c.child(crate::skeleton::card_grid(18));
     }
     if snap.failed.is_some() && snap.len == 0 {
         let k2 = key.clone();
@@ -379,7 +379,7 @@ pub fn page(s: &App, k: Lib, folder: Option<&(String, String)>) -> El {
         c = c.child(el().key(format!("lv-more-{n}")).w_full().h(8.0).a11y_hidden().on_visible(move |_: &mut App, on, _| if on { paged::more(&k2) }));
     }
     if snap.loading && snap.len > 0 {
-        c = c.child(views::loading());
+        c = c.child(crate::skeleton::card_grid(6));
     }
     c
 }

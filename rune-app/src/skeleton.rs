@@ -57,6 +57,65 @@ fn cards(n: usize) -> El {
     r
 }
 
+/// `n` cards in a wrapping grid (MediaGridSkeleton: library and Loved Videos grids, and the
+/// next page of one).
+pub fn card_grid(n: usize) -> El {
+    crate::views::note_loading();
+    cards(n).a11y_hidden()
+}
+
+/// `n` sidebar rows: a 40 pt cover beside two lines (SidebarSkeleton).
+pub fn lib_rows(n: usize) -> El {
+    crate::views::note_loading();
+    let mut c = col().w_full().gap(1.0).a11y_hidden();
+    for _ in 0..n {
+        c = c.child(row().w_full().px(6.0).py(8.0).gap(10.0).items_center().child(bone(40.0, 40.0, 4.0))
+            .child(col().grow(1.0).min_w(0.0).gap(6.0).child(bar(0.75, 12.0)).child(bar(0.5, 10.0))));
+    }
+    c
+}
+
+/// Home's sections: a title over a row of cards each (Home.tsx's skeleton sections).
+fn home_sections(n: usize) -> El {
+    let mut c = col().w_full().gap(32.0);
+    for _ in 0..n {
+        let mut r = row().w_full().gap(8.0).clip_rounded(0.0);
+        for _ in 0..10 {
+            r = r.child(col().w(148.0).shrink().gap(8.0).padding(8.0).child(bone(132.0, 132.0, 6.0)).child(bar(0.75, 14.0)).child(bar(0.5, 10.0)));
+        }
+        c = c.child(col().w_full().gap(16.0).child(bone(192.0, 28.0, 6.0)).child(r));
+    }
+    c
+}
+
+/// A Home tab loading (Home.tsx): the tab pills while no tab bar is known yet, the quick-access
+/// tiles on the For You feed, and three sections.
+pub fn home(tab_bar_known: bool, quick: bool) -> El {
+    crate::views::note_loading();
+    let mut c = col().w_full().gap(32.0).a11y_hidden();
+    if !tab_bar_known {
+        let mut pills = row().gap(8.0);
+        for w in [64.0, 88.0, 76.0] {
+            pills = pills.child(bone(w, 36.0, 18.0));
+        }
+        c = c.child(pills);
+    }
+    if quick {
+        let mut tiles = row().w_full().gap(12.0).flex_wrap();
+        for _ in 0..8 {
+            tiles = tiles.child(el().w(288.0).h(56.0).radius(4.0).fill(white(0.04)));
+        }
+        c = c.child(tiles);
+    }
+    c.child(home_sections(3))
+}
+
+/// Home's next page on its way: two sections (Home.tsx's loading-more skeleton).
+pub fn home_more() -> El {
+    crate::views::note_loading();
+    home_sections(2).a11y_hidden()
+}
+
 fn grid_page(sections: usize) -> El {
     let mut c = col().w_full().gap(22.0);
     for _ in 0..sections {
@@ -78,7 +137,8 @@ pub fn page(key: &Key) -> El {
             }
             col().w_full().gap(16.0).child(bar(0.35, 30.0)).child(tabs).child(bar(0.12, 20.0)).child(rows(8, true)).child(bar(0.12, 20.0)).child(cards(6))
         }
-        Key::Home(_) | Key::Page(_) => grid_page(3),
+        Key::Home(slug) => return home(false, slug == "static"),
+        Key::Page(_) => grid_page(3),
         _ => return crate::views::loading(),
     };
     body.a11y_hidden()

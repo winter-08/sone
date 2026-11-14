@@ -67,7 +67,7 @@ pub fn page(s: &App, v: &View) -> El {
         .child(row().h(40.0).px(12.0).radius(10.0).items_center().fill(white(0.06)).child(filter))
         .child(tabs);
     if snap.first_pending() {
-        return c.child(if videos { views::loading() } else { crate::skeleton::rows(8, true) });
+        return c.child(if videos { crate::skeleton::card_grid(12) } else { crate::skeleton::rows(8, true) });
     }
     if snap.failed.is_some() && snap.len == 0 {
         let k = key.clone();
@@ -161,7 +161,7 @@ fn videos_tab(snap: &paged::Snap, needle: &str, source: Value) -> El {
             .on_visible(|_: &mut App, on, _| if on { paged::more(&PKey::LovedVideos) }));
     }
     if snap.loading {
-        c = c.child(views::loading());
+        c = c.child(crate::skeleton::card_grid(6));
     }
     c
 }
