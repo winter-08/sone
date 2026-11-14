@@ -1,5 +1,6 @@
 # Tools for the verifier spikes. Usage: nix-shell verifier/harness/shell.nix --run '...'
-{ pkgs ? import (builtins.getFlake "nixpkgs") { } }:
+# nixpkgs is the revision ../../flake.lock pins (mitmproxy fails its tests on the floating one).
+{ pkgs ? import (builtins.getFlake "github:NixOS/nixpkgs/${(builtins.fromJSON (builtins.readFile ../../flake.lock)).nodes.nixpkgs.locked.rev}") { } }:
 let
   py = pkgs.python3.withPackages (p: [
     p.mitmproxy

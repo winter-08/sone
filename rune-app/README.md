@@ -39,10 +39,11 @@ part of startup, shared by both, and `on_exit()` the shared shutdown.
 
 ## Build and run
 
-`shell.nix` takes the floating nixpkgs, where the GStreamer patch no longer applies, so pin it:
+`shell.nix` uses the nixpkgs revision `../flake.lock` pins, links with lld, and shares compiled
+dependencies between checkouts and worktrees through sccache (`~/.cache/sccache`):
 
 ```bash
-nix-shell rune-app/shell.nix --arg pkgs 'import (builtins.getFlake "github:NixOS/nixpkgs/f9a75f41be3a74eab55d3a7679d34ad6cc0da977") {}' --run 'cd rune-app && cargo build && ./wrap.sh'
+nix-shell rune-app/shell.nix --run 'cd rune-app && cargo build && ./wrap.sh'
 rune-app/target/debug/sone-rune-wrapped
 ```
 
@@ -68,7 +69,7 @@ Rune is pinned in `Cargo.toml`; `package.nix` carries a `cargoHash` that must be
 ## Verify against the original
 
 ```bash
-nix-shell verifier/harness/shell.nix --arg pkgs 'import (builtins.getFlake "github:NixOS/nixpkgs/f9a75f41be3a74eab55d3a7679d34ad6cc0da977") {}' --run \
+nix-shell verifier/harness/shell.nix --run \
   'python3 -I verifier/verify.py check --display 1400x2000 --ignore controls,unnamed_controls --bin rune-app/target/debug/sone-rune-wrapped'
 ```
 
