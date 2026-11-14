@@ -814,7 +814,7 @@ fn track_menu(track: &Value, playlist: Option<&InPlaylist>, c: &Ctx, page: &Page
     let radio = !video && (mix.is_some() || !has_mixes);
     // Go to album, Go to artist (TIDAL's menu has them; React SONE's doesn't) and Go to track radio,
     // in one group. Go to artist: one artist, their page; several, a submenu of them.
-    let artists = track_artists(d);
+    let artists = menu_artists(d, page);
     let album = d["album"]["id"].as_u64().filter(|a| *page != Page::Album(*a));
     if radio || album.is_some() || !artists.is_empty() {
         m = m.child(sep());
@@ -855,7 +855,6 @@ fn track_menu(track: &Value, playlist: Option<&InPlaylist>, c: &Ctx, page: &Page
     }
     match artists.as_slice() {
         [] => {}
-        // (on that artist's own page it closes the menu, as the track radio does on its own)
         [(_, aid)] => {
             let aid = *aid;
             m = m.child(mi("ctx-artist", "Go to artist", G::User, false, true, move |s, _| {
@@ -950,6 +949,16 @@ fn remove_from_playlist(p: InPlaylist, id: u64, title: String) {
 }
 
 /// A track's (or video's) artists that have a page: (name, id), in credit order, each once.
+/// The artists a track menu's "Go to artist" offers on `page`: the track's, less the artist
+/// whose page it is (going there would go nowhere, as "Go to album" on its album's page).
+fn menu_artists(d: &Value, page: &Page) -> Vec<(String, u64)> {
+    let mut out = track_artists(d);
+    if let Page::Artist(here) = page {
+        out.retain(|(_, id)| id != here);
+    }
+    out
+}
+
 fn track_artists(d: &Value) -> Vec<(String, u64)> {
     let list = d["artists"].as_array().filter(|a| !a.is_empty()).cloned().unwrap_or_else(|| vec![d["artist"].clone()]);
     let mut out: Vec<(String, u64)> = vec![];
@@ -1218,7 +1227,7 @@ fn track_sub(s: &App, c: &Ctx) -> Option<El> {
         Sub::AddToPlaylist { ids, all, query, anchor, below } => add_menu(ids, *all, query, anchor, *below),
         Sub::MoveToFolder { uuid, label, all, query } => crate::library::move_menu(s, uuid, label, *all, query, "ctx-move"),
         Sub::Artists => match &c.target {
-            Target::Track { track, .. } => artists_menu(&track_artists(data::data(track))),
+            Target::Track { track, .. } => artists_menu(&menu_artists(data::data(track), &s.nav.page)),
             Target::Media { .. } => return None,
         },
     };
@@ -1626,6 +1635,16 @@ pub fn json_of_track(id: u64, title: &str, artist: &str) -> Value {
 #[cfg(test)]
 mod add_to_playlist_tests {
     use super::*;
+
+    #[test]
+    fn go_to_artist_leaves_out_the_page_s_artist() {
+        let duo = json!({"artists": [{"id": 1, "name": "A"}, {"id": 2, "name": "B"}]});
+        let solo = json!({"artist": {"id": 1, "name": "A"}});
+        assert_eq!(menu_artists(&duo, &Page::Home).len(), 2);
+        assert_eq!(menu_artists(&duo, &Page::Artist(1)), vec![("B".to_string(), 2)]);
+        assert!(menu_artists(&solo, &Page::Artist(1)).is_empty());
+        assert_eq!(menu_artists(&solo, &Page::Artist(9)), vec![("A".to_string(), 1)]);
+    }
 
     #[test]
     fn skipped_is_what_was_not_added() {
