@@ -145,18 +145,25 @@ pub fn sidebar_list(s: &App) -> El {
     let k = lib_of(*s.nav.lib);
     let sort = coll::lib_sort(&s.nav.coll.ui, k);
     let key = key(k, "root", &sort);
-    // The sign-in bootstrap's folders are the default list's first page.
-    if k == Lib::Playlists && sort == coll::lib_sort(&coll::Ui::default(), Lib::Playlists)
-        && let Some(first) = data::peek(&Key::Folders)
-    {
-        paged::seed(&key, &first);
+    // The sign-in bootstrap's folders are the default list's first page: the same request, so
+    // while it is on its way the list waits for it rather than making it again.
+    let mut bootstrap_coming = false;
+    if k == Lib::Playlists && sort == coll::lib_sort(&coll::Ui::default(), Lib::Playlists) {
+        match data::peek_load(&Key::Folders) {
+            Some(data::Load::Ready(first)) => paged::seed(&key, &first),
+            Some(data::Load::Loading) => bootstrap_coming = !paged::started(&key),
+            _ => {}
+        }
     }
-    let snap = paged::get(&key);
     let mut list = col().w_full().gap(2.0);
     if k == Lib::Playlists {
         let on = *s.nav.page == Page::Loved;
         list = list.child(views::lib_row("lib-loved", "Loved Tracks Collection", "Loved Tracks", "Collection", 9, None, None, Some(Page::Loved), false).fill(if on { white(0.08) } else { white(0.0) }));
     }
+    if bootstrap_coming {
+        return list.child(crate::skeleton::lib_rows(5));
+    }
+    let snap = paged::get(&key);
     if snap.first_pending() {
         return list.child(crate::skeleton::lib_rows(5));
     }

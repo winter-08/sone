@@ -65,11 +65,14 @@ fn count_line(tracks: u64, videos: u64, secs: Option<u64>) -> String {
 }
 
 pub fn page(s: &App, uuid: &str, v: &View) -> El {
+    // Everything the page shows is asked for together: the details, the first page of tracks
+    // (not after the details land), and the recommendations under them, which wait for both.
+    let key = key_for(s, uuid);
+    let snap = paged::get(&key);
+    data::want_bg(Key::PlaylistRecs(uuid.to_string(), 0));
     let p = match views::ready_or(Key::Playlist(uuid.to_string())) { Ok(v) => v, Err(e) => return e };
     let d = &p["details"];
     let title = d["title"].as_str().filter(|t| !t.is_empty()).unwrap_or("Playlist").to_string();
-    let key = key_for(s, uuid);
-    let snap = paged::get(&key);
     let me = data::user_id();
     let own = d["creator"]["id"].as_u64().is_some_and(|c| c == me) || d["creator"]["id"].is_null();
     let source = json!({"type": "playlist", "id": uuid, "name": title});
@@ -105,8 +108,9 @@ pub fn page(s: &App, uuid: &str, v: &View) -> El {
     let total = snap.total.map(|t| t as u64).unwrap_or_else(|| d["numberOfTracks"].as_u64().unwrap_or(0) + videos);
     // PlaylistView: your own playlist names you (unless TIDAL calls you "TIDAL User"), others
     // their creator
-    let me = match data::want(Key::Profile) {
-        data::Load::Ready(p) => p.get(0).and_then(|n| n.as_str()).filter(|n| !n.is_empty() && *n != "TIDAL User").map(str::to_string),
+    // (the account's name: loaded at sign-in, in the background, and kept)
+    let me = match own.then(|| data::want_bg(Key::Profile)) {
+        Some(data::Load::Ready(p)) => p.get(0).and_then(|n| n.as_str()).filter(|n| !n.is_empty() && *n != "TIDAL User").map(str::to_string),
         _ => None,
     };
     let creator = if own { me.unwrap_or_else(|| "You".to_string()) } else { d["creator"]["name"].as_str().map(str::to_string).unwrap_or_else(|| if d["creator"]["id"].as_u64() == Some(0) { "TIDAL".into() } else { String::new() }) };
@@ -191,7 +195,7 @@ fn set_access(uuid: String, title: String, desc: String, public: bool) {
         let st = crate::host().state::<AppState>();
         match library::update_playlist(st, uuid.clone(), title, desc, (if public { "PUBLIC" } else { "UNLISTED" }).into()).await {
             Ok(_) => {
-                data::forget(&Key::Playlist(uuid));
+                data::refresh(&Key::Playlist(uuid));
                 interact::toast((if public { "Playlist is now public" } else { "Playlist is now private" }).into(), Kind::Success);
             }
             Err(e) => {
@@ -212,7 +216,7 @@ fn recommended(s: &App, uuid: &str, title: &str) -> El {
         _ => (0, 0),
     };
     let batch: Vec<Value> = if offset == 0 {
-        data::peek(&Key::Playlist(uuid.to_string())).map(|p| p["recommendations"]["items"].as_array().cloned().unwrap_or_default()).unwrap_or_default()
+        data::peek(&Key::PlaylistRecs(uuid.to_string(), 0)).map(|p| p["items"].as_array().cloned().unwrap_or_default()).unwrap_or_default()
     } else {
         match data::want(Key::PlaylistRecs(uuid.to_string(), offset as u32)) {
             data::Load::Ready(v) => v["items"].as_array().cloned().unwrap_or_default(),
@@ -338,7 +342,7 @@ fn save_edit(s: &mut App) {
         match library::update_playlist(st, uuid.clone(), title.clone(), desc, (if public { "PUBLIC" } else { "UNLISTED" }).into()).await {
             Ok(_) => {
                 ACCESS.lock().unwrap().insert(uuid.clone(), public);
-                data::forget(&Key::Playlist(uuid));
+                data::refresh(&Key::Playlist(uuid));
                 data::forget(&Key::Folders);
                 data::forget(&Key::AllPlaylists);
                 interact::toast(format!("Updated playlist \"{title}\""), Kind::Success);

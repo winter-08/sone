@@ -87,11 +87,14 @@ struct Entry {
     idle: bool,
     /// Library and artist lists drop items they already have (React dedupes those pages).
     seen: HashSet<String>,
+    /// What the list held before a `refresh_where`, shown (with its total) while the new first
+    /// page is on its way, so a refresh doesn't flash back to a skeleton.
+    stale: Option<(Arc<Vec<Value>>, Option<usize>)>,
 }
 
 impl Entry {
     fn fresh(epoch: u64) -> Entry {
-        Entry { items: Arc::new(vec![]), marks: vec![], prev: None, total: None, next: 0, cursor: None, more: true, loading: true, failed: None, all: false, epoch, idle: false, seen: HashSet::new() }
+        Entry { items: Arc::new(vec![]), marks: vec![], prev: None, total: None, next: 0, cursor: None, more: true, loading: true, failed: None, all: false, epoch, idle: false, seen: HashSet::new(), stale: None }
     }
 
     fn status(&self) -> Status {
@@ -145,6 +148,9 @@ fn as_of(marks: &[(u64, Status)], v: u64) -> Status {
 
 /// The collection, starting its first page if nobody asked for it yet.
 pub fn get(key: &PKey) -> Snap {
+    if let Some(p) = WAITING.lock().unwrap().get(key) {
+        crate::sched::SCHED.promote(p);
+    }
     let mut st = STORE.lock().unwrap();
     let frozen = data::frozen_version();
     if let Some(e) = st.get(key)
@@ -176,7 +182,16 @@ pub fn get(key: &PKey) -> Snap {
         Some(v) => as_of(&e.marks, v),
         None => e.status(),
     };
+    // (refreshed: the old items show until the first page is in)
+    if s.len == 0 && s.loading && s.failed.is_none() && let Some((items, total)) = &e.stale {
+        return Snap { items: items.clone(), len: items.len(), total: *total, more: false, loading: true, failed: None };
+    }
     Snap { items: e.items.clone(), len: s.len.min(e.items.len()), total: s.total, more: s.more, loading: s.loading, failed: s.failed }
+}
+
+/// Whether `key` has been asked for (it has items, or its first page is on its way).
+pub fn started(key: &PKey) -> bool {
+    STORE.lock().unwrap().get(key).is_some_and(|e| !e.idle)
 }
 
 /// Starts `key` from a first page fetched elsewhere (the playlist folders the sign-in
@@ -243,6 +258,19 @@ pub fn forget_where(f: impl Fn(&PKey) -> bool) {
     for (_, e) in st.iter_mut().filter(|(k, _)| f(k)) {
         let old = std::mem::replace(e, Entry::fresh(next_epoch()));
         e.idle = true;
+        e.prev = Some((v, old.items, old.marks));
+    }
+}
+
+/// [`forget_where`], keeping each list's items on screen until its new first page lands (a
+/// playlist fetched again after an edit).
+pub fn refresh_where(f: impl Fn(&PKey) -> bool) {
+    let mut st = STORE.lock().unwrap();
+    let v = data::bump_version();
+    for (_, e) in st.iter_mut().filter(|(k, _)| f(k)) {
+        let old = std::mem::replace(e, Entry::fresh(next_epoch()));
+        e.idle = true;
+        e.stale = (!old.items.is_empty()).then(|| (old.items.clone(), old.total)).or(old.stale);
         e.prev = Some((v, old.items, old.marks));
     }
 }
@@ -365,9 +393,9 @@ pub async fn fetch_page(key: &PKey, offset: usize, cursor: Option<String>) -> Re
     };
     Ok(match key {
         PKey::Playlist { uuid, order, dir } => totaled(to(library::get_playlist_tracks_page(st(), h.clone(), uuid.clone(), off, limit, order.clone(), dir.clone()).await)?),
-        PKey::Loved { order, dir } => totaled(to(library::get_favorite_tracks(st(), h.clone(), data::user_id(), off, limit, order.clone(), dir.clone()).await)?),
+        PKey::Loved { order, dir } => totaled(to(library::get_favorite_tracks(st(), h.clone(), data::uid().await?, off, limit, order.clone(), dir.clone()).await)?),
         PKey::LovedVideos => {
-            let v = to(library::get_favorite_videos(st(), data::user_id(), off, limit).await)?;
+            let v = to(library::get_favorite_videos(st(), data::uid().await?, off, limit).await)?;
             let items = v.as_array().cloned().unwrap_or_default();
             let more = items.len() == limit as usize;
             (items, None, None, more)
@@ -384,8 +412,8 @@ pub async fn fetch_page(key: &PKey, offset: usize, cursor: Option<String>) -> Re
                 let more = next.is_some() && !items.is_empty();
                 (items, total, next, more)
             }
-            Lib::Albums => totaled(to(library::get_favorite_albums(st(), h.clone(), data::user_id(), off, limit, order.clone(), dir.clone()).await)?),
-            Lib::Artists => totaled(to(library::get_favorite_artists(st(), h.clone(), data::user_id(), off, limit, order.clone(), dir.clone()).await)?),
+            Lib::Albums => totaled(to(library::get_favorite_albums(st(), h.clone(), data::uid().await?, off, limit, order.clone(), dir.clone()).await)?),
+            Lib::Artists => totaled(to(library::get_favorite_artists(st(), h.clone(), data::uid().await?, off, limit, order.clone(), dir.clone()).await)?),
             Lib::Mixes => totaled(to(library::get_favorite_mixes(st(), h.clone(), off, limit, order.clone(), dir.clone()).await)?),
         },
     })
@@ -405,7 +433,33 @@ fn ident(key: &PKey, v: &Value) -> Option<String> {
 }
 
 fn spawn(key: PKey, epoch: u64) {
+    spawn_in(key, epoch, None);
+}
+
+/// Pages waiting in the background lane (sched.rs), by collection: a [`get`] (the page now
+/// shows it) sends the one waiting at once.
+static WAITING: LazyLock<Mutex<HashMap<PKey, crate::sched::Promote>>> = LazyLock::new(Default::default);
+
+/// [`get`] for a collection that isn't showing yet (Loved Tracks' Videos tab): its first page
+/// waits in the background lane until the foreground is idle.
+pub fn prefetch(key: &PKey) {
+    let mut st = STORE.lock().unwrap();
+    if st.contains_key(key) {
+        return;
+    }
+    let epoch = next_epoch();
+    st.insert(key.clone(), Entry::fresh(epoch));
+    drop(st);
+    let p = crate::sched::Promote::new();
+    WAITING.lock().unwrap().insert(key.clone(), p.clone());
+    spawn_in(key.clone(), epoch, Some(p));
+}
+
+fn spawn_in(key: PKey, epoch: u64, bg: Option<crate::sched::Promote>) {
+    // (foreground from the ask, so a background request asked just after can't go first)
+    let mut held = bg.is_none().then(|| crate::sched::SCHED.fg_guard());
     sone_host_shim::async_runtime::spawn(async move {
+        let mut bg = bg;
         loop {
             let (offset, cursor) = {
                 let st = STORE.lock().unwrap();
@@ -414,7 +468,21 @@ fn spawn(key: PKey, epoch: u64) {
                     _ => return,
                 }
             };
-            let res = fetch_page(&key, offset, cursor).await;
+            let res = match bg.take() {
+                Some(p) => {
+                    let r = crate::sched::SCHED.bg(Some(&p), fetch_page(&key, offset, cursor)).await;
+                    WAITING.lock().unwrap().remove(&key);
+                    r
+                }
+                None => match held.take() {
+                    Some(g) => {
+                        let r = fetch_page(&key, offset, cursor).await;
+                        drop(g);
+                        r
+                    }
+                    None => crate::sched::SCHED.fg(fetch_page(&key, offset, cursor)).await,
+                },
+            };
             let mut st = STORE.lock().unwrap();
             let Some(e) = st.get_mut(&key).filter(|e| e.epoch == epoch) else { return };
             match res {

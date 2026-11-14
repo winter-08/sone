@@ -67,6 +67,27 @@ struct Entry {
     nudged: bool,
     /// The version whose bump made it visible (0 for a fetch just started, which needs none).
     version: u64,
+    /// A background fetch still waiting for its turn (sched.rs): asking for the key in the
+    /// foreground sends it at once.
+    promote: Option<crate::sched::Promote>,
+    /// Out of date after an edit ([`refresh`]): the next ask fetches it again, showing this
+    /// value until the new one lands.
+    outdated: bool,
+}
+
+impl Entry {
+    fn landed(load: Load, fetch: u64, retries: usize, version: u64) -> Entry {
+        Entry { load, fetch, at: Instant::now(), retries, nudged: false, version, promote: None, outdated: false }
+    }
+}
+
+/// Which lane a fetch goes in (sched.rs).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Lane {
+    /// The page on screen needs it, or a click asked for it.
+    Fg,
+    /// Wanted later: a Home tab not showing, the feed's unread dot, the account's name.
+    Bg,
 }
 
 static CACHE: LazyLock<Mutex<HashMap<Key, Entry>>> = LazyLock::new(Default::default);
@@ -137,26 +158,71 @@ pub fn nudge_due_retries() {
 }
 
 /// The cached value, starting the fetch if this is the first ask (or a failure has cooled down).
+/// The fetch goes in the foreground lane: the caller shows it now. A background fetch of the
+/// same key still waiting for its turn goes at once.
 pub fn want(key: Key) -> Load {
+    want_in(key, Lane::Fg)
+}
+
+/// [`want`] for something not on screen yet (a Home tab not showing, the feed's unread dot):
+/// the fetch waits in the background lane until the foreground is idle.
+pub fn want_bg(key: Key) -> Load {
+    want_in(key, Lane::Bg)
+}
+
+/// What an ask for a key does, given its cache entry.
+#[derive(Debug, PartialEq)]
+enum Ask {
+    /// Answer from the entry (in, failed and not due again, or on its way): no request.
+    Answer,
+    /// On its way in the background lane, asked for in the foreground: send it now.
+    Promote,
+    /// Fetch it (never asked, or a failure whose retry is due), as the nth retry.
+    Fetch(usize),
+    /// In but out of date after an edit: answer the old value and fetch it again behind it.
+    Revalidate,
+}
+
+fn ask(e: Option<&Entry>, lane: Lane) -> Ask {
+    let Some(e) = e else { return Ask::Fetch(0) };
+    match &e.load {
+        Load::Ready(_) if e.outdated => Ask::Revalidate,
+        Load::Loading if lane == Lane::Fg && e.promote.is_some() => Ask::Promote,
+        Load::Failed(_) if RETRY_FAILED_AFTER.get(e.retries).is_some_and(|d| e.at.elapsed() >= *d) => Ask::Fetch(e.retries + 1),
+        _ => Ask::Answer,
+    }
+}
+
+fn want_in(key: Key, lane: Lane) -> Load {
     let mut c = CACHE.lock().unwrap();
-    let mut retries = 0;
-    if let Some(e) = c.get(&key) {
-        // Landed after the view read the version: it was loading as far as this view knows.
-        if after_frozen(e.version) {
-            return Load::Loading;
+    let retries = match ask(c.get(&key), lane) {
+        Ask::Fetch(n) => n,
+        a => {
+            if a == Ask::Revalidate {
+                revalidate(&mut c, &key);
+            }
+            let e = &c[&key];
+            if a == Ask::Promote && let Some(p) = &e.promote {
+                crate::sched::SCHED.promote(p);
+            }
+            // Landed after the view read the version: it was loading as far as this view knows.
+            return if after_frozen(e.version) { Load::Loading } else { e.load.clone() };
         }
-        let due = matches!(e.load, Load::Failed(_)) && RETRY_FAILED_AFTER.get(e.retries).is_some_and(|d| e.at.elapsed() >= *d);
-        if !due {
-            return e.load.clone();
-        }
-        retries = e.retries + 1;
+    };
+    // (a due failure that landed after the view read the version is still loading for it)
+    if c.get(&key).is_some_and(|e| after_frozen(e.version)) {
+        return Load::Loading;
     }
     let fetch_id = FETCHES.fetch_add(1, Ordering::Relaxed) + 1;
-    c.insert(key.clone(), Entry { load: Load::Loading, fetch: fetch_id, at: Instant::now(), retries, nudged: false, version: 0 });
+    let promote = (lane == Lane::Bg).then(crate::sched::Promote::new);
+    c.insert(key.clone(), Entry { promote: promote.clone(), ..Entry::landed(Load::Loading, fetch_id, retries, 0) });
     drop(c);
-    sone_host_shim::async_runtime::spawn(async move {
-        let res = fetch(&key).await;
-        let load = match res {
+    // (the foreground lane is busy from the ask, not from when the task first runs: a background
+    // request asked a moment later must not slip in first)
+    let held = promote.is_none().then(|| crate::sched::SCHED.fg_guard());
+    // (the lane is held until the answer is in the cache, so the next request in it can use it)
+    let work = async move {
+        let load = match fetch(&key).await {
             Ok(v) => Load::Ready(v),
             Err(e) => {
                 log::warn!("[rune] data fetch failed: {e}");
@@ -168,11 +234,25 @@ pub fn want(key: Key) -> Load {
         let mut c = CACHE.lock().unwrap();
         if c.get(&key).is_some_and(|e| e.fetch == fetch_id) {
             let version = VERSION.fetch_add(1, Ordering::Relaxed) + 1;
-            c.insert(key, Entry { load, fetch: fetch_id, at: Instant::now(), retries, nudged: false, version });
+            c.insert(key, Entry::landed(load, fetch_id, retries, version));
+        }
+        drop(c);
+        LANDED.notify_waiters();
+    };
+    sone_host_shim::async_runtime::spawn(async move {
+        match &promote {
+            Some(p) => crate::sched::SCHED.bg(Some(p), work).await,
+            None => {
+                work.await;
+                drop(held);
+            }
         }
     });
     Load::Loading
 }
+
+/// Woken whenever a fetch lands (for [`get`] waiting on one already running).
+static LANDED: LazyLock<tokio::sync::Notify> = LazyLock::new(tokio::sync::Notify::new);
 
 /// The cached value if it's there, without starting a fetch (for views that must not request
 /// on render, e.g. debounced suggestions).
@@ -200,17 +280,31 @@ pub fn ready(key: Key) -> Option<Value> {
     }
 }
 
-/// Awaitable fetch for the controller (e.g. an artist's top tracks before playing them).
+/// Awaitable fetch for the controller (e.g. an artist's top tracks before playing them), in the
+/// foreground. A fetch of the key already running (a page asked for it) is waited for, not
+/// made again.
 pub async fn get(key: Key) -> Result<Value, String> {
-    if let Some(v) = peek(&key) {
-        return Ok(v);
+    // (an earlier failure is asked again at once: the user is waiting on this)
+    {
+        let mut c = CACHE.lock().unwrap();
+        if c.get(&key).is_some_and(|e| matches!(e.load, Load::Failed(_))) {
+            c.remove(&key);
+        }
     }
-    let v = fetch(&key).await?;
-    let fetch_id = FETCHES.fetch_add(1, Ordering::Relaxed) + 1;
-    let mut c = CACHE.lock().unwrap();
-    let version = VERSION.fetch_add(1, Ordering::Relaxed) + 1;
-    c.insert(key, Entry { load: Load::Ready(v.clone()), fetch: fetch_id, at: Instant::now(), retries: 0, nudged: false, version });
-    Ok(v)
+    loop {
+        let landed = LANDED.notified();
+        tokio::pin!(landed);
+        landed.as_mut().enable();
+        match want(key.clone()) {
+            Load::Ready(v) => return Ok(v),
+            Load::Failed(e) => return Err(e),
+            Load::Loading => {
+                if tokio::time::timeout(Duration::from_secs(60), landed).await.is_err() {
+                    return Err("timed out".into());
+                }
+            }
+        }
+    }
 }
 
 /// Put `v` in the cache as `key`'s value, as if it had just been fetched: a refresh that kept
@@ -219,7 +313,9 @@ pub fn replace(key: Key, v: Value) {
     let fetch_id = FETCHES.fetch_add(1, Ordering::Relaxed) + 1;
     let mut c = CACHE.lock().unwrap();
     let version = VERSION.fetch_add(1, Ordering::Relaxed) + 1;
-    c.insert(key, Entry { load: Load::Ready(v), fetch: fetch_id, at: Instant::now(), retries: 0, nudged: false, version });
+    c.insert(key, Entry::landed(Load::Ready(v), fetch_id, 0, version));
+    drop(c);
+    LANDED.notify_waiters();
 }
 
 /// How long ago `key`'s value landed, if it's there.
@@ -235,7 +331,10 @@ pub fn forget(key: &Key) {
     // A playlist forgotten after an edit (a track added or removed) takes its paged tracks
     // with it, and the playlist folders take the library lists.
     match key {
-        Key::Playlist(u) => crate::paged::forget_where(|k| matches!(k, crate::paged::PKey::Playlist { uuid, .. } if uuid == u)),
+        Key::Playlist(u) => {
+            crate::paged::forget_where(|k| matches!(k, crate::paged::PKey::Playlist { uuid, .. } if uuid == u));
+            CACHE.lock().unwrap().remove(&Key::PlaylistRecs(u.clone(), 0));
+        }
         Key::Folders => crate::paged::forget_where(|k| matches!(k, crate::paged::PKey::Library { kind: crate::paged::Lib::Playlists, .. })),
         Key::FavAlbums => crate::paged::forget_where(|k| matches!(k, crate::paged::PKey::Library { kind: crate::paged::Lib::Albums, .. })),
         Key::FavArtists => crate::paged::forget_where(|k| matches!(k, crate::paged::PKey::Library { kind: crate::paged::Lib::Artists, .. })),
@@ -244,6 +343,69 @@ pub fn forget(key: &Key) {
     }
     CACHE.lock().unwrap().remove(key);
     VERSION.fetch_add(1, Ordering::Relaxed);
+}
+
+/// Fetch `key` again after an edit, keeping what it shows on screen until the new answer lands
+/// (no flash back to a skeleton); one not loaded is forgotten as [`forget`] does. A playlist
+/// takes its first batch of recommendations and its paged tracks with it, as with `forget`.
+pub fn refresh(key: &Key) {
+    if let Key::Playlist(u) = key {
+        crate::paged::refresh_where(|k| matches!(k, crate::paged::PKey::Playlist { uuid, .. } if uuid == u));
+        refresh_one(&Key::PlaylistRecs(u.clone(), 0));
+    }
+    refresh_one(key);
+}
+
+/// [`refresh`] without a playlist's paged tracks (which a removal already patched in place).
+pub fn refresh_entry(key: &Key) {
+    if let Key::Playlist(u) = key {
+        refresh_one(&Key::PlaylistRecs(u.clone(), 0));
+    }
+    refresh_one(key);
+}
+
+/// Marks a loaded entry out of date: the next ask fetches it again and gets the old value until
+/// the new one lands (so nothing is fetched for a page nobody opens). One not loaded is
+/// forgotten.
+fn refresh_one(key: &Key) {
+    let mut c = CACHE.lock().unwrap();
+    match c.get_mut(key) {
+        Some(e) if matches!(e.load, Load::Ready(_)) => e.outdated = true,
+        _ => {
+            c.remove(key);
+        }
+    }
+    drop(c);
+    VERSION.fetch_add(1, Ordering::Relaxed);
+}
+
+/// Fetches an out-of-date entry again in the foreground, leaving its value in place until the
+/// new one lands (a failure keeps the old value).
+fn revalidate(c: &mut HashMap<Key, Entry>, key: &Key) {
+    let fetch_id = FETCHES.fetch_add(1, Ordering::Relaxed) + 1;
+    if let Some(e) = c.get_mut(key) {
+        e.outdated = false;
+        // (a fetch still running for the old value no longer owns the entry)
+        e.fetch = fetch_id;
+    }
+    let key = key.clone();
+    let held = crate::sched::SCHED.fg_guard();
+    sone_host_shim::async_runtime::spawn(async move {
+        let res = fetch(&key).await;
+        let mut c = CACHE.lock().unwrap();
+        if c.get(&key).is_some_and(|e| e.fetch == fetch_id) {
+            match res {
+                Ok(v) => {
+                    let version = VERSION.fetch_add(1, Ordering::Relaxed) + 1;
+                    c.insert(key, Entry::landed(Load::Ready(v), fetch_id, 0, version));
+                }
+                Err(e) => log::warn!("[rune] refresh of {key:?} failed: {e}"),
+            }
+        }
+        drop(c);
+        drop(held);
+        LANDED.notify_waiters();
+    });
 }
 
 /// [`forget`] this entry alone: a playlist's details without its paged tracks (which a
@@ -263,8 +425,39 @@ pub fn clear() {
     VERSION.fetch_add(1, Ordering::Relaxed);
 }
 
+/// The signed-in user's id once known (0 before): read from the saved settings once, then kept,
+/// so a settings file caught mid-write (it is rewritten in place) can't turn it into 0, and view
+/// builds don't decrypt the file every time they ask.
+static USER_ID: AtomicU64 = AtomicU64::new(0);
+
+/// The signed-in user's id, or 0 while it isn't known (signed out, or not yet loaded).
 pub fn user_id() -> u64 {
-    crate::host().state::<AppState>().load_settings().and_then(|s| s.auth_tokens).and_then(|t| t.user_id).unwrap_or(0)
+    let known = USER_ID.load(Ordering::Relaxed);
+    if known != 0 {
+        return known;
+    }
+    let id = crate::host().state::<AppState>().load_settings().and_then(|s| s.auth_tokens).and_then(|t| t.user_id).unwrap_or(0);
+    if id != 0 {
+        USER_ID.store(id, Ordering::Relaxed);
+    }
+    id
+}
+
+/// Signed out: the next account's id is read afresh.
+pub fn forget_user_id() {
+    USER_ID.store(0, Ordering::Relaxed);
+}
+
+/// [`user_id`] for a request that needs it: waits (up to 20 s) until it is known rather than
+/// asking TIDAL about user 0.
+pub async fn uid() -> Result<u64, String> {
+    for _ in 0..400 {
+        match user_id() {
+            0 => tokio::time::sleep(Duration::from_millis(50)).await,
+            id => return Ok(id),
+        }
+    }
+    Err("not signed in".into())
 }
 
 async fn fetch(key: &Key) -> Result<Value, String> {
@@ -285,16 +478,11 @@ async fn fetch(key: &Key) -> Result<Value, String> {
         Key::Album(id) => v!(pages::get_album_page(st(), h.clone(), *id)),
         Key::Artist(id) => v!(pages::get_artist_page(st(), h.clone(), *id)),
         Key::ArtistTopTracks(id) => v!(pages::get_artist_top_tracks_all(st(), h.clone(), *id, 0, 50)),
+        // The React playlist page fires this with its first page of tracks (paged.rs) and its
+        // recommendations (`PlaylistRecs(uuid, 0)`); each shows as it lands.
         Key::Playlist(uuid) => {
-            // The React playlist page fires these with its first page of tracks, which comes
-            // through paged.rs (the page goes on paging there).
-            let (d, r) = tokio::join!(
-                metadata::get_playlist_details(st(), uuid.clone()),
-                library::get_playlist_recommendations(st(), uuid.clone(), 0, 50)
-            );
-            let d = d.map_err(|e| e.to_string())?;
-            let r = r.ok().and_then(|x| serde_json::to_value(x).ok()).unwrap_or(Value::Null);
-            Ok(serde_json::json!({"details": d, "recommendations": r}))
+            let d = metadata::get_playlist_details(st(), uuid.clone()).await.map_err(|e| crate::proxy_banner::checked(e.to_string()))?;
+            Ok(serde_json::json!({"details": d}))
         }
         Key::FlattenedPlaylists => v!(library::get_all_flattened_playlists(st())),
         Key::AllFolders => {
@@ -311,21 +499,28 @@ async fn fetch(key: &Key) -> Result<Value, String> {
             Ok(Value::Array(out))
         }
         Key::PlaylistRecs(uuid, offset) => v!(library::get_playlist_recommendations(st(), uuid.clone(), *offset, 50)),
-        Key::FavAlbums => v!(library::get_favorite_albums(st(), h.clone(), user_id(), 0, 50, "DATE".into(), "DESC".into())),
-        Key::FavArtists => v!(library::get_favorite_artists(st(), h.clone(), user_id(), 0, 50, "DATE".into(), "DESC".into())),
+        Key::FavAlbums => v!(library::get_favorite_albums(st(), h.clone(), uid().await?, 0, 50, "DATE".into(), "DESC".into())),
+        Key::FavArtists => v!(library::get_favorite_artists(st(), h.clone(), uid().await?, 0, 50, "DATE".into(), "DESC".into())),
         Key::FavMixes => v!(library::get_favorite_mixes(st(), h.clone(), 0, 50, "DATE".into(), "DESC".into())),
-        Key::Profile => v!(tauri_app_lib::commands::auth::get_user_profile(st(), user_id())),
+        Key::Profile => match peek(&Key::UserProfile) {
+            // The full profile of an account without an artist profile was built from the very
+            // request get_user_profile makes (GET /users/{id}), with the same name and handle:
+            // no need to make it a third time.
+            Some(p) if p["artistId"].is_null() && p["name"].is_string() => Ok(serde_json::json!([p["name"], p["handle"]])),
+            _ => v!(tauri_app_lib::commands::auth::get_user_profile(st(), uid().await?)),
+        },
         Key::Lyrics(id) => v!(metadata::get_track_lyrics(st(), *id)),
         Key::Page(path) => v!(pages::get_page_section(st(), h.clone(), path.clone())),
-        Key::Feed => v!(tauri_app_lib::commands::feed::get_feed(st(), user_id())),
+        Key::Feed => v!(tauri_app_lib::commands::feed::get_feed(st(), uid().await?)),
         Key::Credits(id) => v!(metadata::get_track_credits(st(), *id)),
         Key::ArtistBio(id) => v!(pages::get_artist_bio(st(), h.clone(), *id)),
         Key::Mix(id) => v!(pages::get_mix_items(st(), id.clone())),
-        Key::UserProfile => v!(tauri_app_lib::commands::profile::get_profile(st(), user_id())),
+        Key::UserProfile => v!(tauri_app_lib::commands::profile::get_profile(st(), uid().await?)),
         // AddToPlaylistMenu: the first 500, then every further page (the picker lists them all).
         Key::AllPlaylists => {
             const PAGE: u32 = 500;
-            let page = |offset: u32| library::get_all_playlists(st(), h.clone(), user_id(), offset, PAGE, "DATE_UPDATED".into(), "DESC".into());
+            let me = uid().await?;
+            let page = |offset: u32| library::get_all_playlists(st(), h.clone(), me, offset, PAGE, "DATE_UPDATED".into(), "DESC".into());
             let mut first = v!(page(0))?;
             let total = first["totalNumberOfItems"].as_u64().unwrap_or(0) as u32;
             let mut offset = PAGE;
@@ -428,13 +623,42 @@ mod tests {
         use super::{CACHE, Entry, Key, Load, peek, peek_load};
         let key = Key::Suggest("peek-failed-test".into());
         assert!(peek_load(&key).is_none());
-        let entry = |load| Entry { load, fetch: 0, at: std::time::Instant::now(), retries: 0, nudged: false, version: 0 };
+        let entry = |load| Entry::landed(load, 0, 0, 0);
         CACHE.lock().unwrap().insert(key.clone(), entry(Load::Loading));
         assert!(matches!(peek_load(&key), Some(Load::Loading)));
         CACHE.lock().unwrap().insert(key.clone(), entry(Load::Failed("offline".into())));
         assert!(peek(&key).is_none());
         assert!(matches!(peek_load(&key), Some(Load::Failed(_))));
         CACHE.lock().unwrap().remove(&key);
+    }
+
+    #[test]
+    fn asking_again_never_fetches_twice() {
+        use super::{Ask, Entry, Lane, Load, ask};
+        use std::time::{Duration, Instant};
+        let e = |load| Entry::landed(load, 1, 0, 0);
+        assert_eq!(ask(None, Lane::Fg), Ask::Fetch(0));
+        // on its way, in, or just failed: answered from the cache, in either lane
+        for lane in [Lane::Fg, Lane::Bg] {
+            assert_eq!(ask(Some(&e(Load::Loading)), lane), Ask::Answer);
+            assert_eq!(ask(Some(&e(Load::Ready(serde_json::json!({"a": 1})))), lane), Ask::Answer);
+            assert_eq!(ask(Some(&e(Load::Failed("offline".into()))), lane), Ask::Answer);
+        }
+        // a failure whose retry is due is asked again, once
+        let mut old = e(Load::Failed("offline".into()));
+        old.at = Instant::now() - Duration::from_secs(6);
+        assert_eq!(ask(Some(&old), Lane::Fg), Ask::Fetch(1));
+        // a background fetch still waiting goes now when the page on screen asks for it
+        let mut waiting = e(Load::Loading);
+        waiting.promote = Some(crate::sched::Promote::new());
+        assert_eq!(ask(Some(&waiting), Lane::Fg), Ask::Promote);
+        assert_eq!(ask(Some(&waiting), Lane::Bg), Ask::Answer);
+        // out of date after an edit: fetched again (behind the old value), once
+        let mut outdated = e(Load::Ready(serde_json::json!(1)));
+        outdated.outdated = true;
+        assert_eq!(ask(Some(&outdated), Lane::Fg), Ask::Revalidate);
+        outdated.outdated = false;
+        assert_eq!(ask(Some(&outdated), Lane::Fg), Ask::Answer);
     }
 
     #[test]

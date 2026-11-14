@@ -60,7 +60,7 @@ pub fn on_event(name: &str, payload: &str) {
         }
         Change::Playlists { uuid, again_later } => {
             if let Some(u) = uuid {
-                data::forget(&Key::Playlist(u));
+                data::refresh(&Key::Playlist(u));
             }
             crate::library::refresh_folders();
             if again_later {

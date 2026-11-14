@@ -100,18 +100,21 @@ static FAVS_REQUESTED: AtomicBool = AtomicBool::new(false);
 
 /// Load the account's favourite ids once (the React atoms behind every heart).
 pub fn load_favorites_once() {
-    if FAVS_REQUESTED.swap(true, Ordering::Relaxed) {
+    // (never for user 0: the id is known once the saved sign-in has loaded)
+    if data::user_id() == 0 || FAVS_REQUESTED.swap(true, Ordering::Relaxed) {
         return;
     }
     // AppInitializer: the unified favourite-ids endpoint (tracks, albums, artists, playlists),
-    // then mixes and videos, which it doesn't cover.
+    // then mixes and videos, which it doesn't cover. In the background lane (sched.rs): the
+    // hearts fill in after the first screen.
     sone_host_shim::async_runtime::spawn(async move {
+        use crate::sched::SCHED;
         let u = data::user_id();
         let s = state;
         let (all, mx, videos) = tokio::join!(
-            library::get_all_favorite_ids(s(), u),
-            library::get_favorite_mix_ids(s()),
-            library::get_favorite_video_ids(s(), u)
+            SCHED.bg(None, library::get_all_favorite_ids(s(), u)),
+            SCHED.bg(None, library::get_favorite_mix_ids(s())),
+            SCHED.bg(None, library::get_favorite_video_ids(s(), u))
         );
         let set = |v: &Value| -> HashSet<String> {
             v.as_array().map(|a| a.iter().map(|x| x.as_str().map(str::to_string).unwrap_or_else(|| x.to_string())).collect()).unwrap_or_default()
@@ -936,7 +939,7 @@ fn remove_from_playlist(p: InPlaylist, id: u64, title: String) {
         paged::remove_where(sorted_lists(&uuid), |i, v| if p.sorted { i == p.index && holds(v) } else { holds(v) });
         match library::remove_track_from_playlist(state(), uuid.clone(), index as u32).await {
             Ok(()) => {
-                data::forget_entry(&Key::Playlist(uuid));
+                data::refresh_entry(&Key::Playlist(uuid));
                 toast(format!("Removed \"{}\" from playlist", clip(&title, 28)), Kind::Success);
             }
             Err(_) => {
@@ -1431,7 +1434,7 @@ fn add_to_playlist(uuid: String, label: String, ids: Vec<u64>, again: Option<usi
         let l = clip(&label, 23);
         let res = library::add_tracks_to_playlist(state(), uuid.clone(), ids.clone(), dupes).await;
         if res.is_ok() {
-            data::forget(&Key::Playlist(uuid.clone()));
+            data::refresh(&Key::Playlist(uuid.clone()));
             data::forget(&Key::AllPlaylists);
         }
         let failed = || toast(if ids.len() > 1 { "Failed to add tracks".into() } else { "Failed to add track".into() }, Kind::Error);

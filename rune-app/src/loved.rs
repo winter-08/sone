@@ -31,9 +31,12 @@ pub fn page(s: &App, v: &View) -> El {
     let videos = s.nav.coll.ui.loved_videos;
     let key = if videos { PKey::LovedVideos } else { tracks_key(s) };
     let snap = paged::get(&key);
-    // React loads both tabs' first pages on opening.
-    paged::get(&PKey::LovedVideos);
+    // React loads both tabs' first pages on opening; the tab not showing waits for the one
+    // that is (the backend answers one request at a time).
     paged::get(&tracks_key(s));
+    if !videos {
+        paged::prefetch(&PKey::LovedVideos);
+    }
     let needle = s.nav.filter.text.clone();
     let filtering = !needle.trim().is_empty();
     if filtering {
