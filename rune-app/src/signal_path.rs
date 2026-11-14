@@ -13,6 +13,7 @@ use crate::ui::{self, t, white};
 use rune::{Color, El, Tracked, col, el, oklch, row, text};
 use serde_json::Value;
 use sone_host_shim::Manager;
+use std::mem::ManuallyDrop;
 use std::cell::RefCell;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -32,8 +33,10 @@ struct Panel {
     expanded: bool,
 }
 
+// Never dropped: at thread exit Rune's own thread-local may already be gone, and dropping a
+// `Tracked` counts as a write to it, which aborts the process.
 thread_local! {
-    static PANEL: RefCell<Tracked<Panel>> = RefCell::new(Tracked::new(Panel::default()));
+    static PANEL: RefCell<ManuallyDrop<Tracked<Panel>>> = RefCell::new(ManuallyDrop::new(Tracked::new(Panel::default())));
     static NEXT_REFRESH: std::cell::Cell<Option<Instant>> = const { std::cell::Cell::new(None) };
 }
 
@@ -42,13 +45,13 @@ static SNAPSHOT: Mutex<Option<Value>> = Mutex::new(None);
 static FRESH: AtomicBool = AtomicBool::new(false);
 
 fn panel() -> Panel {
-    PANEL.with_borrow(|p| **p)
+    PANEL.with_borrow(|p| ***p)
 }
 
 fn set_panel(p: Panel) {
     PANEL.with_borrow_mut(|cur| {
         if *Tracked::untracked(cur) != p {
-            **cur = p;
+            ***cur = p;
         }
     });
 }

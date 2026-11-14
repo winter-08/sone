@@ -37,12 +37,12 @@ struct Held {
 }
 
 thread_local! {
-    /// The drag in progress. `Tracked`, so the drawer's region rebuilds as it moves.
-    static HELD: RefCell<Tracked<Option<Held>>> = RefCell::new(Tracked::new(None));
+    /// The drag in progress. `Tracked`, so the drawer's region rebuilds as it moves. Never dropped (see `signal_path::PANEL`).
+    static HELD: RefCell<std::mem::ManuallyDrop<Tracked<Option<Held>>>> = RefCell::new(std::mem::ManuallyDrop::new(Tracked::new(None)));
 }
 
 fn held() -> Option<Held> {
-    HELD.with_borrow(|h| (**h).clone())
+    HELD.with_borrow(|h| (***h).clone())
 }
 
 /// The drawer's scroll viewport while the queue shows (it's keyed "drawer-scroll"): its top and
@@ -136,7 +136,7 @@ pub fn tick(tx: &mut Tx) -> bool {
 fn set_held(v: Option<Held>) {
     HELD.with_borrow_mut(|h| {
         if *Tracked::untracked(h) != v {
-            **h = v;
+            ***h = v;
         }
     });
 }

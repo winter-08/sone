@@ -294,13 +294,14 @@ pub fn volume<S: 'static>(v: &View, key: &str, w: f32) -> El {
 
 thread_local! {
     /// The bar's duration shows the time left instead (a press on it toggles, as in React).
-    static TIME_LEFT: std::cell::RefCell<rune::Tracked<bool>> = std::cell::RefCell::new(rune::Tracked::new(false));
+    /// Never dropped (see `signal_path::PANEL`).
+    static TIME_LEFT: std::cell::RefCell<std::mem::ManuallyDrop<rune::Tracked<bool>>> = std::cell::RefCell::new(std::mem::ManuallyDrop::new(rune::Tracked::new(false)));
 }
 
 /// The duration under the seek bar, or the time left (`-m:ss`) once pressed; a button only
 /// while something plays.
 pub fn duration_label<S: 'static>(v: &View, key: &str, font: TextStyle, w: f32) -> El {
-    let left = TIME_LEFT.with_borrow(|t| **t);
+    let left = TIME_LEFT.with_borrow(|t| ***t);
     let s = if v.current.is_none() { fmt_time(0.0) } else if left { format!("-{}", fmt_time((v.duration - v.position).max(0.0))) } else { fmt_time(v.duration) };
     let label = text(s).font(font).color(white(0.55)).w(w);
     if v.current.is_none() {
@@ -308,7 +309,7 @@ pub fn duration_label<S: 'static>(v: &View, key: &str, font: TextStyle, w: f32) 
     }
     theme::focusable(el().key(key.to_string()).role("button").label(if left { "Show duration" } else { "Show time remaining" }))
         .radius(4.0).cursor(rune::Cursor::Pointer)
-        .on_press(|_: &mut S| TIME_LEFT.with_borrow_mut(|t| **t = !**t))
+        .on_press(|_: &mut S| TIME_LEFT.with_borrow_mut(|t| ***t = !***t))
         .child(label.a11y_hidden())
 }
 
