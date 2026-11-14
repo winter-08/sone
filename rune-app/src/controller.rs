@@ -995,10 +995,6 @@ impl Player {
     async fn run(&mut self, mut rx: mpsc::UnboundedReceiver<Msg>) {
         log::info!("[rune] controller running");
         while let Some(msg) = rx.recv().await {
-            // What the user asked for (a command, a media key, MCP) and starting what it plays
-            // hold background requests back until done (sched.rs).
-            let _fg = matches!(msg, Msg::Ui(_) | Msg::Event(..) | Msg::Fetched { .. } | Msg::SourceBuilt { .. } | Msg::SourceReady { .. } | Msg::RateLimitResume { .. })
-                .then(|| crate::sched::SCHED.fg_guard());
             match msg {
                 Msg::Ui(c) => {
                     let login = matches!(c, Cmd::StartDeviceLogin | Cmd::CancelLogin | Cmd::StartPkceLogin | Cmd::CompletePkceLogin(_)
@@ -1060,7 +1056,7 @@ impl Player {
     /// What AppInitializer loads once signed in (AI:285-470), in the order the first screen
     /// needs it: Home and the playlist folders (the sidebar) first; the account's name and
     /// picture (UserProfile: the header's avatar, AI:446-450), the feed (for the bell's dot) and
-    /// the favourite ids (interact.rs) behind them, in the background lane (sched.rs).
+    /// the favourite ids (interact.rs) behind them, as background work (sched.rs).
     fn bootstrap_library(&self) {
         use crate::data::{self, Key};
         crate::interact::load_favorites_once();
@@ -1076,14 +1072,13 @@ impl Player {
         // own, larger, pages), so they wait behind everything else.
         let h = self.h.clone();
         sone_host_shim::async_runtime::spawn(async move {
-            use crate::sched::SCHED;
             use tauri_app_lib::commands::library;
             let Ok(uid) = data::uid().await else { return };
             let st = || h.state::<AppState>();
             let _ = tokio::join!(
-                SCHED.bg(None, library::get_favorite_albums(st(), h.clone(), uid, 0, 20, "DATE".into(), "DESC".into())),
-                SCHED.bg(None, library::get_favorite_artists(st(), h.clone(), uid, 0, 20, "DATE".into(), "DESC".into())),
-                SCHED.bg(None, library::get_favorite_tracks(st(), h.clone(), uid, 0, 50, "DATE".into(), "DESC".into()))
+                crate::sched::bg(None, library::get_favorite_albums(st(), h.clone(), uid, 0, 20, "DATE".into(), "DESC".into())),
+                crate::sched::bg(None, library::get_favorite_artists(st(), h.clone(), uid, 0, 20, "DATE".into(), "DESC".into())),
+                crate::sched::bg(None, library::get_favorite_tracks(st(), h.clone(), uid, 0, 50, "DATE".into(), "DESC".into()))
             );
         });
     }
@@ -1486,7 +1481,7 @@ impl Player {
                 };
                 let (tx, h, shuffle) = (self.tx.clone(), self.h.clone(), name == "mcp:shuffle-source");
                 sone_host_shim::async_runtime::spawn(async move {
-                    match crate::sched::SCHED.fg(crate::sources::build(&h, &kind, &id)).await {
+                    match crate::sources::build(&h, &kind, &id).await {
                         Some(l) => {
                             let _ = tx.send(Msg::SourceBuilt { loader: Box::new(l), shuffle });
                         }
@@ -1980,7 +1975,7 @@ impl Player {
             // Keep the successful ones in their original order (MCPB:221-251).
             let futs = ids.into_iter().map(|id| {
                 let h = h.clone();
-                async move { crate::sched::SCHED.fg(metadata::get_track(h.state::<AppState>(), id)).await.ok() }
+                async move { metadata::get_track(h.state::<AppState>(), id).await.ok() }
             });
             let tracks: Vec<Value> = join_all(futs).await.into_iter().flatten().collect();
             let _ = tx.send(Msg::Fetched { tracks, action, asked, seq, from_ui });
@@ -2071,7 +2066,7 @@ impl Player {
         let (tx, h, ae, aa) = (self.tx.clone(), self.h.clone(), self.prefs.allow_explicit, self.prefs.allow_ai);
         sone_host_shim::async_runtime::spawn(async move {
             let playable = move |t: &Value| !unavailable(t) && crate::content::reason_with(t, ae, aa).is_none();
-            crate::sched::SCHED.fg(loader.start(&h, &playable)).await;
+            loader.start(&h, &playable).await;
             let _ = tx.send(Msg::SourceReady { loader: Box::new(loader), request, epoch, restore });
         });
     }
@@ -2125,7 +2120,7 @@ impl Player {
         sone_host_shim::async_runtime::spawn(async move {
             let playable = move |t: &Value| !unavailable(t) && crate::content::reason_with(t, ae, aa).is_none();
             while loader.has_more && EPOCH.load(Ordering::Relaxed) == ours {
-                let fresh = match crate::sched::SCHED.bg(None, loader.next_page(&h, &playable)).await {
+                let fresh = match loader.next_page(&h, &playable).await {
                     Ok(f) => f,
                     Err(e) => {
                         log::warn!("[rune] failed to load remaining {} tracks: {e}", owner.0);

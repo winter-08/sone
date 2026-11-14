@@ -2,8 +2,21 @@
 """How long loading and navigation take when TIDAL answers slowly (fake_tidal.py's
 SPIKE_LATENCY_MS), and how many requests each action makes.
 
-    latency.py run --bin BIN [--bin BIN ...] [--latency-ms 300] [--slow REGEX=MS,...] [--out FILE]
+The regression check (one command, from the repository root; about 40 s per mode and build,
+under the machine-wide sandbox lock; prints the table and writes the JSON):
+
+    flock /tmp/sone-sandbox.lock nix-shell verifier/harness/shell.nix --run \\
+      'python3 -I verifier/bench/latency.py run \\
+         --bin rune-app/target/stage-final/release/sone-rune-wrapped --label reference \\
+         --bin rune-app/target/release/sone-rune-wrapped --label new --out /tmp/latency.json'
+
+    latency.py run --bin BIN [--label NAME] [--env NAME:KEY=VALUE] ... [--latency-ms 300]
+                   [--slow REGEX=MS,...] [--modes seq,play,...] [--reps N] [--out FILE]
+    latency.py table FILE.json            (the table again; repeated runs show min/max)
     latency.py drive MODE OUT.json        (inside the sandbox; run starts it)
+
+`--env new:SONE_SCHED=0` runs the build labelled `new` with that variable (sandbox.sh passes
+SONE_SCHED through). Use release builds: a debug build renders noticeably slower.
 
 Modes, one launch each:
   seq       launch -> Home content; then, one after another with Home in between: a playlist
@@ -216,45 +229,61 @@ BASE_PROFILE = {
 
 
 def run(args):
-    out = {"latency_ms": args.latency_ms, "slow": args.slow, "builds": {}}
-    for b in args.bin:
-        label = args.label[len(out["builds"])] if args.label and len(args.label) > len(out["builds"]) else b
-        out["builds"][label] = {}
-        for mode in args.modes.split(","):
-            rundir = tempfile.mkdtemp(prefix=f"lat-{mode}-", dir=args.rundir)
-            trace = os.path.join(rundir, "drive.json")
-            env = {**os.environ, "SPIKE_SEED": json.dumps(BASE_PROFILE), "SPIKE_OUTPUT": args.display,
-                   "SPIKE_LATENCY_MS": str(args.latency_ms), "SPIKE_LATENCY_SLOW": args.slow or "",
-                   "SPIKE_HOME_TABS": "1", "MCP_URL": "http://127.0.0.1:5577/verifier/mcp"}
-            cmd = [os.path.join(ROOT, "harness", "sandbox.sh"), os.path.join(rundir, "run"), b, "--",
-                   "python3", "-I", os.path.abspath(__file__), "drive", mode, trace]
-            p = subprocess.run(cmd, env=env, capture_output=True, text=True, timeout=300)
-            if os.path.exists(trace):
-                out["builds"][label][mode] = json.load(open(trace))
-            else:
-                out["builds"][label][mode] = {"errors": [(p.stdout + p.stderr)[-1500:]]}
-            print(f"{label} {mode}: {json.dumps(out['builds'][label][mode].get('times'))}", flush=True)
-    json.dump(out, open(args.out, "w"), indent=1)
+    labels = [(args.label[i] if args.label and i < len(args.label) else b) for i, b in enumerate(args.bin)]
+    extra = {}
+    for spec in args.env or []:
+        name, _, kv = spec.partition(":")
+        k, _, v = kv.partition("=")
+        extra.setdefault(name, {})[k] = v
+    out = {"latency_ms": args.latency_ms, "slow": args.slow, "env": extra, "builds": {}}
+    # (repetitions interleaved, so a slow spell on the machine doesn't land on one build)
+    for rep in range(args.reps):
+        for b, label in zip(args.bin, labels):
+            runs = out["builds"].setdefault(label, {})
+            for mode in args.modes.split(","):
+                rundir = tempfile.mkdtemp(prefix=f"lat-{mode}-", dir=args.rundir)
+                trace = os.path.join(rundir, "drive.json")
+                env = {**os.environ, "SPIKE_SEED": json.dumps(BASE_PROFILE), "SPIKE_OUTPUT": args.display,
+                       "SPIKE_LATENCY_MS": str(args.latency_ms), "SPIKE_LATENCY_SLOW": args.slow or "",
+                       "SPIKE_HOME_TABS": "1", "MCP_URL": "http://127.0.0.1:5577/verifier/mcp", **extra.get(label, {})}
+                cmd = [os.path.join(ROOT, "harness", "sandbox.sh"), os.path.join(rundir, "run"), b, "--",
+                       "python3", "-I", os.path.abspath(__file__), "drive", mode, trace]
+                p = subprocess.run(cmd, env=env, capture_output=True, text=True, timeout=300)
+                r = json.load(open(trace)) if os.path.exists(trace) else {"errors": [(p.stdout + p.stderr)[-1500:]]}
+                runs.setdefault(mode, []).append(r)
+                print(f"{label} {mode} #{rep + 1}: {json.dumps(r.get('times'))}", flush=True)
+                json.dump(out, open(args.out, "w"), indent=1)
     print(table(out))
 
 
 def table(out) -> str:
     builds = list(out["builds"])
-    rows = {}
-    reqs = {}
+    rows, reqs = {}, {}
     for b in builds:
-        for mode, r in out["builds"][b].items():
-            for tag, ts in (r.get("times") or {}).items():
-                for k, v in ts.items():
-                    rows.setdefault(f"{tag}: {k}", {})[b] = v
-            for tag, rq in (r.get("requests") or {}).items():
-                reqs.setdefault(tag, {})[b] = rq
-    lines = ["| step | " + " | ".join(builds) + " |", "|---|" + "---|" * len(builds)]
+        for mode, runs in out["builds"][b].items():
+            for r in runs if isinstance(runs, list) else [runs]:
+                for tag, ts in (r.get("times") or {}).items():
+                    for k, v in ts.items():
+                        rows.setdefault(f"{tag}: {k}", {}).setdefault(b, []).append(v)
+                for tag, rq in (r.get("requests") or {}).items():
+                    reqs.setdefault(tag, {}).setdefault(b, []).append(rq)
+
+    def cell(vals):
+        nums = sorted(v for v in vals if isinstance(v, (int, float)))
+        if not nums:
+            return str(vals[0]) if vals else ""
+        mid = nums[len(nums) // 2] if len(nums) % 2 else (nums[len(nums) // 2 - 1] + nums[len(nums) // 2]) / 2
+        miss = len(vals) - len(nums)
+        s = f"{mid:.2f}" if len(nums) == 1 else f"{mid:.2f} ({nums[0]:.2f}-{nums[-1]:.2f})"
+        return s + (f" +{miss} missed" if miss else "")
+
+    lines = ["Seconds (median, min-max over runs).", "", "| step | " + " | ".join(builds) + " |", "|---|" + "---|" * len(builds)]
     for k, per in rows.items():
-        lines.append(f"| {k} | " + " | ".join(str(per.get(b, "")) for b in builds) + " |")
-    lines += ["", "| requests | " + " | ".join(builds) + " |", "|---|" + "---|" * len(builds)]
+        lines.append(f"| {k} | " + " | ".join(cell(per.get(b, [])) for b in builds) + " |")
+    lines += ["", "Requests to TIDAL per action (first run), and when the last one ended.", "",
+              "| requests | " + " | ".join(builds) + " |", "|---|" + "---|" * len(builds)]
     for tag, per in reqs.items():
-        lines.append(f"| {tag} | " + " | ".join(f"{per[b]['total']} (done {per[b]['last_done']} s)" if b in per else "" for b in builds) + " |")
+        lines.append(f"| {tag} | " + " | ".join(f"{per[b][0]['total']} (done {per[b][0]['last_done']:.2f} s)" if b in per else "" for b in builds) + " |")
     return "\n".join(lines)
 
 
@@ -264,6 +293,8 @@ def main():
     r = sub.add_parser("run")
     r.add_argument("--bin", action="append", required=True)
     r.add_argument("--label", action="append")
+    r.add_argument("--env", action="append", help="LABEL:KEY=VALUE, for that build's runs")
+    r.add_argument("--reps", type=int, default=1)
     r.add_argument("--latency-ms", type=int, default=300)
     r.add_argument("--slow", default="")
     r.add_argument("--modes", default="seq,play,playlist,album,search")

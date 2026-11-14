@@ -13,7 +13,8 @@
 #     nscd, /run/pulse and /dev/snd hidden
 # The driver gets SONE_PID, RUN, WAYLAND_DISPLAY and the same DBUS_SESSION_BUS_ADDRESS.
 # Env knobs: SPIKE_SEED (JSON merged into settings.json), SPIKE_STRACE=1 (trace connect()),
-#   SPIKE_GPU=1, SPIKE_REFRESH=Hz (see the compositor below), and for real-account runs:
+#   SPIKE_GPU=1, SPIKE_REFRESH=Hz (see the compositor below), SONE_SCHED (passed to the app:
+#   0 turns the Rune build's background request lane off, bench/latency.py), and for real-account runs:
 #   SPIKE_NET=1 (the host's network instead of loopback and the fake TIDAL; audio, the system
 #   bus and /dev/snd stay private) and SPIKE_PROFILE_DIR (a signed-in profile copied in: its
 #   sone.key and encrypted settings.json, never written to the logs).
@@ -32,7 +33,7 @@ if [[ -z "${SPIKE_INNER:-}" ]]; then
   ln -s "$(mktemp -d "${TMPDIR:-/tmp}/rt.XXXXXX")" "$RUN/runtime"
   chmod 700 "$RUN/runtime/"
   pass=()
-  for v in PATH GI_TYPELIB_PATH GST_PLUGIN_SYSTEM_PATH_1_0 $(compgen -e | grep '^SPIKE_' || true); do
+  for v in PATH GI_TYPELIB_PATH GST_PLUGIN_SYSTEM_PATH_1_0 $(compgen -e | grep '^SPIKE_\|^SONE_SCHED$' || true); do
     pass+=("$v=${!v:-}")
   done
   # The whole session lives in its own network namespace (loopback only, so nothing can reach

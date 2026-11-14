@@ -158,14 +158,14 @@ pub fn nudge_due_retries() {
 }
 
 /// The cached value, starting the fetch if this is the first ask (or a failure has cooled down).
-/// The fetch goes in the foreground lane: the caller shows it now. A background fetch of the
-/// same key still waiting for its turn goes at once.
+/// The fetch goes at once: the caller shows it now. A background fetch of the
+/// same key still waiting for a slot goes at once too.
 pub fn want(key: Key) -> Load {
     want_in(key, Lane::Fg)
 }
 
 /// [`want`] for something not on screen yet (a Home tab not showing, the feed's unread dot):
-/// the fetch waits in the background lane until the foreground is idle.
+/// the fetch goes as background work (sched.rs: at most two at once).
 pub fn want_bg(key: Key) -> Load {
     want_in(key, Lane::Bg)
 }
@@ -175,7 +175,7 @@ pub fn want_bg(key: Key) -> Load {
 enum Ask {
     /// Answer from the entry (in, failed and not due again, or on its way): no request.
     Answer,
-    /// On its way in the background lane, asked for in the foreground: send it now.
+    /// Waiting for a background slot, asked for by the page on screen: send it now.
     Promote,
     /// Fetch it (never asked, or a failure whose retry is due), as the nth retry.
     Fetch(usize),
@@ -203,7 +203,7 @@ fn want_in(key: Key, lane: Lane) -> Load {
             }
             let e = &c[&key];
             if a == Ask::Promote && let Some(p) = &e.promote {
-                crate::sched::SCHED.promote(p);
+                crate::sched::promote(p);
             }
             // Landed after the view read the version: it was loading as far as this view knows.
             return if after_frozen(e.version) { Load::Loading } else { e.load.clone() };
@@ -217,10 +217,8 @@ fn want_in(key: Key, lane: Lane) -> Load {
     let promote = (lane == Lane::Bg).then(crate::sched::Promote::new);
     c.insert(key.clone(), Entry { promote: promote.clone(), ..Entry::landed(Load::Loading, fetch_id, retries, 0) });
     drop(c);
-    // (the foreground lane is busy from the ask, not from when the task first runs: a background
-    // request asked a moment later must not slip in first)
-    let held = promote.is_none().then(|| crate::sched::SCHED.fg_guard());
-    // (the lane is held until the answer is in the cache, so the next request in it can use it)
+    // (a background slot is held until the answer is in the cache, so the next background
+    // request can use it: the account name reads the profile's)
     let work = async move {
         let load = match fetch(&key).await {
             Ok(v) => Load::Ready(v),
@@ -241,11 +239,8 @@ fn want_in(key: Key, lane: Lane) -> Load {
     };
     sone_host_shim::async_runtime::spawn(async move {
         match &promote {
-            Some(p) => crate::sched::SCHED.bg(Some(p), work).await,
-            None => {
-                work.await;
-                drop(held);
-            }
+            Some(p) => crate::sched::bg(Some(p), work).await,
+            None => work.await,
         }
     });
     Load::Loading
@@ -280,8 +275,8 @@ pub fn ready(key: Key) -> Option<Value> {
     }
 }
 
-/// Awaitable fetch for the controller (e.g. an artist's top tracks before playing them), in the
-/// foreground. A fetch of the key already running (a page asked for it) is waited for, not
+/// Awaitable fetch for the controller (e.g. an artist's top tracks before playing them). A
+/// fetch of the key already running (a page asked for it) is waited for, not
 /// made again.
 pub async fn get(key: Key) -> Result<Value, String> {
     // (an earlier failure is asked again at once: the user is waiting on this)
@@ -379,7 +374,7 @@ fn refresh_one(key: &Key) {
     VERSION.fetch_add(1, Ordering::Relaxed);
 }
 
-/// Fetches an out-of-date entry again in the foreground, leaving its value in place until the
+/// Fetches an out-of-date entry again, leaving its value in place until the
 /// new one lands (a failure keeps the old value).
 fn revalidate(c: &mut HashMap<Key, Entry>, key: &Key) {
     let fetch_id = FETCHES.fetch_add(1, Ordering::Relaxed) + 1;
@@ -389,7 +384,6 @@ fn revalidate(c: &mut HashMap<Key, Entry>, key: &Key) {
         e.fetch = fetch_id;
     }
     let key = key.clone();
-    let held = crate::sched::SCHED.fg_guard();
     sone_host_shim::async_runtime::spawn(async move {
         let res = fetch(&key).await;
         let mut c = CACHE.lock().unwrap();
@@ -403,7 +397,6 @@ fn revalidate(c: &mut HashMap<Key, Entry>, key: &Key) {
             }
         }
         drop(c);
-        drop(held);
         LANDED.notify_waiters();
     });
 }

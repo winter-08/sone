@@ -98,8 +98,8 @@ pub fn home(s: &App) -> El {
         let tabs = first["home"]["tabs"].as_array().cloned().unwrap_or_default();
         if !tabs.is_empty() {
             *TABS.lock().unwrap() = tabs.clone();
-            // Home.tsx: once the first tab is in, the others load behind it (in the background
-            // lane: opening one sends its request at once if it is still waiting).
+            // Home.tsx: once the first tab is in, the others load behind it (as background
+            // work: opening one sends its request at once if it is still waiting).
             for t in &tabs {
                 let other = t["tabType"].as_str().unwrap_or("").to_lowercase();
                 if !other.is_empty() && other != slug {
@@ -195,21 +195,20 @@ pub fn reset_after_logout() {
 /// stale page, has already started the same request in the background itself (its SWR refresh,
 /// unless it tried one in the last five minutes), so this waits for that one to land in the
 /// backend's cache (asking get_home_page again, which reads the cache without a request) and
-/// only calls refresh_home_page if it doesn't. In the background lane (sched.rs).
+/// only calls refresh_home_page if it doesn't. As background work (sched.rs).
 fn refresh_if_stale(slug: &str, first: &Value) {
     if first["isStale"].as_bool() != Some(true) || PAGED.lock().unwrap().contains(slug) || !REFRESHED.lock().unwrap().insert(slug.to_string()) {
         return;
     }
     let (slug, old_tabs) = (slug.to_string(), first["home"]["tabs"].clone());
     sone_host_shim::async_runtime::spawn(async move {
-        use crate::sched::SCHED;
         use sone_host_shim::Manager;
         let h = crate::host().clone();
         let st = || h.state::<tauri_app_lib::AppState>();
         let mut fresh = None;
         for wait in [1u64, 2, 4] {
             tokio::time::sleep(std::time::Duration::from_secs(wait)).await;
-            if let Ok(p) = SCHED.bg(None, tauri_app_lib::commands::pages::get_home_page(st(), h.clone(), Some(slug.clone()))).await
+            if let Ok(p) = crate::sched::bg(None, tauri_app_lib::commands::pages::get_home_page(st(), h.clone(), Some(slug.clone()))).await
                 && let Ok(v) = serde_json::to_value(p)
                 && v["isStale"].as_bool() == Some(false)
             {
@@ -219,7 +218,7 @@ fn refresh_if_stale(slug: &str, first: &Value) {
         }
         let fresh = match fresh {
             Some(f) => f,
-            None => SCHED.bg(None, tauri_app_lib::commands::pages::refresh_home_page(st(), Some(slug.clone()))).await
+            None => crate::sched::bg(None, tauri_app_lib::commands::pages::refresh_home_page(st(), Some(slug.clone()))).await
                 .map_err(|e| e.to_string()).and_then(|x| serde_json::to_value(x).map_err(|e| e.to_string())),
         };
         match fresh {
@@ -253,7 +252,7 @@ pub fn revalidate(s: &App) {
     sone_host_shim::async_runtime::spawn(async move {
         use sone_host_shim::Manager;
         let h = crate::host().clone();
-        let got = crate::sched::SCHED.bg(None, tauri_app_lib::commands::pages::get_home_page(h.state::<tauri_app_lib::AppState>(), h.clone(), Some(slug.clone()))).await;
+        let got = crate::sched::bg(None, tauri_app_lib::commands::pages::get_home_page(h.state::<tauri_app_lib::AppState>(), h.clone(), Some(slug.clone()))).await;
         if let Ok(v) = got.map_err(|e| e.to_string()).and_then(|x| serde_json::to_value(x).map_err(|e| e.to_string()))
             && !PAGED.lock().unwrap().contains(&slug)
         {

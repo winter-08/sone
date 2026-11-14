@@ -105,16 +105,15 @@ pub fn load_favorites_once() {
         return;
     }
     // AppInitializer: the unified favourite-ids endpoint (tracks, albums, artists, playlists),
-    // then mixes and videos, which it doesn't cover. In the background lane (sched.rs): the
+    // then mixes and videos, which it doesn't cover. As background work (sched.rs): the
     // hearts fill in after the first screen.
     sone_host_shim::async_runtime::spawn(async move {
-        use crate::sched::SCHED;
         let u = data::user_id();
         let s = state;
         let (all, mx, videos) = tokio::join!(
-            SCHED.bg(None, library::get_all_favorite_ids(s(), u)),
-            SCHED.bg(None, library::get_favorite_mix_ids(s())),
-            SCHED.bg(None, library::get_favorite_video_ids(s(), u))
+            crate::sched::bg(None, library::get_all_favorite_ids(s(), u)),
+            crate::sched::bg(None, library::get_favorite_mix_ids(s())),
+            crate::sched::bg(None, library::get_favorite_video_ids(s(), u))
         );
         let set = |v: &Value| -> HashSet<String> {
             v.as_array().map(|a| a.iter().map(|x| x.as_str().map(str::to_string).unwrap_or_else(|| x.to_string())).collect()).unwrap_or_default()

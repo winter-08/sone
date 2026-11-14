@@ -34,7 +34,7 @@ pub fn should_show(available: bool, latest: &str, seen: &Value) -> (bool, Value)
 /// The launch check for a newer GitHub release (silent on any failure).
 pub fn check_for_update() {
     sone_host_shim::async_runtime::spawn(async {
-        let Ok(info) = crate::sched::SCHED.bg(None, updates::check_for_update(st())).await else { return };
+        let Ok(info) = crate::sched::bg(None, updates::check_for_update(st())).await else { return };
         let seen = crate::shell::store_get(SEEN_KEY).unwrap_or_else(|| json!({"version": "", "count": 0}));
         let (show, next) = should_show(info.available, &info.latest, &seen);
         if show {

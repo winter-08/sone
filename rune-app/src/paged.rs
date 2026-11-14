@@ -149,7 +149,7 @@ fn as_of(marks: &[(u64, Status)], v: u64) -> Status {
 /// The collection, starting its first page if nobody asked for it yet.
 pub fn get(key: &PKey) -> Snap {
     if let Some(p) = WAITING.lock().unwrap().get(key) {
-        crate::sched::SCHED.promote(p);
+        crate::sched::promote(p);
     }
     let mut st = STORE.lock().unwrap();
     let frozen = data::frozen_version();
@@ -436,12 +436,12 @@ fn spawn(key: PKey, epoch: u64) {
     spawn_in(key, epoch, None);
 }
 
-/// Pages waiting in the background lane (sched.rs), by collection: a [`get`] (the page now
+/// Pages waiting for a background slot (sched.rs), by collection: a [`get`] (the page now
 /// shows it) sends the one waiting at once.
 static WAITING: LazyLock<Mutex<HashMap<PKey, crate::sched::Promote>>> = LazyLock::new(Default::default);
 
 /// [`get`] for a collection that isn't showing yet (Loved Tracks' Videos tab): its first page
-/// waits in the background lane until the foreground is idle.
+/// goes as background work (sched.rs).
 pub fn prefetch(key: &PKey) {
     let mut st = STORE.lock().unwrap();
     if st.contains_key(key) {
@@ -456,8 +456,6 @@ pub fn prefetch(key: &PKey) {
 }
 
 fn spawn_in(key: PKey, epoch: u64, bg: Option<crate::sched::Promote>) {
-    // (foreground from the ask, so a background request asked just after can't go first)
-    let mut held = bg.is_none().then(|| crate::sched::SCHED.fg_guard());
     sone_host_shim::async_runtime::spawn(async move {
         let mut bg = bg;
         loop {
@@ -470,18 +468,11 @@ fn spawn_in(key: PKey, epoch: u64, bg: Option<crate::sched::Promote>) {
             };
             let res = match bg.take() {
                 Some(p) => {
-                    let r = crate::sched::SCHED.bg(Some(&p), fetch_page(&key, offset, cursor)).await;
+                    let r = crate::sched::bg(Some(&p), fetch_page(&key, offset, cursor)).await;
                     WAITING.lock().unwrap().remove(&key);
                     r
                 }
-                None => match held.take() {
-                    Some(g) => {
-                        let r = fetch_page(&key, offset, cursor).await;
-                        drop(g);
-                        r
-                    }
-                    None => crate::sched::SCHED.fg(fetch_page(&key, offset, cursor)).await,
-                },
+                None => fetch_page(&key, offset, cursor).await,
             };
             let mut st = STORE.lock().unwrap();
             let Some(e) = st.get_mut(&key).filter(|e| e.epoch == epoch) else { return };
