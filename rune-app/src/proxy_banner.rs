@@ -181,9 +181,12 @@ fn disable_proxy() {
         {
             let mut s = ST.lock().unwrap();
             s.busy = false;
-            if let Err(e) = r {
-                let e = e.to_string();
-                s.error = Some(if e.trim().is_empty() { "Could not turn the proxy off".into() } else { e });
+            match r {
+                Ok(()) => crate::settings::proxy_turned_off(),
+                Err(e) => {
+                    let e = e.to_string();
+                    s.error = Some(if e.trim().is_empty() { "Could not turn the proxy off".into() } else { e });
+                }
             }
         }
         crate::controller::bump();

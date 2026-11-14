@@ -189,6 +189,15 @@ fn run<T: Send + 'static>(fut: impl std::future::Future<Output = T> + Send + 'st
     });
 }
 
+/// The proxy was turned off from outside Settings (the banner's "Turn off proxy"): an open
+/// Network form follows, so its switch shows it off and a later edit of its fields doesn't
+/// submit `enabled` again. (React's form kept the old value, so an edit after the banner's
+/// button turned the proxy back on.)
+pub fn proxy_turned_off() {
+    RESULTS.lock().unwrap().push(Box::new(|f: &mut Form| f.proxy.enabled = false));
+    controller::bump();
+}
+
 fn later(after: Duration) -> Option<Instant> {
     Some(Instant::now() + after)
 }
