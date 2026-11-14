@@ -65,8 +65,8 @@ geometry, under the keys the React app used in localStorage), `rune-ui.json`, `r
   drawer, sidebar, nowbar) over tracked state; a playback position tick should rebuild only
   `nowbar`, and a debug build warns (`rune: region …`) when a reused region is stale.
 
-Rune is pinned in `Cargo.toml`. `nix build .#rone` builds the package with crane: the dependencies
-are one derivation (`rone-deps`) and the app another, so a source change rebuilds only the app
+Rune is pinned in `Cargo.toml`. `nix build .#sone` builds the package with crane: the dependencies
+are one derivation (`sone-deps`) and the app another, so a source change rebuilds only the app
 (about 100 s here, against about 5 minutes from nothing). `package.nix` carries one hash, for the
 Rune source, to update when the Rune rev changes; a wrong one fails with the right one in "got:".
 

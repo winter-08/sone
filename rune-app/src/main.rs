@@ -488,7 +488,7 @@ fn initial_size() -> (f32, f32) {
 
 const FONTS: &[&[u8]] = &[include_bytes!("../assets/Inter-Regular.ttf"), include_bytes!("../assets/Inter-Medium.ttf"), include_bytes!("../assets/Inter-SemiBold.ttf")];
 
-/// The app's name in the window title and login screen; package.nix builds it as "RONE".
+/// The app's name in the window title and login screen.
 pub const TITLE: &str = match option_env!("SONE_RUNE_TITLE") {
     Some(t) => t,
     None => "SONE",

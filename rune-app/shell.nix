@@ -2,7 +2,7 @@
 # what Rune links or dlopens (Wayland/X11, xkbcommon, Vulkan/GL, fontconfig). No WebKit, no GTK.
 # Usage: nix-shell rune-app/shell.nix --run 'cd rune-app && cargo build && ./wrap.sh'
 #
-# nixpkgs is the revision ../flake.lock pins, so the shell and `nix build .#rone` agree and the
+# nixpkgs is the revision ../flake.lock pins, so the shell and `nix build .#sone` agree and the
 # GStreamer patch below always applies.
 { pkgs ? import (builtins.getFlake "github:NixOS/nixpkgs/${(builtins.fromJSON (builtins.readFile ../flake.lock)).nodes.nixpkgs.locked.rev}") { } }:
 let

@@ -13,17 +13,17 @@
     in
     {
       packages.${system} = {
-        # The app (rune-app/), installed as RONE.
-        rone = pkgs.callPackage ./rune-app/package.nix {
+        # The app (rune-app/).
+        sone = pkgs.callPackage ./rune-app/package.nix {
           src = ./.;
           craneLib = crane.mkLib pkgs;
         };
-        default = self.packages.${system}.rone;
+        default = self.packages.${system}.sone;
       };
 
       apps.${system}.default = {
         type = "app";
-        program = "${self.packages.${system}.rone}/bin/rone";
+        program = "${self.packages.${system}.sone}/bin/sone";
       };
 
       # The build shell (lld, sccache, the libraries the app opens at run time).
@@ -31,6 +31,6 @@
 
       formatter.${system} = pkgs.nixfmt;
 
-      checks.${system}.build = self.packages.${system}.rone;
+      checks.${system}.build = self.packages.${system}.sone;
     };
 }

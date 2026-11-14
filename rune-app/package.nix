@@ -1,4 +1,4 @@
-# RONE: the Rune build of SONE as an installable app (`nix profile install .#rone`).
+# SONE as an installable app (`nix profile install .#sone`).
 # Same runtime as shell.nix + wrap.sh, but built from the committed sources by Nix.
 {
   lib,
@@ -34,15 +34,15 @@ let
   gst = with gst_all_1; [ gstreamer gst-plugins-base good gst-plugins-bad gst-libav ];
   # Opened with dlopen by Rune (winit, wgpu) and the backend, so they go on LD_LIBRARY_PATH.
   runtime = [ wayland libxkbcommon vulkan-loader libGL libx11 libxcursor libxi libxrandr alsa-lib fontconfig freetype dbus ];
-  appId = "rone";
+  appId = "sone";
   icons = src + "/core/icons";
   # Shared by the two derivations below. crane (not buildRustPackage) so the ~480 dependency
-  # crates build once, in `rone-deps`, and a change to this crate or the backend recompiles
+  # crates build once, in `sone-deps`, and a change to this crate or the backend recompiles
   # only those two. It vendors each source into its own directory, which also copes with Rune
   # building its own tiny-skia-path 0.11.4 beside resvg's crates.io copy, and needs no hash:
   # everything is pinned by Cargo.lock.
   common = {
-    pname = "rone";
+    pname = "sone";
     version = (lib.importTOML ./Cargo.toml).package.version;
 
     # Only what the build reads: this crate and the SONE backend it links (no target/ dirs).
@@ -94,12 +94,11 @@ craneLib.buildPackage (common // {
   inherit cargoArtifacts;
 
   env = {
-    SONE_RUNE_TITLE = "RONE";
     SONE_RUNE_APP_ID = appId;
   };
 
   postInstall = ''
-    mv $out/bin/sone-rune $out/bin/rone
+    mv $out/bin/sone-rune $out/bin/sone
     for s in 32x32 64x64 128x128; do
       install -Dm644 ${icons}/$s.png $out/share/icons/hicolor/$s/apps/${appId}.png
     done
@@ -108,7 +107,7 @@ craneLib.buildPackage (common // {
 
   # /run/opengl-driver/lib last: NixOS's GPU driver libraries, found only there.
   postFixup = ''
-    wrapProgram $out/bin/rone \
+    wrapProgram $out/bin/sone \
       --prefix LD_LIBRARY_PATH : ${lib.makeLibraryPath runtime} \
       --suffix LD_LIBRARY_PATH : /run/opengl-driver/lib \
       --set GST_PLUGIN_SYSTEM_PATH_1_0 ${lib.makeSearchPath "lib/gstreamer-1.0" (map lib.getLib gst)} \
@@ -118,11 +117,11 @@ craneLib.buildPackage (common // {
   desktopItems = [
     (makeDesktopItem {
       name = appId;
-      desktopName = "RONE";
+      desktopName = "SONE";
       genericName = "TIDAL player";
-      comment = "SONE with a native Rune interface";
+      comment = "Native client for TIDAL";
       # %u: a tidal:// link the desktop opens with it (a running instance takes it, shell.rs)
-      exec = "rone %u";
+      exec = "sone %u";
       icon = appId;
       startupWMClass = appId;
       categories = [ "Audio" "AudioVideo" "Player" ];
@@ -133,7 +132,7 @@ craneLib.buildPackage (common // {
   meta = {
     description = "SONE (TIDAL client) with a native Rune UI";
     license = lib.licenses.gpl3Only;
-    mainProgram = "rone";
+    mainProgram = "sone";
     platforms = [ "x86_64-linux" ];
   };
 })
