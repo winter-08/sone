@@ -556,9 +556,16 @@ const NOTCH_SCALE: f32 = 40.0 / 120.0;
 
 /// A scroll viewport keyed `key` whose notched-wheel scrolling glides.
 pub fn smooth_wheel<S: 'static>(e: El, key: String) -> El {
+    smooth_wheel_watching::<S>(e, key, |_| {})
+}
+
+/// [`smooth_wheel`] that also tells `watch` where the viewport is scrolled (Rune keeps one
+/// scroll-offset handler per element, which the glide's own needs).
+pub fn smooth_wheel_watching<S: 'static>(e: El, key: String, watch: impl Fn(rune::ScrollPos) + 'static) -> El {
     let (k_offset, k_wheel) = (key.clone(), key.clone());
     e.key(key)
         .on_scroll_offset(move |p| {
+            watch(p);
             GLIDES.with(|g| {
                 let mut g = g.borrow_mut();
                 let st = g.entry(k_offset.clone()).or_insert(WheelGlide {

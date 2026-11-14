@@ -2138,16 +2138,17 @@ pub fn drawer(s: &App, v: &View, shell: Shell) -> Option<El> {
         Some(c) => e.linear_gradient(std::f32::consts::PI, [(0.0, c.alpha(0.28)), (0.9, c.alpha(0.0))]),
         None => e,
     };
-    let mut scroller = col().grow(1.0).min_h(0.0).w_full().scroll(ScrollSpec { stick_bottom: false }).child(body);
-    if tab == Drawer::Lyrics {
-        scroller = scroller.on_scroll_offset(watch_lyrics_scroll);
-    } else {
+    let scroller = col().grow(1.0).min_h(0.0).w_full().scroll(ScrollSpec { stick_bottom: false }).child(body);
+    // (the Lyrics tab watches its scrolling for a scroll away; through the glide's handler,
+    // which a handler of its own on the same viewport would replace)
+    if tab != Drawer::Lyrics {
         LY_SCROLL.with(|c| c.set(None));
     }
+    let lyrics_tab = tab == Drawer::Lyrics;
     let d = if wide { d } else { wash(d.fill(theme::drawer_bg())) };
     let mut d = d.padding(16.0).gap(12.0)
         .child(head)
-        .child(ui::smooth_wheel::<App>(scroller, "drawer-scroll".into())
+        .child(ui::smooth_wheel_watching::<App>(scroller, "drawer-scroll".into(), move |p| if lyrics_tab { watch_lyrics_scroll(p) })
             .labelled_by(match tab { Drawer::Queue => "dr-queue", Drawer::Suggested => "dr-suggested", Drawer::Lyrics => "dr-lyrics", Drawer::Credits => "dr-credits" })
             .busy(took_loading()));
     if tab == Drawer::Lyrics && *s.nav.lyrics_scrolled && v.current.as_ref().and_then(|c| synced_lyrics(c.id)).is_some() {
