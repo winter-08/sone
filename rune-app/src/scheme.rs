@@ -5,8 +5,9 @@
 //! already there keeps its other fields and gains the mime type or the new Exec only if they
 //! changed, as the plugin's ini edit did.
 //!
-//! Not run under the verifier's sandbox (`SPIKE_INNER`) or with `SONE_NO_SCHEME_REGISTER`
-//! set; tests call [`write_entry`] on a temporary directory.
+//! Release builds only: a debug build registering at every launch pointed the system's handler
+//! at whichever build ran last. Not run under the verifier's sandbox (`SPIKE_INNER`) or with
+//! `SONE_NO_SCHEME_REGISTER` set either; tests call [`write_entry`] on a temporary directory.
 
 use std::path::{Path, PathBuf};
 
@@ -14,7 +15,7 @@ const SCHEME: &str = "tidal";
 
 /// At start, off the UI thread: register as Tauri did, logging (not failing) on errors.
 pub fn register_at_start() {
-    if !cfg!(target_os = "linux") || std::env::var_os("SPIKE_INNER").is_some() || std::env::var_os("SONE_NO_SCHEME_REGISTER").is_some() {
+    if !registers(cfg!(target_os = "linux"), cfg!(debug_assertions), |k| std::env::var_os(k).is_some()) {
         return;
     }
     let _ = std::thread::Builder::new().name("sone-scheme".into()).spawn(|| {
@@ -22,6 +23,12 @@ pub fn register_at_start() {
             log::warn!("[rune] tidal:// handler registration failed: {e}");
         }
     });
+}
+
+/// Whether this launch registers the handler: a Linux release build, outside the verifier's
+/// sandbox, without `SONE_NO_SCHEME_REGISTER`.
+fn registers(linux: bool, debug: bool, set: impl Fn(&str) -> bool) -> bool {
+    linux && !debug && !set("SPIKE_INNER") && !set("SONE_NO_SCHEME_REGISTER")
 }
 
 fn register() -> std::io::Result<()> {
@@ -109,6 +116,16 @@ fn updated_entry(old: &str, mime: &str, exec: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_a_linux_release_build_registers() {
+        let none = |_: &str| false;
+        assert!(registers(true, false, none));
+        assert!(!registers(true, true, none));
+        assert!(!registers(false, false, none));
+        assert!(!registers(true, false, |k| k == "SPIKE_INNER"));
+        assert!(!registers(true, false, |k| k == "SONE_NO_SCHEME_REGISTER"));
+    }
 
     fn temp(tag: &str) -> PathBuf {
         let d = std::env::temp_dir().join(format!("sone-scheme-test-{tag}-{}", std::process::id()));
