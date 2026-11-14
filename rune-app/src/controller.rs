@@ -460,6 +460,8 @@ enum Msg {
     SourceReady { loader: Box<crate::sources::Loader>, request: u64, epoch: u64, restore: Option<bool> },
     /// A later page of the source playing, for the queue of `epoch` (appendToQueue).
     SourcePage { tracks: Vec<Value>, epoch: u64, owner: (Value, Value), shuffle: bool },
+    /// A playing video's own metadata (`fill_video_meta`), for the queue item `qid` of video `id`.
+    VideoMeta { id: u64, qid: String, meta: Value },
 }
 
 /// The queue epoch (§9.8): bumped whenever the context queue is replaced wholesale, which stops a
@@ -787,7 +789,7 @@ fn prefs_path() -> Option<std::path::PathBuf> {
 
 #[derive(Default, PartialEq, Clone)]
 struct Published {
-    meta: Option<(u64, String, String, bool)>, // track id, qid, quality text, favourite
+    meta: Option<(u64, String, String, bool, String)>, // track id, qid, quality text, favourite, what the item says (title, art, length)
     playing: Option<bool>,
     shuffle: Option<bool>,
     repeat: Option<u8>,
@@ -1020,6 +1022,11 @@ impl Player {
                 Msg::Fetched { tracks, action, asked, seq, from_ui } => self.on_fetched(tracks, &action, asked, seq, from_ui).await,
                 Msg::SourceBuilt { loader, shuffle } => self.source_built(*loader, shuffle),
                 Msg::SourceReady { loader, request, epoch, restore } => self.source_ready(*loader, request, epoch, restore).await,
+                Msg::VideoMeta { id, qid, meta } => {
+                    if let Some(cur) = self.current.as_mut().filter(|c| tid(c) == id && qid_of(c) == qid) {
+                        merge_video_meta(cur, &meta);
+                    }
+                }
                 Msg::SourcePage { tracks, epoch, owner, shuffle } => {
                     if EPOCH.load(Ordering::Relaxed) == epoch {
                         self.append_to_queue(tracks, shuffle, Some(owner));
@@ -1637,7 +1644,7 @@ impl Player {
             // started it: a play, Previous, a resume or a repeat.
             self.video_quality = "HIGH".into();
             self.start_video(tid(t), 0.0).await?;
-            self.fill_video_meta(t).await;
+            self.fill_video_meta(t);
             return Ok(Value::Null);
         }
         if crate::video::is_open() {
@@ -1648,14 +1655,16 @@ impl Player {
 
     /// The video's own metadata (startVideoSession's get_video_metadata), for what the queue
     /// item lacks: a video queued from a deep link, MCP or an old snapshot can come without
-    /// its length, picture or artist. A failure costs nothing; the item stays as it was.
-    async fn fill_video_meta(&mut self, t: &Value) {
-        let id = tid(t);
-        let Ok(meta) = playback::get_video_metadata(self.state(), id).await else { return };
-        let Ok(meta) = serde_json::to_value(meta) else { return };
-        let q = qid_of(t);
-        let Some(cur) = self.current.as_mut().filter(|c| tid(c) == id && qid_of(c) == q) else { return };
-        merge_video_meta(cur, &meta);
+    /// its length, picture or artist. A failure costs nothing; the item stays as it was. Fetched
+    /// off the actor, so the play is marked started without waiting for it; it lands as
+    /// `Msg::VideoMeta`, and the publish after it carries it to the bar and MPRIS.
+    fn fill_video_meta(&self, t: &Value) {
+        let (id, qid, h, tx) = (tid(t), qid_of(t), self.h.clone(), self.tx.clone());
+        sone_host_shim::async_runtime::spawn(async move {
+            let Ok(meta) = playback::get_video_metadata(h.state::<AppState>(), id).await else { return };
+            let Ok(meta) = serde_json::to_value(meta) else { return };
+            let _ = tx.send(Msg::VideoMeta { id, qid, meta });
+        });
     }
 
     /// Resolve the video's HLS stream at the chosen quality and open it at `at` seconds.
@@ -2952,7 +2961,11 @@ impl Player {
 
         // MPRIS metadata (+ status without position) on current/streamInfo change (§8.1).
         if let Some(cur) = self.current.clone() {
-            let key = (tid(&cur), qid_of(&cur), quality_text(&self.stream_info), loved(&cur));
+            // (a video's own metadata lands after it starts: its title, picture and length
+            // republish it; the length is the one the bar shows, to the second)
+            let secs = self.cur_duration().round();
+            let said = format!("{}\u{1f}{}\u{1f}{}\u{1f}{secs}", display_title(&cur), artist_mpris(&cur), art_url(&cur));
+            let key = (tid(&cur), qid_of(&cur), quality_text(&self.stream_info), loved(&cur), said);
             if self.pubd.meta.as_ref() != Some(&key) {
                 let md = playback::MprisMetadata {
                     track_id: tid(&cur),
@@ -2960,7 +2973,7 @@ impl Player {
                     artist: artist_mpris(&cur),
                     album: album_title(&cur).unwrap_or_default(),
                     art_url: art_url(&cur),
-                    duration_secs: duration(&cur) as f64,
+                    duration_secs: secs,
                     url: format!("tidal://{}/{}", if is_video(&cur) { "video" } else { "track" }, tid(&cur)),
                     quality_text: key.2.clone(),
                     album_artist: cur["artist"]["name"].as_str().map(str::to_string),
