@@ -246,6 +246,24 @@ fn want_in(key: Key, lane: Lane) -> Load {
     Load::Loading
 }
 
+/// `key`'s value once a fetch of it already on its way has landed (up to 10 s), without asking
+/// for it; None if it isn't coming or failed.
+async fn landed(key: &Key) -> Option<Value> {
+    for _ in 0..100 {
+        let woken = LANDED.notified();
+        tokio::pin!(woken);
+        woken.as_mut().enable();
+        match peek_load(key) {
+            Some(Load::Ready(v)) => return Some(v),
+            Some(Load::Loading) => {
+                let _ = tokio::time::timeout(Duration::from_millis(100), woken).await;
+            }
+            _ => return None,
+        }
+    }
+    None
+}
+
 /// Woken whenever a fetch lands (for [`get`] waiting on one already running).
 static LANDED: LazyLock<tokio::sync::Notify> = LazyLock::new(tokio::sync::Notify::new);
 
@@ -495,7 +513,7 @@ async fn fetch(key: &Key) -> Result<Value, String> {
         Key::FavAlbums => v!(library::get_favorite_albums(st(), h.clone(), uid().await?, 0, 50, "DATE".into(), "DESC".into())),
         Key::FavArtists => v!(library::get_favorite_artists(st(), h.clone(), uid().await?, 0, 50, "DATE".into(), "DESC".into())),
         Key::FavMixes => v!(library::get_favorite_mixes(st(), h.clone(), 0, 50, "DATE".into(), "DESC".into())),
-        Key::Profile => match peek(&Key::UserProfile) {
+        Key::Profile => match landed(&Key::UserProfile).await {
             // The full profile of an account without an artist profile was built from the very
             // request get_user_profile makes (GET /users/{id}), with the same name and handle:
             // no need to make it a third time.
