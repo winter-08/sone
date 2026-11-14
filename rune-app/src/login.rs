@@ -342,18 +342,37 @@ pub fn simple_mode(chosen: crate::views::LoginMode) -> crate::views::LoginMode {
 }
 
 /// A flow being started (React's status line with its spinner, "Starting device
-/// authorization..."): the message, and the sign-in state it was pressed in, so it shows until
-/// the controller's state moves on.
-static STARTING: std::sync::Mutex<Option<(&'static str, controller::Login)>> = std::sync::Mutex::new(None);
+/// authorization..."): the message, and how many sign-in commands the controller had answered
+/// at the press. It shows until that count moves on, which every answer does (a state change,
+/// the same error again, a cancel, a log-out), and is then dropped for good.
+static STARTING: std::sync::Mutex<Option<Starting>> = std::sync::Mutex::new(None);
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct Starting {
+    msg: &'static str,
+    answers: u64,
+}
+
+/// The status to show with `answers` answered so far; forgets one that has been answered.
+fn starting_at(slot: &mut Option<Starting>, answers: u64) -> Option<&'static str> {
+    match *slot {
+        Some(st) if st.answers == answers => Some(st.msg),
+        Some(_) => {
+            *slot = None;
+            None
+        }
+        None => None,
+    }
+}
 
 /// Starts `cmd` from the simple view, with `status` under a spinner until it answers.
-fn start(state: &controller::Login, status: &'static str, cmd: Cmd) {
-    *STARTING.lock().unwrap() = Some((status, state.clone()));
+fn start(status: &'static str, cmd: Cmd) {
+    *STARTING.lock().unwrap() = Some(Starting { msg: status, answers: controller::view().login_answers });
     controller::send(cmd);
 }
 
-fn starting(state: &controller::Login) -> Option<&'static str> {
-    STARTING.lock().unwrap().as_ref().filter(|(_, at)| at == state).map(|(m, _)| *m)
+fn starting() -> Option<&'static str> {
+    starting_at(&mut STARTING.lock().unwrap(), controller::view().login_answers)
 }
 
 fn status_line(msg: &str) -> El {
@@ -401,33 +420,31 @@ pub fn simple(s: &App, state: &controller::Login) -> El {
         }
         c = c.child(b);
     }
-    if let Some(msg) = starting(state) {
+    if let Some(msg) = starting() {
         c = c.child(status_line(msg));
     } else {
-        let st = state.clone();
         c = match mode {
             // TIDAL's login page opens in the user's browser: there is no web view here for
             // React's embedded login window, so the browser is the one PKCE flow. Both of
             // React's buttons stay (the sign-in golden pins them) and say what they do.
             LoginMode::Pkce => {
-                let st2 = st.clone();
                 c.child(small("Recommended. Unlocks Hi-Res / MAX quality up to 24-bit/192 kHz. Opens TIDAL's sign-in page in your browser.", 0.45).align(rune::Align::Center))
                     .child(primary("login-pkce", "Sign in with TIDAL", true).on_press(move |s: &mut App| {
                         s.nav.pkce_paste = TextEdit::new("");
-                        start(&st, "Waiting for browser...", Cmd::StartPkceLogin)
+                        start("Waiting for browser...", Cmd::StartPkceLogin)
                     }))
                     .child(theme::focusable(row().key("login-browser").role("button").label("Open in browser instead")).gap(6.0).h(22.0).items_center().cursor(rune::Cursor::Pointer)
                         .help("Signs in through your browser, as Sign in with TIDAL does here")
                         .on_press(move |s: &mut App| {
                             s.nav.pkce_paste = TextEdit::new("");
-                            start(&st2, "Waiting for browser...", Cmd::StartPkceLogin)
+                            start("Waiting for browser...", Cmd::StartPkceLogin)
                         })
                         .child(crate::glyph::glyph(G::External, 11.0, white(0.45)))
                         .child(text("Open in browser instead").font(t(12.0, 400.0)).color(white(0.45)).a11y_hidden()))
             }
             LoginMode::Code => c
                 .child(small("Get a 6-character code and enter it on link.tidal.com.", 0.45).align(rune::Align::Center))
-                .child(primary("login-code", "Get Login Code", true).on_press(move |_: &mut App| start(&st, "Starting device authorization...", Cmd::StartDeviceLogin)))
+                .child(primary("login-code", "Get Login Code", true).on_press(move |_: &mut App| start("Starting device authorization...", Cmd::StartDeviceLogin)))
                 .child(el().h(22.0)),
         };
     }
@@ -500,6 +517,20 @@ pub fn qr_rgba(uri: &str, scale: u32) -> Option<(u32, Vec<u8>)> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_starting_status_lasts_until_any_answer() {
+        use super::{starting_at, Starting};
+        let mut slot = Some(Starting { msg: "Starting device authorization...", answers: 3 });
+        // still waiting: the controller has answered nothing since the press
+        assert_eq!(starting_at(&mut slot, 3), Some("Starting device authorization..."));
+        // answered (Idle -> Waiting, or the same error again): gone
+        assert_eq!(starting_at(&mut slot, 4), None);
+        assert_eq!(slot, None);
+        // and it stays gone when the state comes back to where it was pressed (Cancel, Log out)
+        assert_eq!(starting_at(&mut slot, 3), None);
+        assert_eq!(starting_at(&mut None, 0), None);
+    }
+
     #[test]
     fn the_qr_code_is_square_and_scaled() {
         let (side, rgba) = super::qr_rgba("https://link.tidal.com/ABCDE", 4).unwrap();

@@ -233,6 +233,9 @@ pub struct View {
     /// The saved sign-in has been checked at launch, so `signed_in` is known.
     pub auth_known: bool,
     pub login: Login,
+    /// Counts the sign-in commands the controller has taken, so the sign-in screen can tell
+    /// "still starting" from "answered", even when the answer leaves `login` as it was.
+    pub login_answers: u64,
     /// The current track's radio (mixes.TRACK_MIX) and main artist, for the drawer tabs.
     pub track_mix: Option<String>,
     pub artist_id: Option<u64>,
@@ -838,6 +841,7 @@ struct Player {
     signed_in: bool,
     login: Login,
     login_seq: u64,
+    login_answers: u64,
     login_creds: Option<(String, String, String)>, // device code, client id, secret
     pkce: Option<(String, String)>, // code verifier, client unique key
     /// The user's own client id and secret, when the PKCE sign-in in progress uses them.
@@ -890,6 +894,7 @@ impl Player {
             signed_in: false,
             login: Login::Idle,
             login_seq: 0,
+            login_answers: 0,
             login_creds: None,
             pkce: None,
             pkce_custom: None,
@@ -981,7 +986,15 @@ impl Player {
         log::info!("[rune] controller running");
         while let Some(msg) = rx.recv().await {
             match msg {
-                Msg::Ui(c) => self.on_ui(c).await,
+                Msg::Ui(c) => {
+                    let login = matches!(c, Cmd::StartDeviceLogin | Cmd::CancelLogin | Cmd::StartPkceLogin | Cmd::CompletePkceLogin(_)
+                        | Cmd::StartDeviceLoginWith { .. } | Cmd::StartPkceLoginWith { .. } | Cmd::ImportSession { .. } | Cmd::Logout);
+                    self.on_ui(c).await;
+                    // Counted once handled: the answer is published with the state it leaves.
+                    if login {
+                        self.login_answers += 1;
+                    }
+                }
                 Msg::Event(n, p) => self.on_event(&n, &p).await,
                 Msg::GaplessDue(seq) if seq == self.gapless_seq => self.gapless_refresh().await,
                 Msg::GaplessDue(_) => {}
@@ -3071,6 +3084,7 @@ impl Player {
             signed_in: self.signed_in,
             auth_known: self.restored,
             login: self.login.clone(),
+            login_answers: self.login_answers,
             track_mix: self.current.as_ref().and_then(|t| t["mixes"]["TRACK_MIX"].as_str()).map(str::to_string),
             artist_id: self.current.as_ref().and_then(|t| t["artist"]["id"].as_u64().or(t["artists"][0]["id"].as_u64())),
             // With the stream gone (track ended), the React badge shows the track's tier.
