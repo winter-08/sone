@@ -163,7 +163,7 @@ fn poll(s: &mut App, t: f64, tx: &mut Tx) -> bool {
     // (Home's carousel arrows change as a row reaches an end: home::version.)
     // (Toasts come and go under interact::toast_version, which no pane reads: only the toast layer,
     // outside the panes, draws them.)
-    let v = (state, ticks, data::version().wrapping_add(interact::version() << 40).wrapping_add(home::version() << 20).wrapping_add(interact::toast_version() << 52));
+    let v = (state, ticks, data::version().wrapping_add(interact::version() << 40).wrapping_add(home::version() << 20).wrapping_add(interact::toast_version() << 52).wrapping_add(profile::version() << 30));
     let mut changed = v != s.seen;
     if (state, ticks) != (s.seen.0, s.seen.1) {
         s.sync_controller();
@@ -361,7 +361,7 @@ fn view(s: &App, cx: &mut Cx<App>) -> El {
     let page = if *Tracked::untracked(&s.nav.page) == views::Page::Settings {
         views::page(s, &s.ctl)
     } else {
-        pane(&views::page_key(s), (stores, &s.nav.filter), || views::page(s, &s.ctl))
+        pane(&views::page_key(s), (stores, &s.nav.filter, profile::version()), || views::page(s, &s.ctl))
     };
     let shell_in = (shell.sidebar_w.to_bits(), shell.drawer_docked, shell.drawer_w.to_bits(), shell.bar_source, shell.bar_badge, shell.drawer_cover.to_bits());
     // The header spans the page and the drawer, so the window controls stay in the top-right

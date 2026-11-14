@@ -199,8 +199,8 @@ pub fn page(s: &App) -> El {
             cards = cards.child(playlist_card(&format!("pf-pl-{i}"), pl, &name, cw));
         }
         let (back, fwd) = carousel_ways();
-        let arrow = |key: &'static str, g: G, dir: f32, can: bool| {
-            let b = el().key(key).role("button").size(32.0, 32.0).radius(16.0).items_center().justify_center();
+        let arrow = |key: &'static str, label: &'static str, g: G, dir: f32, can: bool| {
+            let b = theme::focusable(el().key(key).role("button").label(label)).size(32.0, 32.0).radius(16.0).items_center().justify_center();
             let b = if can {
                 b.fill(white(0.08)).hover(white(0.14)).press_scale(0.92).cursor(rune::Cursor::Pointer).on_press_tx(move |_: &mut App, tx: &mut Tx| {
                     if let Some(p) = *CAROUSEL_AT.lock().unwrap() {
@@ -214,8 +214,8 @@ pub fn page(s: &App) -> El {
         };
         page = page.child(col().w_full().gap(14.0)
             .child(row().w_full().gap(8.0).items_center().child(heading("Public playlists", theme::SECTION)).child(spacer())
-                .child(arrow("pf-pl-prev", G::Back, -1.0, back))
-                .child(arrow("pf-pl-next", G::Forward, 1.0, fwd))
+                .child(arrow("pf-pl-prev", "Previous playlists", G::Back, -1.0, back))
+                .child(arrow("pf-pl-next", "Next playlists", G::Forward, 1.0, fwd))
                 .child(theme::focusable(row().key("pf-view-all").role("button").label("View all")).h(30.0).px(12.0).radius(15.0).items_center().hover(white(0.06)).cursor(rune::Cursor::Pointer)
                     .on_press(|s: &mut App| views::go(s, Page::ProfilePlaylists))
                     .child(text("View all").font(t(13.0, 700.0)).color(white(0.6)).a11y_hidden())))
@@ -254,12 +254,19 @@ fn carousel_ways() -> (bool, bool) {
     CAROUSEL_AT.lock().unwrap().as_ref().map(ways).unwrap_or((false, true))
 }
 
-/// The row scrolled or laid out: the page builds again only when an arrow's state changes
-/// (by the catalogue version, which the page region's inputs carry).
+/// Changes whenever the row's arrows should change: an input of the page region only, so
+/// the sidebar and the drawer don't rebuild for it.
+static ARROWS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+pub fn version() -> u64 {
+    ARROWS.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// The row scrolled or laid out: the page builds again only when an arrow's state changes.
 fn note_carousel(p: rune::ScrollPos) {
     let was = CAROUSEL_AT.lock().unwrap().replace(p);
     if was.as_ref().map(ways) != Some(ways(&p)) {
-        data::bump_version();
+        ARROWS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     }
 }
 
