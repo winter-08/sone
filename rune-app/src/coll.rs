@@ -200,42 +200,46 @@ pub fn play_pair(v: &crate::controller::View, source: &serde_json::Value, play: 
         .child(views::button::<App>("hero-shuffle", "Shuffle", Some(G::Shuffle), false).on_press(move |_: &mut App| p2(true)))
 }
 
-/// A sortable track list's column header (TrackList's header row): Title, Artist, Album,
-/// optionally Date Added, and Time, each a button that sorts by it (again to flip the
-/// direction), the current one with its arrow.
+/// A sortable track list's column header (TrackList's header row): column titles over the
+/// rows' columns (views::track_row_look: the number, the cover and title with the artists
+/// under it, the album, optionally Date Added, and the time), each a button that sorts by it
+/// (again to flip the direction), the current one with its arrow. The rows have no artist
+/// column, so Artist sits beside Title over the title column.
 pub fn sort_header(key: &str, cur: Option<&Sort>, date_added: bool, pick: impl Fn(&mut App, Option<Sort>) + Clone + 'static) -> El {
-    let mut r = row().key(format!("{key}-head")).w_full().h(32.0).px(12.0).gap(12.0).items_center();
-    let cols: &[(&str, &str)] = if date_added {
-        &[("NAME", "Title"), ("ARTIST", "Artist"), ("ALBUM", "Album"), ("DATE", "Date Added"), ("LENGTH", "Time")]
-    } else {
-        &[("NAME", "Title"), ("ARTIST", "Artist"), ("ALBUM", "Album"), ("LENGTH", "Time")]
-    };
-    // The rows have no column per field here, so the header is a row of sort keys under a
-    // caption rather than column titles over nothing.
-    r = r.child(text("SORT BY").font(t(11.0, 650.0).tracking(0.8)).color(white(0.35)).a11y_hidden());
-    for (order, label) in cols {
-        let on = cur.is_some_and(|c| c.0 == *order);
+    let cell = |order: &str, label: &str| {
+        let on = cur.is_some_and(|c| c.0 == order);
         let arrow = match cur { Some(c) if on => if c.1 == "ASC" { " ↑" } else { " ↓" }, _ => "" };
         let name = format!("Sort by {label}{arrow}");
         let next = match cur {
-            Some(c) if c.0 == *order => (order.to_string(), if c.1 == "ASC" { "DESC".into() } else { "ASC".into() }),
+            Some(c) if c.0 == order => (order.to_string(), if c.1 == "ASC" { "DESC".into() } else { "ASC".into() }),
             _ => (order.to_string(), "ASC".to_string()),
         };
         let p = pick.clone();
-        let cell = theme::focusable(row().key(format!("{key}-sort-{order}")).role("button").label(name.as_str())).h(26.0).px(6.0).radius(6.0).items_center()
-            .hover(white(0.06)).cursor(rune::Cursor::Pointer)
+        theme::focusable(row().key(format!("{key}-sort-{order}")).role("button").label(name.as_str())).h(26.0).radius(6.0).items_center().min_w(0.0)
+            .cursor(rune::Cursor::Pointer)
             .on_press(move |s: &mut App| p(s, Some(next.clone())))
-            .child(text(format!("{}{arrow}", label.to_uppercase())).font(t(11.0, 650.0).tracking(0.8)).color(if on { accent() } else { white(0.5) }).a11y_hidden());
-        r = r.child(cell);
+            .child(text(format!("{}{arrow}", label.to_uppercase())).font(t(12.0, 500.0).tracking(1.2)).color(if on { accent() } else { white(0.5) }).truncate().a11y_hidden())
+    };
+    let caption = |label: &str| text(label.to_string()).font(t(12.0, 500.0).tracking(1.2)).color(white(0.5)).a11y_hidden();
+    // (widths as the row's: the number 22, the album 220, Date Added 104, the time 48, then
+    // the three 36 pt actions)
+    let mut r = row().key(format!("{key}-head")).w_full().h(36.0).px(12.0).gap(12.0).items_center()
+        .child(row().w(22.0).justify_center().child(caption("#")))
+        .child(row().grow(1.0).min_w(0.0).gap(16.0).items_center().child(cell("NAME", "Title")).child(cell("ARTIST", "Artist")))
+        .child(row().w(220.0).shrink().min_w(0.0).child(cell("ALBUM", "Album")));
+    if date_added {
+        r = r.child(row().w(104.0).min_w(0.0).child(cell("DATE", "Date Added")));
     }
-    if let Some(_) = cur {
+    r = r.child(row().w(48.0).child(cell("LENGTH", "Time")));
+    let mut actions = row().w(132.0).justify_end().items_center();
+    if cur.is_some() {
         let p = pick.clone();
-        r = r.child(theme::focusable(row().key(format!("{key}-sort-clear")).role("button").label("Clear sort")).h(26.0).px(6.0).radius(6.0).items_center()
+        actions = actions.child(theme::focusable(row().key(format!("{key}-sort-clear")).role("button").label("Clear sort")).h(26.0).px(6.0).radius(6.0).items_center()
             .hover(white(0.06)).cursor(rune::Cursor::Pointer)
             .on_press(move |s: &mut App| p(s, None))
             .child(glyph(G::Close, 12.0, white(0.5))));
     }
-    r
+    r.child(actions)
 }
 
 /// The collection dialogs and menus over the window (main::view): the playlist editor, a
