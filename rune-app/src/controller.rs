@@ -627,6 +627,11 @@ fn merge_video_meta(cur: &mut Value, meta: &Value) {
         }
     }
 }
+/// Whether a video's length read now (`now`) differs enough from the one published to replace it.
+fn len_moved(published: f64, now: f64) -> bool {
+    (now - published).abs() >= 0.5
+}
+
 fn art_url(t: &Value) -> String {
     if is_video(t) {
         return t["imageId"].as_str().filter(|c| !c.is_empty()).map(|c| format!("https://resources.tidal.com/images/{}/320x180.jpg", c.replace('-', "/"))).unwrap_or_default();
@@ -850,6 +855,8 @@ struct Player {
     pkce_custom: Option<(String, String)>,
     pubd: Published,
     video_session: u64,
+    /// The playing video's length as last published (`cur_duration`).
+    video_len: f64,
     video_quality: String,
     /// The upcoming list's qids and their rows, as last published.
     qitems: (Vec<String>, Vec<QItem>),
@@ -902,6 +909,7 @@ impl Player {
             pkce_custom: None,
             pubd: Published::default(),
             video_session: 0,
+            video_len: 0.0,
             video_quality: "HIGH".into(),
             qitems: Default::default(),
             source_req: 0,
@@ -2622,10 +2630,17 @@ impl Player {
 
     /// The current item's length in seconds: a video's from its stream once the pipeline knows
     /// it (the <video> element's duration), else the item's own.
-    fn cur_duration(&self) -> f64 {
+    fn cur_duration(&mut self) -> f64 {
         let item = self.current.as_ref().map(|t| duration(t) as f64).unwrap_or(0.0);
         if self.current_is_video() {
             if let Some(d) = crate::video::duration().filter(|d| d.is_finite() && *d > 0.0) {
+                // An HLS stream's length can move by fractions as segments arrive: only a change
+                // of half a second or more counts, so a video poll doesn't republish the view
+                // (and rebuild every pane reading it) for it.
+                if !len_moved(self.video_len, d) {
+                    return self.video_len;
+                }
+                self.video_len = d;
                 return d;
             }
         }
@@ -3068,6 +3083,7 @@ impl Player {
     }
 
     fn publish_view(&mut self) {
+        let duration = self.cur_duration();
         let v = View {
             track_id: self.current.as_ref().map(tid),
             title: self.current.as_ref().map(display_title).unwrap_or_default(),
@@ -3075,7 +3091,7 @@ impl Player {
             album: self.current.as_ref().and_then(album_title).unwrap_or_default(),
             playing: self.playing,
             position: pos().interpolated(),
-            duration: self.cur_duration(),
+            duration,
             shuffle: self.prefs.shuffle,
             repeat: Repeat::from_u8(self.prefs.repeat),
             volume: if self.bit_perfect && !self.current_is_video() { 1.0 } else { self.prefs.volume },
@@ -3351,6 +3367,14 @@ mod mpris_tests {
     fn the_rating_is_the_favourite_flag() {
         assert_eq!(super::mpris_rating(true), 1.0);
         assert_eq!(super::mpris_rating(false), 0.0);
+    }
+
+    #[test]
+    fn a_video_length_follows_only_real_changes() {
+        assert!(super::len_moved(0.0, 241.3));
+        assert!(!super::len_moved(241.3, 241.5));
+        assert!(!super::len_moved(241.3, 240.9));
+        assert!(super::len_moved(241.3, 243.0));
     }
 }
 
