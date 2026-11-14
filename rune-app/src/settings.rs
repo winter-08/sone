@@ -687,6 +687,7 @@ fn playback_tab(s: &App) -> El {
         }
     };
     let autoplay = v.autoplay;
+    let video_covers = crate::cover_video::enabled();
     col().w_full().gap(10.0)
         .child(col().key("q-group").role("group").labelled_by("q-caption").w_full().gap(8.0).focus_group()
             .child(caps("Streaming quality", 0.5).key("q-caption"))
@@ -703,6 +704,9 @@ fn playback_tab(s: &App) -> El {
                 bp.then_some("Disabled in bit-perfect mode"), move |_: &mut App| {
                     let _ = utility::set_volume_normalization(st(), !norm);
                 }),
+            // (cover_video.rs; kept in the shell store, as React kept it in localStorage)
+            switch_row("pb-video-covers", "Animated album covers", "Play motion covers in the player when available", video_covers, None,
+                move |_: &mut App| crate::cover_video::set_enabled(!video_covers)),
             switch_row("pb-explicit", "Allow explicit content", "Allow playing tracks marked as explicit", v.allow_explicit, None, content(Content::Explicit, v.allow_explicit)),
             switch_row("pb-ai", "Allow AI content", "Allow playing tracks labeled as AI-generated", v.allow_ai, None, content(Content::Ai, v.allow_ai)),
         ]))

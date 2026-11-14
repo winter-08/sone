@@ -1459,8 +1459,23 @@ pub(crate) fn hero(title: &str, title_heading: bool, sub: &str, seed: u64, round
 }
 
 pub(crate) fn hero_with(title: &str, title_heading: bool, sub: El, seed: u64, round: bool, img: Option<String>, actions: El) -> El {
+    hero_over(title, title_heading, sub, seed, round, img, None, actions)
+}
+
+/// The album page's header cover: its size, and the key main::animated_covers reads to tell
+/// whether it is scrolled into view.
+pub const ALBUM_COVER_PT: f32 = 180.0;
+pub const ALBUM_COVER_KEY: &str = "al-cover";
+
+/// [`hero_with`], with `over` laid over the square art (an animated cover's frames).
+#[allow(clippy::too_many_arguments)]
+fn hero_over(title: &str, title_heading: bool, sub: El, seed: u64, round: bool, img: Option<String>, over: Option<El>, actions: El) -> El {
     let h = ui::hue(Some(seed));
     let art = if round { ui::with_image(ui::art(h, 180.0, seed, 0.0), img, 180.0, 90.0) } else { ui::with_image(ui::tile(h, 180.0, seed, 14.0), img, 180.0, 14.0) };
+    let art = match over {
+        Some(o) => art.key(ALBUM_COVER_KEY).child(o),
+        None => art,
+    };
     let title_el = if title_heading { heading(title, theme::PAGE_TITLE) } else { text(title.to_string()).font(t(theme::PAGE_TITLE, 650.0)).color(white(0.95)) };
     let title_el = title_el.truncate();
     row().w_full().gap(24.0).items_end()
@@ -1587,7 +1602,10 @@ fn album(id: u64, v: &View) -> El {
             header_btn("album-more", "More options", "More", G::More, false)
                 .on_press(move |s: &mut App| crate::interact::open_media(s, item.clone(), crate::interact::Anchor::Below("album-more".into())))
         });
-    let mut c = col().w_full().gap(18.0).child(hero_with(&title, true, album_sub(a, &tracks), id, false, crate::art::item_url(a, 180.0), actions));
+    // An animated cover plays over the still (cover_video.rs), which shows until its first frame.
+    let moving = (crate::cover_video::on() && crate::cover_video::album_cover(page).is_some())
+        .then(|| crate::cover_video::layer(crate::cover_video::Slot::Page, ALBUM_COVER_PT, 14.0));
+    let mut c = col().w_full().gap(18.0).child(hero_over(&title, true, album_sub(a, &tracks), id, false, crate::art::item_url(a, ALBUM_COVER_PT), moving, actions));
     let footer = (!tracks.is_empty()).then(|| album_footer(a, &tracks, page["copyright"].as_str()));
     let src = json!({"type": "album", "id": id, "name": title});
     // A multi-disc album lists each volume under "Volume N" (AlbumView volumeGroups); a click
@@ -2061,6 +2079,11 @@ fn toggle_drawer(s: &mut App, tab: Drawer) {
 }
 
 /// The right-hand drawer (React NowPlayingDrawer): queue, suggestions, lyrics, credits.
+/// The docked drawer's cover column's cover, in points.
+pub fn drawer_cover_side(shell: Shell) -> f32 {
+    shell.drawer_cover - 48.0
+}
+
 pub fn drawer(s: &App, v: &View, shell: Shell) -> Option<El> {
     let tab = (*s.nav.drawer)?;
     // (each with its icon, as React's TABS)
@@ -2107,10 +2130,14 @@ pub fn drawer(s: &App, v: &View, shell: Shell) -> Option<El> {
         if wide {
             // NowPlayingDrawer's left column: the cover as large as the column allows, the
             // title and artist centred under it.
-            let side = shell.drawer_cover - 48.0;
+            let side = drawer_cover_side(shell);
             // (the Afterglow tile until the picture is in, as every cover)
-            let art = ui::with_image(ui::tile(ui::hue(Some(cur.id)), side, cur.id, 8.0), crate::art::cover(cur.cover.as_deref(), side), side, 8.0)
+            let mut art = ui::with_image(ui::tile(ui::hue(Some(cur.id)), side, cur.id, 8.0), crate::art::cover(cur.cover.as_deref(), side), side, 8.0)
                 .key("dr-cover").shadow(0.0, 24.0, theme::black(0.35));
+            // the album's animated cover over it (cover_video.rs; shared with the full player)
+            if crate::cover_video::on() && crate::cover_video::now_cover(v).is_some() {
+                art = art.child(crate::cover_video::layer(crate::cover_video::Slot::Now, side, 8.0));
+            }
             cover_col = Some(col().w(shell.drawer_cover).h_full().min_h(0.0).padding(24.0).gap(20.0).items_center().justify_center().clip_rounded(0.0)
                 .child(art)
                 .child(col().w_full().gap(4.0).items_center().child(title.max_w(shell.drawer_cover - 48.0)).child(artist.max_w(shell.drawer_cover - 48.0))));

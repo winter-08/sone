@@ -96,7 +96,8 @@ fn trace(kind: &str, id: u64, pts_ms: f64) {
     }
 }
 
-fn init() -> Result<(), String> {
+/// GStreamer, with the decoder ranks above; animated covers (cover_video.rs) share it.
+pub(crate) fn init() -> Result<(), String> {
     static INIT: OnceLock<Result<(), String>> = OnceLock::new();
     INIT.get_or_init(|| {
         gst::init().map_err(|e| e.to_string())?;

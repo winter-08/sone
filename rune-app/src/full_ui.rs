@@ -197,6 +197,17 @@ fn swap(first: bool, secs: f32) -> Transition {
     Transition::opacity().springs(SpringPair::new(if first { Spring::NONE } else { fade }, fade))
 }
 
+/// The cover's side in points in a window `win` wide and high, with or without the lyrics
+/// column.
+pub fn art_side(win: (f32, f32), lyrics: bool) -> f32 {
+    let (w, h) = win;
+    let sy = (h * 0.06).clamp(24.0, 64.0);
+    let vmin = w.min(h);
+    let stage_h = h - sy - 128.0;
+    let art = if lyrics { (vmin * 0.55).min(600.0).min(w * 0.5 - 128.0) } else { (vmin * 0.66).min(760.0).min(w - 96.0) };
+    art.min(stage_h - 8.0).max(140.0).floor()
+}
+
 /// The player over the whole window (`win`: its width and height), or None when it's closed.
 pub fn overlay(s: &App, v: &View, win: (f32, f32)) -> Option<El> {
     let f = &s.nav.full;
@@ -213,10 +224,8 @@ pub fn overlay(s: &App, v: &View, win: (f32, f32)) -> Option<El> {
     // no text under it the cover may take a little more than the prototype's 62%, but always
     // fits the stage, clear of the bar.
     let (sx, sy) = ((w * 0.04).clamp(24.0, 64.0), (h * 0.06).clamp(24.0, 64.0));
-    let vmin = w.min(h);
     let stage_h = h - sy - 128.0;
-    let art = if f.lyrics { (vmin * 0.55).min(600.0).min(w * 0.5 - 128.0) } else { (vmin * 0.66).min(760.0).min(w - 96.0) };
-    let art = art.min(stage_h - 8.0).max(140.0).floor();
+    let art = art_side(win, f.lyrics);
 
     // ---- ground: black, the cover blurred (drawn 1.18x, as when the blur was live, so the crop
     // is the same), then the scrim. The cover comes blurred from art::ground, once per track:
@@ -244,6 +253,10 @@ pub fn overlay(s: &App, v: &View, win: (f32, f32)) -> Option<El> {
     let mut picture = ui::tile(hue, art, cur.id, 10.0);
     if let Some(px) = crate::art::cover(v.cover.as_deref(), COVER_PT).and_then(|u| crate::art::pixels(&u, COVER_PT)) {
         picture = picture.child(el().absolute(0.0, 0.0).size(art, art).radius(10.0).pixels_fit(&px, rune::SurfaceFit::Fill));
+    }
+    // The album's animated cover over the still (cover_video.rs; the drawer's decode, shared).
+    if crate::cover_video::on() && crate::cover_video::now_cover(v).is_some() {
+        picture = picture.child(crate::cover_video::layer(crate::cover_video::Slot::Now, art, 10.0));
     }
     let picture = picture.key(format!("full-art-{}", cur.id)).absolute(0.0, 0.0);
     let hairline = el().absolute(0.0, 0.0).size(art, art).radius(10.0).border(1.0, white(0.1));

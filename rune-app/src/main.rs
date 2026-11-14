@@ -12,6 +12,7 @@ mod brand;
 mod content;
 mod coll;
 mod controller;
+mod cover_video;
 mod data;
 mod drawer_tabs;
 mod formats;
@@ -293,6 +294,7 @@ fn on_key(s: &mut App, e: &KeyEvent, tx: &mut Tx) -> bool {
 fn on_visibility(s: &mut App, shown: bool, _: &mut Tx) {
     log::info!("[rune] main window {}", if shown { "on screen" } else { "off screen" });
     s.shown = shown;
+    cover_video::set_shown(shown);
     controller::set_clock_shown(controller::MAIN, shown);
     interact::hold_toasts(!shown);
     if shown {
@@ -341,7 +343,7 @@ fn view(s: &App, cx: &mut Cx<App>) -> El {
     let (data_version, _frozen) = data::freeze();
     let now_playing = controller::now_playing();
     views::set_now_playing(now_playing);
-    let stores = (data_version, interact::version(), home::version(), now_playing, art::failures(), theme::version());
+    let stores = (data_version, interact::version(), home::version(), now_playing, art::failures(), theme::version(), cover_video::on());
     theme::set_ambient(ui::hue(now_playing.0));
     theme::begin_themed();
     // The root fills the window, so its width is the window's.
@@ -409,6 +411,7 @@ fn view(s: &App, cx: &mut Cx<App>) -> El {
     }
     // (under the context menus: its More button opens the track menu over it)
     let win_h = cx.layout_with("root", |r| r[3].round()).unwrap_or(initial_size().1);
+    animated_covers(s, &v, cx, shell, (win_w, win_h));
     if let Some(p) = theme::dark(|| full_ui::overlay(s, &v, (win_w, win_h))) {
         root = root.child(p);
     }
@@ -448,6 +451,31 @@ fn view(s: &App, cx: &mut Cx<App>) -> El {
     shell::frame(proxy_banner::wrap(root, true), win_size)
 }
 
+/// Tells cover_video.rs which animated covers show (it starts and stops their pipelines): the
+/// album page's header cover while it is scrolled into view and no player covers the page, the
+/// docked drawer's cover column, and the full-screen player's cover.
+fn animated_covers(s: &App, v: &controller::View, cx: &Cx<App>, shell: views::Shell, win: (f32, f32)) {
+    if !cover_video::on() {
+        cover_video::sync([None, None]);
+        return;
+    }
+    let video_up = s.nav.video.expanded;
+    let album = match *Tracked::untracked(&s.nav.page) {
+        views::Page::Album(id) if !video_up => data::peek(&data::Key::Album(id)),
+        _ => None,
+    };
+    let page = album.as_ref().and_then(|p| cover_video::album_cover(&p["page"])).filter(|_| {
+        // (re-runs the view only when the cover crosses the top of the page's viewport)
+        let top = cx.window_layout_with(&views::page_key(s), |r| r[1]).unwrap_or(0.0);
+        cx.window_layout_with(views::ALBUM_COVER_KEY, move |r| r[1] + r[3] > top + 1.0).unwrap_or(false)
+    }).map(|u| (u, views::ALBUM_COVER_PT));
+    let now = cover_video::now_cover(v);
+    let drawer = now.filter(|_| Tracked::untracked(&s.nav.drawer).is_some() && shell.drawer_docked && shell.drawer_cover > 0.0 && !video_up)
+        .map(|u| (u, views::drawer_cover_side(shell)));
+    let full = now.filter(|_| s.nav.full.open).map(|u| (u, full_ui::art_side(win, s.nav.full.lyrics)));
+    cover_video::sync(cover_video::wants(&cover_video::Scene { page, drawer, full, scale: cx.env().scale }));
+}
+
 /// The window's first size: SONE_WINDOW_SIZE (the verifier uses a tall one), else the size it
 /// had when it last closed.
 fn initial_size() -> (f32, f32) {
@@ -476,6 +504,7 @@ fn main() {
     let _logger = backend::logging::init_logging(sone_dir.join("logs"), logging_enabled);
 
     art::prune_disk_cache();
+    cover_video::prune_disk_cache();
     let handle = AppHandle::new();
     let _ = HOST.set(handle.clone());
     // Route every backend event to the controller before anything can emit.
@@ -507,8 +536,11 @@ fn main() {
         families: ("Inter", "ui-monospace"),
         poll: Some(poll),
         on_key: Some(on_key),
-        // Video frames (video.rs) wake the window as they arrive.
-        setup: Some(|_: &mut App, w| video::set_waker(w)),
+        // Video and animated cover frames (video.rs, cover_video.rs) wake the window as they arrive.
+        setup: Some(|_: &mut App, w| {
+            cover_video::set_waker(w.clone());
+            video::set_waker(w)
+        }),
         ..AppSpec::new(TITLE, initial_size(), App::new, view)
     };
     // Matches the desktop entry package.nix installs, so the desktop shows its name and icon.
