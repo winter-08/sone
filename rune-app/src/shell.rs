@@ -286,6 +286,43 @@ pub fn set_full_screen(on: bool) {
     FULL_SCREEN.store(on, Ordering::Relaxed);
 }
 
+/// What a player last asked of the window (full screen or not), and when.
+static ASKED_FULL: Mutex<(bool, Option<Instant>)> = Mutex::new((false, None));
+
+/// Whether the main window is OS full screen: what the platform says (X11 and others), else
+/// what a player last asked (Wayland hides it). Just after an ask, the ask: Rune carries the
+/// toggle out after the handler.
+pub fn window_full_screen() -> bool {
+    let (asked, at) = *ASKED_FULL.lock().unwrap();
+    if at.is_some_and(|t| t.elapsed() < Duration::from_millis(750)) {
+        return asked;
+    }
+    MAIN.with_borrow(|m| m.as_ref().and_then(|w| w.placement())).map_or(asked, |p| p.full_screen)
+}
+
+/// For the video player's poll, which holds the window full screen: whether the window has left
+/// it from outside. Looked at once a second (the platform answers with a round trip).
+pub fn full_screen_left() -> bool {
+    thread_local! {
+        static LOOKED: Cell<Option<Instant>> = const { Cell::new(None) };
+    }
+    if LOOKED.get().is_some_and(|t| t.elapsed() < Duration::from_secs(1)) {
+        return false;
+    }
+    LOOKED.set(Some(Instant::now()));
+    !window_full_screen()
+}
+
+/// Takes the main window full screen or back (React's `setFullscreen(on)`). Rune only toggles,
+/// so this toggles only when the window isn't that way already: a full screen the user left
+/// by a window-manager shortcut isn't entered again by the player closing.
+pub fn put_full_screen(tx: &mut Tx, on: bool) {
+    if window_full_screen() != on {
+        tx.toggle_full_screen();
+    }
+    *ASKED_FULL.lock().unwrap() = (on, Some(Instant::now()));
+}
+
 /// The platform tells where the window is and whether it's maximized (Rune's
 /// `WindowHandle::placement`; on Wayland it says nothing, since it asks for the position first).
 static PLACEMENT_KNOWN: AtomicBool = AtomicBool::new(false);

@@ -151,7 +151,7 @@ pub fn tick(s: &mut App, tx: &mut Tx) -> (bool, Option<Duration>) {
     // puts the window back as it was, maximised or not.
     if f.os_full != f.open {
         f.os_full = f.open;
-        tx.toggle_full_screen();
+        crate::shell::put_full_screen(tx, f.open);
     }
     if f.told_mpris != Some(f.open) {
         f.told_mpris = Some(f.open);

@@ -118,12 +118,12 @@ pub struct Player {
     pub full_pending: bool,
 }
 
-/// Takes the window full screen for the video, or back. Only ever toggled from here, so the
-/// flag and the window agree.
+/// Takes the window full screen for the video, or back, from the state the window is really
+/// in (`shell::put_full_screen`); `tick` follows a full screen left from outside.
 pub fn set_fullscreen(p: &mut Player, tx: &mut Tx, on: bool) {
     if p.fullscreen != on {
         p.fullscreen = on;
-        tx.toggle_full_screen();
+        crate::shell::put_full_screen(tx, on);
     }
 }
 
@@ -149,6 +149,12 @@ pub fn tick(s: &mut App, tx: &mut Tx) -> (bool, Option<Duration>) {
     let menu = s.nav.ctx.is_some();
     let p = &mut s.nav.video;
     let mut changed = false;
+    // Full screen left by the window manager (a shortcut, the compositor): the button says
+    // Fullscreen again, and nothing puts the window back.
+    if p.fullscreen && crate::shell::full_screen_left() {
+        p.fullscreen = false;
+        changed = true;
+    }
     // No video, or it was closed (it ended with nothing after it, or Escape): no player, and
     // the window back as it was.
     if !is_video || !open {
