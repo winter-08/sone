@@ -15,10 +15,12 @@
 //!   the window off screen (`on_visibility`) or a failed cover all leave a slot empty, and an
 //!   empty slot has no pipeline and no download. A track change to another album, leaving the
 //!   page or closing the drawer/player stops it. While the window is unfocused a pipeline
-//!   pauses on its last frame.
+//!   pauses (kept, so focus resumes it at once) and the still shows: see [`showing`].
 //! - **Frames go to a surface, not through the view.** Each slot has a `NativeSurface` that
 //!   its element draws; a pushed frame wakes the window to draw, and no view or region runs for
-//!   it. Rune has no partial redraw, so a playing cover redraws the window at the cover's frame
+//!   it. The element is in the view only while its cover plays (one rebuild of the page or
+//!   drawer region when that starts or stops), since Rune redraws every frame a surface is on
+//!   screen. Rune has no partial redraw, so a playing cover redraws the window at the cover's frame
 //!   rate: `videorate` caps that at 30 frames/s (or the video's own rate, if lower).
 //! - **Decode at the drawn size.** The 640 file for covers drawn at up to 640 pixels, the 1280
 //!   one only above that (React's getTidalVideoUrl brackets), scaled in the pipeline to the
@@ -208,9 +210,23 @@ pub fn set_waker(w: Waker) {
     }
 }
 
+/// The slot's pipeline has a frame and is playing: only then does a view lay [`layer`] over the
+/// still cover. Rune never counts a frame with a native surface in it as unchanged, so a
+/// surface on screen makes every frame the window runs for anything (the 200 ms tick, a
+/// position tick) a full redraw; a paused, loading or failed cover leaves it out and shows the
+/// still. Each change wakes the poll (`controller::bump`), so the view catches up.
+pub fn showing(slot: Slot) -> bool {
+    FRAMED[slot as usize].load(Ordering::Relaxed) && {
+        let m = M.lock().unwrap();
+        m.live[slot as usize].as_ref().is_some_and(|l| !l.paused)
+    }
+}
+
+/// A frame has come from the slot's current pipeline.
+static FRAMED: [AtomicBool; 2] = [AtomicBool::new(false), AtomicBool::new(false)];
+
 /// The element that shows `slot`'s frames, `side` points square with `radius` corners, to lay
-/// over the still cover: it draws nothing until a frame arrives (or after a stop), so the still
-/// shows through.
+/// over the still cover while [`showing`].
 pub fn layer(slot: Slot, side: f32, radius: f32) -> El {
     el().absolute(0.0, 0.0).size(side, side).radius(radius).clip_rounded(radius).a11y_hidden()
         .native_surface(surface(slot), rune::SurfaceFit::Fill)
@@ -282,6 +298,8 @@ pub fn set_focused(focused: bool) {
 fn reconcile() {
     let mut retired = Vec::new();
     let mut starts = Vec::new();
+    // whether what `showing` says may have changed
+    let mut changed = false;
     {
         let mut m = M.lock().unwrap();
         let gate = on() && !m.hidden;
@@ -297,15 +315,19 @@ fn reconcile() {
                         log::info!("[cover] stop {} {}", slot.name(), l.want.uuid);
                         retired.push(l);
                     }
+                    FRAMED[i].store(false, Ordering::Relaxed);
                     surface(slot).clear();
+                    changed = true;
                 }
                 Step::Start { want, paused } => {
                     let old = m.live[i].take();
                     // Another cover: the still shows until its first frame. The same cover in
                     // another size keeps its last frame until the new one comes.
                     if old.as_ref().is_none_or(|o| o.want.uuid != want.uuid) {
+                        FRAMED[i].store(false, Ordering::Relaxed);
                         surface(slot).clear();
                     }
+                    changed = true;
                     retired.extend(old);
                     log::info!("[cover] start {} {} {}px of {}{}", slot.name(), want.uuid, want.px, want.variant, if paused { " (paused)" } else { "" });
                     let alive = Arc::new(AtomicBool::new(true));
@@ -314,6 +336,7 @@ fn reconcile() {
                 }
                 Step::Resize(px) => {
                     if let Some(l) = m.live[i].as_mut() {
+                        log::info!("[cover] resize {} {px}px", slot.name());
                         l.want.px = px;
                         if let Some(p) = &l.pipe {
                             p.filter.set_property("caps", &scale_caps(px));
@@ -325,6 +348,7 @@ fn reconcile() {
                     if let Some(l) = m.live[i].as_mut() {
                         log::info!("[cover] {} {}", if paused { "pause" } else { "resume" }, slot.name());
                         l.paused = paused;
+                        changed = true;
                         if let Some(p) = &l.pipe {
                             let _ = p.pipeline.set_state(if paused { gst::State::Paused } else { gst::State::Playing });
                         }
@@ -335,6 +359,9 @@ fn reconcile() {
     }
     for l in retired {
         retire(l);
+    }
+    if changed {
+        crate::controller::bump();
     }
     // (after the lock: a cached file launches its pipeline at once, which takes it)
     for (slot, want, alive) in starts {
@@ -368,8 +395,10 @@ fn fail(slot: Slot, alive: &Arc<AtomicBool>, uuid: &str, why: &str) {
         }
     };
     if let Some(l) = gone {
+        FRAMED[slot as usize].store(false, Ordering::Relaxed);
         surface(slot).clear();
         retire(l);
+        crate::controller::bump();
     }
 }
 
@@ -500,6 +529,9 @@ fn try_launch(slot: Slot, want: &Want, alive: &Arc<AtomicBool>, path: &std::path
                 && first.swap(false, Ordering::Relaxed)
             {
                 log::info!("[cover] first frame {} {uuid} {w}x{h}", slot.name());
+                // the view lays the surface over the still now (see `showing`)
+                FRAMED[slot as usize].store(true, Ordering::Relaxed);
+                crate::controller::bump();
             }
             Ok(gst::FlowSuccess::Ok)
         })

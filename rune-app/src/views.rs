@@ -1602,9 +1602,11 @@ fn album(id: u64, v: &View) -> El {
             header_btn("album-more", "More options", "More", G::More, false)
                 .on_press(move |s: &mut App| crate::interact::open_media(s, item.clone(), crate::interact::Anchor::Below("album-more".into())))
         });
-    // An animated cover plays over the still (cover_video.rs), which shows until its first frame.
-    let moving = (crate::cover_video::on() && crate::cover_video::album_cover(page).is_some())
-        .then(|| crate::cover_video::layer(crate::cover_video::Slot::Page, ALBUM_COVER_PT, 14.0));
+    // An animated cover plays over the still (cover_video.rs) once it has a frame. (The empty
+    // element keeps the cover keyed, so main::animated_covers can tell whether it is in view.)
+    use crate::cover_video::{self as cv, Slot};
+    let moving = (cv::on() && cv::album_cover(page).is_some())
+        .then(|| if cv::showing(Slot::Page) { cv::layer(Slot::Page, ALBUM_COVER_PT, 14.0) } else { el() });
     let mut c = col().w_full().gap(18.0).child(hero_over(&title, true, album_sub(a, &tracks), id, false, crate::art::item_url(a, ALBUM_COVER_PT), moving, actions));
     let footer = (!tracks.is_empty()).then(|| album_footer(a, &tracks, page["copyright"].as_str()));
     let src = json!({"type": "album", "id": id, "name": title});
@@ -2135,7 +2137,7 @@ pub fn drawer(s: &App, v: &View, shell: Shell) -> Option<El> {
             let mut art = ui::with_image(ui::tile(ui::hue(Some(cur.id)), side, cur.id, 8.0), crate::art::cover(cur.cover.as_deref(), side), side, 8.0)
                 .key("dr-cover").shadow(0.0, 24.0, theme::black(0.35));
             // the album's animated cover over it (cover_video.rs; shared with the full player)
-            if crate::cover_video::on() && crate::cover_video::now_cover(v).is_some() {
+            if crate::cover_video::now_cover(v).is_some() && crate::cover_video::showing(crate::cover_video::Slot::Now) {
                 art = art.child(crate::cover_video::layer(crate::cover_video::Slot::Now, side, 8.0));
             }
             cover_col = Some(col().w(shell.drawer_cover).h_full().min_h(0.0).padding(24.0).gap(20.0).items_center().justify_center().clip_rounded(0.0)

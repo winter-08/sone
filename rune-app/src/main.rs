@@ -343,7 +343,7 @@ fn view(s: &App, cx: &mut Cx<App>) -> El {
     let (data_version, _frozen) = data::freeze();
     let now_playing = controller::now_playing();
     views::set_now_playing(now_playing);
-    let stores = (data_version, interact::version(), home::version(), now_playing, art::failures(), theme::version(), cover_video::on());
+    let stores = (data_version, interact::version(), home::version(), now_playing, art::failures(), theme::version());
     theme::set_ambient(ui::hue(now_playing.0));
     theme::begin_themed();
     // The root fills the window, so its width is the window's.
@@ -355,6 +355,8 @@ fn view(s: &App, cx: &mut Cx<App>) -> El {
     }
     // Shell data (Home, folders, ...) is loaded by the controller once signed in.
     if !v.signed_in {
+        // (signed out: no cover shows any more)
+        cover_video::sync([None, None]);
         return shell::frame(proxy_banner::wrap(views::login(s, &v), false), win_size);
     }
     // The panes are regions: each builds again only when something it read changed (a `Tracked`
@@ -365,7 +367,9 @@ fn view(s: &App, cx: &mut Cx<App>) -> El {
     let page = if *Tracked::untracked(&s.nav.page) == views::Page::Settings {
         views::page(s, &s.ctl)
     } else {
-        pane(&views::page_key(s), (stores, &s.nav.filter, profile::version()), || views::page(s, &s.ctl))
+        // (an album page lays its animated cover over the still while it plays: cover_video.rs)
+        let cover = (cover_video::on(), cover_video::showing(cover_video::Slot::Page));
+        pane(&views::page_key(s), (stores, &s.nav.filter, profile::version(), cover), || views::page(s, &s.ctl))
     };
     let shell_in = (shell.sidebar_w.to_bits(), shell.drawer_docked, shell.drawer_w.to_bits(), shell.bar_source, shell.bar_badge, shell.drawer_cover.to_bits());
     // The header spans the page and the drawer, so the window controls stay in the top-right
@@ -374,7 +378,8 @@ fn view(s: &App, cx: &mut Cx<App>) -> El {
     if s.nav.drawer.is_some() {
         // (its colour wash can come from the cover's pixels, which land without a state change)
         let tinted = crate::art::cover_color(Tracked::untracked(&s.ctl).cover.as_deref()).is_some();
-        content = content.child(pane("drawer", (shell_in, stores, tinted), || views::drawer(s, &s.ctl, shell).unwrap_or_else(el)));
+        let cover = cover_video::showing(cover_video::Slot::Now);
+        content = content.child(pane("drawer", (shell_in, stores, tinted, cover), || views::drawer(s, &s.ctl, shell).unwrap_or_else(el)));
     } else {
         views::forget_lyrics_scroll();
     }

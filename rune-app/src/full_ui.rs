@@ -255,7 +255,7 @@ pub fn overlay(s: &App, v: &View, win: (f32, f32)) -> Option<El> {
         picture = picture.child(el().absolute(0.0, 0.0).size(art, art).radius(10.0).pixels_fit(&px, rune::SurfaceFit::Fill));
     }
     // The album's animated cover over the still (cover_video.rs; the drawer's decode, shared).
-    if crate::cover_video::on() && crate::cover_video::now_cover(v).is_some() {
+    if crate::cover_video::now_cover(v).is_some() && crate::cover_video::showing(crate::cover_video::Slot::Now) {
         picture = picture.child(crate::cover_video::layer(crate::cover_video::Slot::Now, art, 10.0));
     }
     let picture = picture.key(format!("full-art-{}", cur.id)).absolute(0.0, 0.0);
