@@ -437,13 +437,6 @@ fn view(s: &App, cx: &mut Cx<App>) -> El {
     if let Some(t) = interact::toast_layer() {
         root = root.child(t);
     }
-    // The perf line reports window focus; nothing redraws.
-    if perf::on() {
-        root = root.on_window_focus(|_: &mut App, focused, tx| {
-            perf::set_focused(focused);
-            tx.live_only();
-        });
-    }
     let _ = row;
     // the title bar above, a frameless window's resize edges (shell.rs); a player covering the
     // window covers the title bar too, as React's overlays do

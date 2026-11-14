@@ -7,7 +7,7 @@
 //! Frames are Rune's own `on_frame_encoded` reports for the main window: `Drawn` frames were
 //! encoded and presented. Views count `view` runs (commits); polls count `poll` runs. CPU is the
 //! process's utime + stime from /proc/self/stat (all threads, audio included) as a share of one
-//! core. Focus comes from the root's window-focus handler. Regions count the main window's pane
+//! core. Focus comes from the shell's window-focus hook. Regions count the main window's pane
 //! regions built again (`main::pane`; a reused one costs no build), not the debug builds'
 //! re-checks of reused ones. Unset, no thread runs, neither the frame hook nor the focus handler
 //! is installed, and the view, poll and region counters are one relaxed load each.
@@ -51,7 +51,7 @@ pub fn region_built() {
     }
 }
 
-/// The root's window-focus handler, installed only with SONE_PERF=1.
+/// Called from the shell's window-focus hook (`shell::on_focus`).
 pub fn set_focused(focused: bool) {
     FOCUSED.store(focused, Ordering::Relaxed);
 }

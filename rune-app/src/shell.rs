@@ -501,6 +501,8 @@ pub fn on_reopen(_: &mut App, _: bool, _: &mut Tx) -> bool {
 
 pub fn on_focus(_: &mut App, focused: bool, _: &mut Tx) {
     FOCUSED.set(focused);
+    // the SONE_PERF line reports window focus (one relaxed store)
+    crate::perf::set_focused(focused);
 }
 
 // ------------------------------------------------------------------ deep links
