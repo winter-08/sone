@@ -197,12 +197,6 @@ fn swap(first: bool, secs: f32) -> Transition {
     Transition::opacity().springs(SpringPair::new(if first { Spring::NONE } else { fade }, fade))
 }
 
-/// The quality tier, short, as the React player's badge names it (`v.badge` ends with it).
-fn tier(v: &View) -> Option<&'static str> {
-    let b = v.badge.as_deref()?;
-    Some(if b.contains("HI-RES") { "Max" } else if b.ends_with("LOSSLESS") { "High" } else if b.ends_with("HIGH") { "Low" } else { return None })
-}
-
 /// The player over the whole window (`win`: its width and height), or None when it's closed.
 pub fn overlay(s: &App, v: &View, win: (f32, f32)) -> Option<El> {
     let f = &s.nav.full;
@@ -355,12 +349,9 @@ fn bar(s: &App, v: &View, cur: &QItem, w: f32, first: bool, shown: bool) -> El {
             .child(time(v.duration)));
 
     let mut right = row().grow(1.0).min_w(side).gap(4.0).items_center().justify_end();
-    if let Some(q) = tier(v).filter(|_| w >= 780.0) {
-        let detail = v.quality.as_deref().map_or(String::new(), |d| format!(", {d}"));
-        // (QualityBadge: a press shows the signal path, as on the player bar)
-        right = right.child(theme::focusable(row().key("full-quality").role("button").label(format!("Quality: {q}{detail}"))).h(22.0).px(8.0).mr(6.0).radius(11.0).border(1.0, white(0.2)).items_center()
-            .hover(white(0.08)).cursor(rune::Cursor::Pointer).on_press(crate::signal_path::open)
-            .child(text(q.to_uppercase()).font(t(11.0, 600.0).tracking(1.2)).color(white(0.72)).a11y_hidden()));
+    // (the bar's QualityBadge, as MaximizedPlayer renders it: a press shows the signal path)
+    if let Some(b) = v.badge.as_deref().filter(|_| w >= 780.0) {
+        right = right.child(crate::views::quality_badge("full-quality", b).mr(6.0));
     }
     let mut mic = ui::icon_button::<App>("full-lyrics-btn", "Lyrics", G::Mic, 18.0, if f.lyrics { theme::accent() } else { white(0.45) })
         .checked(f.lyrics)

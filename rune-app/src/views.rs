@@ -1326,7 +1326,7 @@ pub fn bar_extras(v: &View, shell: Shell, drawer: Option<Drawer>) -> El {
         }
         // QualityBadge: opens the signal path panel ("Show signal path").
         if let Some(b) = v.badge.as_ref().filter(|_| shell.bar_badge) {
-            r = r.child(quality_badge(b));
+            r = r.child(quality_badge("badge", b));
         }
     }
     // (the open drawer tab's button, and the miniplayer's while it's open, in the accent)
@@ -1352,8 +1352,9 @@ pub fn bar_extras(v: &View, shell: Shell, drawer: Option<Drawer>) -> El {
 
 /// QualityBadge: the stream's detail ("24-BIT 96kHz FLAC") small over the tier's pill, which is
 /// the accent for Max, the accent at 70% for Lossless and a neutral fill otherwise. Its name is
-/// the whole text; a press opens the signal path panel ("Show signal path").
-fn quality_badge(b: &str) -> El {
+/// the whole text; a press opens the signal path panel ("Show signal path"). The player bar's
+/// and the full-screen player's (MaximizedPlayer renders the same QualityBadge).
+pub(crate) fn quality_badge(key: &str, b: &str) -> El {
     let (detail, tier) = ["HI-RES LOSSLESS", "LOSSLESS", "HIGH"].into_iter()
         .find_map(|t| b.strip_suffix(t).map(|d| (d.trim_end(), t)))
         .unwrap_or(("", b));
@@ -1368,7 +1369,7 @@ fn quality_badge(b: &str) -> El {
     if !detail.is_empty() {
         c = c.child(text(detail.to_string()).font(t(9.0, 500.0).tracking(0.4)).color(white(0.45)).a11y_hidden());
     }
-    theme::focusable(c.key("badge").role("button").label(b.to_string())).help("Show signal path").px(4.0).py(2.0).radius(4.0)
+    theme::focusable(c.key(key.to_string()).role("button").label(b.to_string())).help("Show signal path").px(4.0).py(2.0).radius(4.0)
         .hover(white(0.06)).cursor(rune::Cursor::Pointer)
         .on_press(crate::signal_path::open)
         .child(pill.a11y_hidden())
