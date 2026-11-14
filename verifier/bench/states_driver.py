@@ -46,6 +46,10 @@ ALL_STATES = ["idle_home", "closed_playing", "open_playing", "open_paused", "ope
 #   region_home, region_playlist, region_drawer: playing on Home, on the fixture playlist, and
 #     there with the now-playing drawer open; with RUNE_REGION_MISS=1 in the build's env the
 #     app prints "rune-miss KEY WHY" for every region that builds again, counted per state.
+#   album_idle, album_unfocused: the album page with nothing playing, focused and not;
+#     region_album: playing there with the drawer open. With SPIKE_VIDEO_COVER=1 among a
+#     build's VARs the album's cover is animated (cover_video.rs), so these compare a playing
+#     cover with a still one.
 MISS = re.compile(r"^rune-miss (.+?) (version|state \S+ v\d+|layout .+|caret .+|selection)$")
 STATES = [s for s in os.environ.get("SPIKE_BENCH_STATES", ",".join(ALL_STATES)).split(",") if s]
 
@@ -835,6 +839,42 @@ class Run:
             time.sleep(1.5)
             ensure_playing()
         S["region_drawer"] = (reg_drawer, {"flags": ["closed", "playing", "focused"], "visible": True}, self.view_check, None)
+
+        # ---- the album page, whose cover animates when the fake TIDAL gives album 77 a
+        # videoCover (SPIKE_VIDEO_COVER=1, as a build's VAR in states.py), else is still
+        def to_album():
+            close_player()
+            if "heading: Fixture Albums" not in atspi.controls():
+                atspi.press("Home")
+                wait_control("heading: Fixture Albums")
+            atspi.press("Fixture Album", "heading")
+            wait_control("button: Favorite album")
+            time.sleep(1.0)
+
+        def album_idle():
+            m.call("pause")
+            to_album()
+        S["album_idle"] = (album_idle, {"flags": ["closed", "paused", "focused"], "visible": True}, self.view_check, None)
+
+        def album_unfocused():
+            if "button: Favorite album" not in atspi.controls():
+                album_idle()
+            outs = json.loads(swaymsg("-t", "get_outputs"))
+            if not any(o["name"] == "HEADLESS-2" for o in outs):
+                swaymsg("create_output")
+                time.sleep(0.3)
+            swaymsg("focus", "output", "HEADLESS-2")
+            time.sleep(0.3)
+        S["album_unfocused"] = (album_unfocused, {"flags": ["closed", "paused"], "focused": False, "visible": True}, self.view_check, refocus)
+
+        def reg_album():
+            to_album()
+            play()
+            if "landmark: Now playing panel" not in atspi.controls():
+                atspi.press("Play queue")
+            time.sleep(1.5)
+            ensure_playing()
+        S["region_album"] = (reg_album, {"flags": ["closed", "playing", "focused"], "visible": True}, self.view_check, None)
 
         for name in STATES:
             if name not in S:

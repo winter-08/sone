@@ -380,7 +380,31 @@ def page(items):
     return {"limit": 50, "offset": 0, "totalNumberOfItems": len(items), "items": items}
 
 
+# SPIKE_VIDEO_COVER=1: album 77 "Fixture Album" has an animated cover (`videoCover`) wherever it
+# appears (album page, album, tracks; the benchmark's long tracks are on album 77 too), and
+# resources.tidal.com/videos/... serves fixtures/videocover/<size>.mp4 (make_fixtures.sh).
+# Off, nothing changes.
+VIDEO_COVER = "5f1c0a2e-7b3d-4c8e-9a6f-0d2b4e8c1a37" if os.environ.get("SPIKE_VIDEO_COVER") else None
+
+
+def with_video_cover(o):
+    if isinstance(o, dict):
+        if o.get("id") == 77 and "cover" in o and "title" in o:
+            o["videoCover"] = VIDEO_COVER
+        for v in o.values():
+            with_video_cover(v)
+    elif isinstance(o, list):
+        for v in o:
+            with_video_cover(v)
+    return o
+
+
 def respond(flow: http.HTTPFlow, status: int, body, ctype="application/json"):
+    if VIDEO_COVER and ctype == "application/json":
+        try:
+            body = with_video_cover(json.loads(body) if isinstance(body, bytes) else body)
+        except ValueError:
+            pass
     raw = body if isinstance(body, bytes) else json.dumps(body).encode()
     flow.response = http.Response.make(status, raw, {"Content-Type": ctype})
 
@@ -522,6 +546,12 @@ def route(flow: http.HTTPFlow) -> bool:
             serve_file(flow, p, ctype.get(os.path.splitext(p)[1], "audio/flac"))
             if p.endswith((".m3u8", ".ts")):
                 flow.response.headers["Access-Control-Allow-Origin"] = "*"
+            return True
+
+    if VIDEO_COVER and host == "resources.tidal.com" and (m := re.fullmatch(r"/videos/[0-9a-f/]+/(\d+x\d+)\.mp4", path)):
+        p = os.path.join(ctx.options.fixtures, "videocover", m.group(1) + ".mp4")
+        if os.path.isfile(p):
+            serve_file(flow, p, "video/mp4")
             return True
 
     if host == "resources.tidal.com" and path.startswith("/images/"):

@@ -53,6 +53,9 @@ STATE_LABELS = {
     "region_home": "Playing on Home (region check)",
     "region_playlist": "Playing on a playlist page (region check)",
     "region_drawer": "Playing on a playlist, now-playing drawer open (region check)",
+    "album_idle": "Album page, nothing playing",
+    "album_unfocused": "Album page, nothing playing, window unfocused (visible)",
+    "region_album": "Playing on the album page, drawer open (region check)",
 }
 
 # (key in a state's record, label, number format)
@@ -107,6 +110,10 @@ def one(label: str, binary: str, env: dict, mode: str, rundir: str, a) -> dict:
     senv.pop("SPIKE_GPU", None)
     if mode == "gpu":
         senv["SPIKE_GPU"] = "1"
+    # A build's SPIKE_* variables reach the sandbox too (the fake TIDAL reads them), e.g.
+    # SPIKE_VIDEO_COVER=1 for an animated album cover.
+    senv.pop("SPIKE_VIDEO_COVER", None)
+    senv.update({k: v for k, v in env.items() if k.startswith("SPIKE_")})
     launch = wrapper(rundir + "-launch/launch.sh", binary, {"SONE_PERF": "1", **env})
     cmd = [os.path.join(ROOT, "harness", "sandbox.sh"), rundir, launch, "--",
            "python3", "-I", os.path.join(ROOT, "bench", "states_driver.py"), out]
