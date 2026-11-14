@@ -2727,6 +2727,8 @@ impl Player {
             let v = from + (to - from) * i as f32 / 12.0;
             self.prefs.volume = v;
             let _ = playback::set_volume(self.state(), v);
+            // a playing video's audio follows the level too, as it does for set_volume
+            crate::video::set_volume(v);
             tokio::time::sleep(Duration::from_millis(25)).await;
         }
     }
