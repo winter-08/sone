@@ -33,6 +33,15 @@ struct St {
 static ST: LazyLock<Mutex<St>> = LazyLock::new(Default::default);
 static WAKE: LazyLock<Notify> = LazyLock::new(Notify::new);
 
+/// After Log out (React unmounts Layout's banner with the shell): a dismissal and an error
+/// from the last session are gone. The proxy's status stays; it is the device's, not the
+/// account's.
+pub fn reset_after_logout() {
+    let mut s = ST.lock().unwrap();
+    s.dismissed = None;
+    s.error = None;
+}
+
 fn st() -> sone_host_shim::State<'static, AppState> {
     crate::host().state::<AppState>()
 }

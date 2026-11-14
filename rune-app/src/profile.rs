@@ -262,6 +262,13 @@ pub fn version() -> u64 {
     ARROWS.load(std::sync::atomic::Ordering::Relaxed)
 }
 
+/// After Log out: the next account's row starts at its beginning.
+pub fn reset_after_logout() {
+    if CAROUSEL_AT.lock().unwrap().take().is_some() {
+        ARROWS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    }
+}
+
 /// The row scrolled or laid out: the page builds again only when an arrow's state changes.
 fn note_carousel(p: rune::ScrollPos) {
     let was = CAROUSEL_AT.lock().unwrap().replace(p);

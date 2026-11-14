@@ -180,6 +180,12 @@ static PAGED: std::sync::LazyLock<std::sync::Mutex<std::collections::HashSet<Str
 /// The tabs whose stale first page has been refreshed (once a session each).
 static REFRESHED: std::sync::LazyLock<std::sync::Mutex<std::collections::HashSet<String>>> = std::sync::LazyLock::new(Default::default);
 
+/// After Log out: the next account's tabs page and refresh as a fresh session's do.
+pub fn reset_after_logout() {
+    PAGED.lock().unwrap().clear();
+    REFRESHED.lock().unwrap().clear();
+}
+
 /// Home.tsx: a first page the backend served stale from its cache shows at once, and the tab is
 /// fetched fresh behind it (refresh_home_page); the fresh page takes its place unless the tab
 /// has paged on meanwhile.

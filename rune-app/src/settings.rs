@@ -291,6 +291,9 @@ fn reset_after_logout(s: &mut App) {
     // would change what that frame's regions read under them.
     crate::data::clear();
     crate::interact::reset_favorites();
+    crate::home::reset_after_logout();
+    crate::profile::reset_after_logout();
+    crate::proxy_banner::reset_after_logout();
     let fresh = Nav::default();
     let n = &mut s.nav;
     if *rune::Tracked::untracked(&n.page) != Page::Home {
