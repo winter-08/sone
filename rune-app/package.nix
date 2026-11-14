@@ -2,7 +2,7 @@
 # Same runtime as shell.nix + wrap.sh, but built from the committed sources by Nix.
 {
   lib,
-  rustPlatform,
+  craneLib,
   makeWrapper,
   copyDesktopItems,
   makeDesktopItem,
@@ -36,38 +36,67 @@ let
   runtime = [ wayland libxkbcommon vulkan-loader libGL libx11 libxcursor libxi libxrandr alsa-lib fontconfig freetype dbus ];
   appId = "rone";
   icons = src + "/src-tauri/icons";
-in
-rustPlatform.buildRustPackage {
-  pname = "rone";
-  version = (lib.importTOML ./Cargo.toml).package.version;
+  # Shared by the two derivations below. crane (not buildRustPackage) so the ~480 dependency
+  # crates build once, in `rone-deps`, and a change to this crate or the backend recompiles
+  # only those two. It vendors each source into its own directory, which also copes with Rune
+  # building its own tiny-skia-path 0.11.4 beside resvg's crates.io copy, and needs no hash:
+  # everything is pinned by Cargo.lock.
+  common = {
+    pname = "rone";
+    version = (lib.importTOML ./Cargo.toml).package.version;
 
-  # Only what the build reads: this crate and the SONE backend it links (no target/ dirs).
-  src = lib.fileset.toSource {
-    root = src;
-    fileset = lib.fileset.difference
-      (lib.fileset.unions [ (src + "/rune-app") (src + "/src-tauri") ])
-      (lib.fileset.unions [
-        (lib.fileset.maybeMissing (src + "/rune-app/target"))
-        (lib.fileset.maybeMissing (src + "/src-tauri/target"))
-      ]);
+    # Only what the build reads: this crate and the SONE backend it links (no target/ dirs).
+    src = lib.fileset.toSource {
+      root = src;
+      fileset = lib.fileset.difference
+        (lib.fileset.unions [ (src + "/rune-app") (src + "/src-tauri") ])
+        (lib.fileset.unions [
+          (lib.fileset.maybeMissing (src + "/rune-app/target"))
+          (lib.fileset.maybeMissing (src + "/src-tauri/target"))
+        ]);
+    };
+    # The crate is not at the source root.
+    cargoToml = ./Cargo.toml;
+    cargoLock = ./Cargo.lock;
+    # Rune is the one git dependency. With its hash here it is fetched like any other source;
+    # without, Nix would clone it with the user's own git at evaluation time. Update the hash
+    # when the Rune rev in Cargo.toml changes (a wrong one fails with the right one in "got:").
+    cargoVendorDir = craneLib.vendorCargoDeps {
+      cargoLock = ./Cargo.lock;
+      outputHashes = {
+        "git+https://github.com/anomalyco/rune?rev=6c3cb8abf150e1c43b2f276a14568b2f2f504d72#6c3cb8abf150e1c43b2f276a14568b2f2f504d72" =
+          "sha256-IJzxSA5Kc8UD+BZSwzBfQJ5igNhl2LDbSSUoffKs8zc=";
+      };
+      # Rune vendors published crates (vendor/winit and others) with the Cargo.toml.orig that
+      # `cargo package` left in them, and crane packages each crate again, which refuses that
+      # reserved name.
+      overrideVendorGitCheckout = _: drv: drv.overrideAttrs (o: {
+        postPatch = (o.postPatch or "") + ''
+          find . -name Cargo.toml.orig -delete
+        '';
+      });
+    };
+    postUnpack = ''
+      cd $sourceRoot/rune-app
+      sourceRoot="."
+    '';
+    strictDeps = true;
+
+    nativeBuildInputs = [ pkg-config makeWrapper copyDesktopItems ];
+    buildInputs = runtime ++ gst ++ [ openssl glib ];
+
+    # The tests drive the UI headless and need a GPU; the verifier covers them.
+    doCheck = false;
   };
-  cargoRoot = "rune-app";
-  buildAndTestSubdir = "rune-app";
-  # fetchCargoVendor, not cargoLock: Rune builds its own tiny-skia-path 0.11.4 from its repo
-  # beside resvg's crates.io copy, and cargoLock can't vendor two crates of one name and version.
-  # Update the hash whenever Cargo.lock changes.
-  cargoHash = "sha256-rlZbIKkwvBPXWdkI+KDaAyufubZqyo+Fjx0eOq8m/7o=";
-
-  nativeBuildInputs = [ pkg-config makeWrapper copyDesktopItems ];
-  buildInputs = runtime ++ gst ++ [ openssl glib ];
+  cargoArtifacts = craneLib.buildDepsOnly common;
+in
+craneLib.buildPackage (common // {
+  inherit cargoArtifacts;
 
   env = {
     SONE_RUNE_TITLE = "RONE";
     SONE_RUNE_APP_ID = appId;
   };
-
-  # The tests drive the UI headless and need a GPU; the verifier covers them.
-  doCheck = false;
 
   postInstall = ''
     mv $out/bin/sone-rune $out/bin/rone
@@ -107,4 +136,4 @@ rustPlatform.buildRustPackage {
     mainProgram = "rone";
     platforms = [ "x86_64-linux" ];
   };
-}
+})
