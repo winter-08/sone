@@ -49,6 +49,11 @@ pub struct Loader {
     /// A clicked track to start from (usePlaySource `startAt`): the start batch stops once
     /// it's in.
     pub start_at: Option<u64>,
+    /// Exact 0-based entry index to start from (used by playlists so duplicate songs start at
+    /// the clicked occurrence; remapped when `sort` is set).
+    pub start_index: Option<usize>,
+    /// Optional client-side playlist sort applied once all canonical entries are loaded.
+    pub sort: Option<crate::coll::Sort>,
     /// Items the source leaves out (usePlaySource `include`: tracks un-loved this session).
     include: fn(&Value) -> bool,
     /// The cursor a cursor-paged pager goes on from.
@@ -66,13 +71,14 @@ impl Loader {
     #[allow(clippy::too_many_arguments)]
     pub fn with(meta: Value, loaded: Vec<Value>, pager: Option<Pager>, offset: u32, has_more: bool, dedupe: bool, album_mode: bool, include: fn(&Value) -> bool) -> Loader {
         let has_more = has_more && pager.is_some();
-        let mut l = Loader { meta, album_mode, pager, dedupe, seen: HashSet::new(), tracks: vec![], playable: 0, offset, has_more, pages: 0, failed: false, play_shuffle: false, start_at: None, include, cursor: None };
+        let mut l = Loader { meta, album_mode, pager, dedupe, seen: HashSet::new(), tracks: vec![], playable: 0, offset, has_more, pages: 0, failed: false, play_shuffle: false, start_at: None, start_index: None, sort: None, include, cursor: None };
         l.take(loaded, &|_| true);
         l
     }
 
     fn has_start(&self) -> bool {
-        self.start_at.is_some_and(|id| self.tracks.iter().any(|t| t["id"].as_u64() == Some(id)))
+        self.start_index.is_some_and(|i| i < self.tracks.len())
+            || self.start_at.is_some_and(|id| self.tracks.iter().any(|t| t["id"].as_u64() == Some(id)))
     }
 
     /// Adds `items` (skipping ids already seen when deduplicating); returns the new ones and
@@ -122,8 +128,23 @@ impl Loader {
         Ok(fresh)
     }
 
-    /// The start batch: pages until 50 playable tracks or the end. A failure ends paging.
+    /// The start batch: pages until 50 playable tracks or the end (or all pages when sorting
+    /// client-side). A failure ends paging.
     pub async fn start(&mut self, h: &AppHandle, playable: &(dyn Fn(&Value) -> bool + Sync)) {
+        if let Some(sort) = self.sort.clone() {
+            while self.has_more {
+                if let Err(e) = self.next_page(h, playable).await {
+                    log::warn!("[rune] failed to load {} tracks: {e}", self.meta["type"].as_str().unwrap_or("source"));
+                    self.has_more = false;
+                    self.failed = true;
+                }
+            }
+            let mut order: Vec<usize> = (0..self.tracks.len()).collect();
+            crate::playlist::sort_indices(&self.tracks, &mut order, &sort);
+            self.start_index = self.start_index.and_then(|orig| order.iter().position(|&i| i == orig));
+            self.tracks = order.into_iter().map(|i| self.tracks[i].clone()).collect();
+            return;
+        }
         while self.has_more && self.playable < START_BATCH && !self.has_start() {
             if let Err(e) = self.next_page(h, playable).await {
                 log::warn!("[rune] failed to load {} tracks: {e}", self.meta["type"].as_str().unwrap_or("source"));

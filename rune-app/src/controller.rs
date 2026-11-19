@@ -2090,7 +2090,10 @@ impl Player {
         let tracks = std::mem::take(&mut loader.tracks);
         // A page's Shuffle with shuffle mode off scatters the later pages too (shuffleAppend).
         let shuffle_append = loader.play_shuffle && !self.prefs.shuffle;
-        match loader.start_at.and_then(|id| tracks.iter().position(|t| tid(t) == id)) {
+        let start = loader.start_index
+            .filter(|&i| i < tracks.len())
+            .or_else(|| loader.start_at.and_then(|id| tracks.iter().position(|t| tid(t) == id)));
+        match start {
             // A track row (usePlaySource startAt): from it; with more pages coming and shuffle
             // off, the tracks before it aren't wrapped in (noWrap).
             Some(i) => {

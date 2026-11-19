@@ -479,15 +479,12 @@ impl Media {
     }
 }
 
-/// A track's place in the user's own playlist, for "Remove from playlist".
+/// A track's canonical 0-based place in the user's own playlist, preserved across filtering
+/// and sorting, for "Remove from playlist".
 #[derive(Clone, Debug)]
 pub struct InPlaylist {
     pub uuid: String,
-    /// Its place in the list it shows in.
     pub index: usize,
-    /// That list is sorted, so `index` isn't its place in the playlist: removing it looks that
-    /// up first.
-    pub sorted: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -877,7 +874,7 @@ fn track_menu(track: &Value, playlist: Option<&InPlaylist>, c: &Ctx, page: &Page
         let (p, t6) = (p.clone(), title.clone());
         m = m.child(sep()).child(mi_danger("ctx-remove", "Remove from playlist", move |s, _| {
             close(s);
-            remove_from_playlist(p.clone(), id, t6.clone());
+            remove_from_playlist(p.clone(), t6.clone());
         }));
     }
     m
@@ -912,37 +909,22 @@ fn queue_track(t: Value, next: bool) {
 }
 
 /// Remove from playlist: the row leaves its list at once (React's optimistic removal), then the
-/// server is told by the item's place in the playlist's own order (in a sorted list, looked up
-/// there first: the first place that holds the track); the playlist's details catch up after.
-/// A failure brings the list back as the server has it.
-fn remove_from_playlist(p: InPlaylist, id: u64, title: String) {
+/// server is told by the item's canonical 0-based `index` (exact even for a duplicate song in a
+/// filtered or sorted view); the playlist's details catch up after, and a failure brings the
+/// list back as the server has it.
+fn remove_from_playlist(p: InPlaylist, title: String) {
     use crate::paged::{self, PKey};
-    let uuid = p.uuid.clone();
-    let is = |u: &str| { let u = u.to_string(); move |k: &PKey| matches!(k, PKey::Playlist { uuid, .. } if *uuid == u) };
-    let own_order = |u: &str| { let u = u.to_string(); move |k: &PKey| matches!(k, PKey::Playlist { uuid, order: None, .. } if *uuid == u) };
-    let sorted_lists = |u: &str| { let u = u.to_string(); move |k: &PKey| matches!(k, PKey::Playlist { uuid, order: Some(_), .. } if *uuid == u) };
-    let holds = move |v: &Value| paged::track_of(v)["id"].as_u64() == Some(id);
+    let uuid = p.uuid;
+    let index = p.index;
+    paged::remove_where(|k| matches!(k, PKey::Playlist(u) if *u == uuid), |i, _| i == index);
     sone_core::host::async_runtime::spawn(async move {
-        let index = if p.sorted {
-            match paged::fetch_all(&PKey::Playlist { uuid: uuid.clone(), order: None, dir: None }).await.ok().and_then(|all| all.iter().position(holds)) {
-                Some(i) => i,
-                None => {
-                    toast("Failed to remove track".into(), Kind::Error);
-                    return;
-                }
-            }
-        } else {
-            p.index
-        };
-        paged::remove_where(own_order(&uuid), |i, _| i == index);
-        paged::remove_where(sorted_lists(&uuid), |i, v| if p.sorted { i == p.index && holds(v) } else { holds(v) });
         match library::remove_track_from_playlist(state(), uuid.clone(), index as u32).await {
             Ok(()) => {
                 data::refresh_entry(&Key::Playlist(uuid));
                 toast(format!("Removed \"{}\" from playlist", clip(&title, 28)), Kind::Success);
             }
             Err(_) => {
-                paged::forget_where(is(&uuid));
+                paged::forget_where(|k| matches!(k, PKey::Playlist(u) if *u == uuid));
                 data::forget(&Key::Playlist(uuid));
                 toast("Failed to remove track".into(), Kind::Error);
             }
@@ -1141,7 +1123,7 @@ async fn media_tracks(item: &Value, kind: Media) -> Option<Vec<Value>> {
     let d = data::data(item);
     let v = match kind {
         Media::Album => data::get(Key::Album(d["id"].as_u64()?)).await.ok().map(|p| tracks_in(&p["page"]["tracks"])),
-        Media::Playlist => crate::paged::fetch_all(&crate::paged::PKey::Playlist { uuid: d["uuid"].as_str()?.to_string(), order: None, dir: None }).await.ok().map(|items| tracks_in(&Value::Array(items))),
+        Media::Playlist => crate::paged::fetch_all(&crate::paged::PKey::Playlist(d["uuid"].as_str()?.to_string())).await.ok().map(|items| tracks_in(&Value::Array(items))),
         Media::Artist => data::get(Key::ArtistTopTracks(d["id"].as_u64()?)).await.ok().map(|p| {
             let a = tracks_in(&p["items"]);
             if a.is_empty() { tracks_in(&p) } else { a }

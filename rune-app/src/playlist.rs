@@ -39,9 +39,66 @@ pub fn clear_overrides() {
 const RECS_PAGE: usize = 10;
 const RECS_BATCH: u32 = 50;
 
-pub fn key_for(s: &App, uuid: &str) -> PKey {
-    let sort = s.nav.coll.ui.track_sort.get(uuid).cloned();
-    PKey::Playlist { uuid: uuid.to_string(), order: sort.as_ref().map(|s| s.0.clone()), dir: sort.map(|s| s.1) }
+pub fn key_for(_s: &App, uuid: &str) -> PKey {
+    PKey::Playlist(uuid.to_string())
+}
+
+fn artist_sort_key(d: &Value) -> String {
+    if let Some(arr) = d["artists"].as_array().filter(|a| !a.is_empty()) {
+        let names: Vec<&str> = arr.iter().filter_map(|a| a["name"].as_str()).filter(|s| !s.is_empty()).collect();
+        if !names.is_empty() {
+            return names.join(", ");
+        }
+    }
+    d["artist"]["name"].as_str().unwrap_or("").to_string()
+}
+
+/// Orders canonical `indices` into `items` according to `sort`, keeping missing dates at the
+/// end in both directions and breaking ties by ascending canonical index so duplicate tracks
+/// preserve their relative playlist positions.
+pub fn sort_indices(items: &[Value], indices: &mut [usize], sort: &coll::Sort) {
+    use std::cmp::Ordering;
+    let desc = sort.1 == "DESC";
+    match sort.0.as_str() {
+        "NAME" | "ARTIST" | "ALBUM" => {
+            let keys: Vec<String> = items.iter().map(|v| {
+                let d = paged::track_of(v);
+                let raw = match sort.0.as_str() {
+                    "NAME" => d["title"].as_str().unwrap_or("").to_string(),
+                    "ARTIST" => artist_sort_key(&d),
+                    _ => d["album"]["title"].as_str().unwrap_or("").to_string(),
+                };
+                raw.to_lowercase()
+            }).collect();
+            indices.sort_by(|&a, &b| {
+                let ord = keys[a].cmp(&keys[b]);
+                (if desc { ord.reverse() } else { ord }).then_with(|| a.cmp(&b))
+            });
+        }
+        "DATE" => {
+            let keys: Vec<Option<i64>> = items.iter().map(|v| {
+                let d = paged::track_of(v);
+                d["dateAdded"].as_str().and_then(crate::formats::timestamp)
+            }).collect();
+            indices.sort_by(|&a, &b| {
+                let ord = match (keys[a], keys[b]) {
+                    (Some(x), Some(y)) => if desc { y.cmp(&x) } else { x.cmp(&y) },
+                    (Some(_), None) => Ordering::Less,
+                    (None, Some(_)) => Ordering::Greater,
+                    (None, None) => Ordering::Equal,
+                };
+                ord.then_with(|| a.cmp(&b))
+            });
+        }
+        "LENGTH" => {
+            let keys: Vec<u64> = items.iter().map(|v| paged::track_of(v)["duration"].as_u64().unwrap_or(0)).collect();
+            indices.sort_by(|&a, &b| {
+                let ord = keys[a].cmp(&keys[b]);
+                (if desc { ord.reverse() } else { ord }).then_with(|| a.cmp(&b))
+            });
+        }
+        _ => {}
+    }
 }
 
 /// Whether a track matches the filter as React's does: its title, any artist, or its album.
@@ -71,6 +128,10 @@ pub fn page(s: &App, uuid: &str, v: &View) -> El {
     data::want(Key::Playlist(uuid.to_string()));
     let key = key_for(s, uuid);
     let snap = paged::get(&key);
+    let sort = s.nav.coll.ui.track_sort.get(uuid).cloned();
+    if sort.is_some() {
+        paged::all(&key);
+    }
     data::want_bg(Key::PlaylistRecs(uuid.to_string(), 0));
     let p = match views::ready_or(Key::Playlist(uuid.to_string())) { Ok(v) => v, Err(e) => return e };
     let d = &p["details"];
@@ -80,8 +141,8 @@ pub fn page(s: &App, uuid: &str, v: &View) -> El {
     let source = json!({"type": "playlist", "id": uuid, "name": title});
 
     // Header
-    let (k1, src1) = (key.clone(), source.clone());
-    let mut actions = row().gap(8.0).items_center().child(coll::play_pair(v, &source, move |shuffle| paged::play(k1.clone(), src1.clone(), shuffle, None, |_| true)));
+    let (u_play, sort_play, src1) = (uuid.to_string(), sort.clone(), source.clone());
+    let mut actions = row().gap(8.0).items_center().child(coll::play_pair(v, &source, move |shuffle| paged::play_playlist(&u_play, sort_play.clone(), src1.clone(), shuffle, None)));
     if own {
         let public = ACCESS.lock().unwrap().get(uuid).copied().unwrap_or_else(|| is_public(d));
         let (u1, t1, desc1) = (uuid.to_string(), title.clone(), d["description"].as_str().unwrap_or("").to_string());
@@ -150,29 +211,30 @@ pub fn page(s: &App, uuid: &str, v: &View) -> El {
         return c.child(col().gap(10.0).items_start().child(ui::empty("Couldn't load this playlist's tracks"))
             .child(views::button::<App>("pl-retry", "Retry", None, false).on_press(move |_: &mut App| paged::retry(&k))));
     }
-    let sort = s.nav.coll.ui.track_sort.get(uuid).cloned();
     let u3 = uuid.to_string();
-    c = c.child(coll::sort_header("pl", sort.as_ref(), own, move |s: &mut App, sort| {
+    c = c.child(coll::sort_header("pl", sort.as_ref(), None, own, move |s: &mut App, sort| {
         match sort {
             Some(x) => { s.nav.coll.ui.track_sort.insert(u3.clone(), x); }
             None => { s.nav.coll.ui.track_sort.remove(&u3); }
         }
         coll::save(&s.nav.coll.ui);
     }));
-    let shown: Vec<usize> = (0..snap.len).filter(|i| track_matches(&snap.items[*i], &needle)).collect();
+    let mut shown: Vec<usize> = (0..snap.len).filter(|i| track_matches(&snap.items[*i], &needle)).collect();
+    if let Some(sort) = &sort {
+        sort_indices(&snap.items, &mut shown, sort);
+    }
     if shown.is_empty() && !snap.loading {
         return c.child(views::tracks_empty(s, "This playlist is empty"));
     }
     let n_shown = shown.len();
-    let (uuid_s, sorted, k2, src2) = (uuid.to_string(), sort.is_some(), key.clone(), source.clone());
+    let (uuid_s, sort_row, src2) = (uuid.to_string(), sort.clone(), source.clone());
     let rows = views::track_list("pl-t", snap.items.clone(), shown, move |tracks, i| {
         let tr = paged::track_of(&tracks[i]);
-        let id = tr["id"].as_u64();
-        let (k, src) = (k2.clone(), src2.clone());
-        // Remove from playlist goes by the item's place in the playlist's own order (a sorted list
-        // looks it up there).
-        let in_pl = own.then(|| interact::InPlaylist { uuid: uuid_s.clone(), index: i, sorted });
-        views::track_row_look(format!("pl-t{i}"), i + 1, &tr, views::Look { date: own, ..Default::default() }, in_pl, move |_: &mut App| paged::play(k.clone(), src.clone(), false, id, |_| true))
+        let (u_row, s_row, src) = (uuid_s.clone(), sort_row.clone(), src2.clone());
+        // `i` is always the item's canonical 0-based place in the playlist, preserved across
+        // filtering and sorting.
+        let in_pl = own.then(|| interact::InPlaylist { uuid: uuid_s.clone(), index: i });
+        views::track_row_look(format!("pl-t{i}"), i + 1, &tr, views::Look { date: own, ..Default::default() }, in_pl, move |_: &mut App| paged::play_playlist(&u_row, s_row.clone(), src.clone(), false, Some(i)))
     });
     c = c.child(rows.on_visible_rows(more_near_end(key.clone(), n_shown)));
     if snap.loading && snap.len > 0 {
@@ -283,7 +345,7 @@ fn add_rec(uuid: String, track: Value) {
     sone_core::host::async_runtime::spawn(async move {
         match library::add_track_to_playlist(crate::host().state::<AppState>(), uuid.clone(), id).await {
             Ok(()) => {
-                paged::forget_where(|k| matches!(k, PKey::Playlist { uuid: u, .. } if *u == uuid));
+                paged::forget_where(|k| matches!(k, PKey::Playlist(u) if *u == uuid));
                 interact::toast(format!("Added \"{title}\" to playlist"), Kind::Success);
             }
             Err(e) => {
@@ -374,7 +436,7 @@ pub fn more_near_end(key: PKey, n: usize) -> impl Fn(&mut App, std::ops::Range<u
 
 #[cfg(test)]
 mod tests {
-    use super::{count_line, track_matches};
+    use super::{count_line, sort_indices, track_matches};
     use serde_json::json;
 
     #[test]
@@ -391,5 +453,42 @@ mod tests {
         assert_eq!(count_line(4, 0, Some(36)), "4 TRACKS (0:36)");
         assert_eq!(count_line(1, 2, Some(3725)), "1 TRACK, 2 VIDEOS (1:02:05)");
         assert_eq!(count_line(0, 0, None), "0 TRACKS");
+    }
+
+    #[test]
+    fn sort_preserves_canonical_indices_and_duplicate_tie_order() {
+        let items = vec![
+            json!({"id": 3, "title": "zeta", "artists": [{"name": "C"}], "album": {"title": "Z"}, "duration": 300, "dateAdded": "2025-03-01T00:00:00Z"}),
+            json!({"id": 1, "title": "Alpha", "artists": [{"name": "A"}], "album": {"title": "A"}, "duration": 120, "dateAdded": "2025-01-01T00:00:00Z"}),
+            json!({"id": 2, "title": "Beta", "artists": [{"name": "B"}], "album": null, "duration": 200}),
+            json!({"id": 1, "title": "alpha", "artists": [{"name": "A"}], "album": {"title": "A"}, "duration": 120, "dateAdded": "2025-01-01T00:00:00Z"}),
+        ];
+
+        // Title ASC & DESC both keep duplicate copies in ascending canonical order (1 before 3).
+        let mut idx = vec![0, 1, 2, 3];
+        sort_indices(&items, &mut idx, &("NAME".into(), "ASC".into()));
+        assert_eq!(idx, vec![1, 3, 2, 0]);
+
+        let mut idx = vec![0, 1, 2, 3];
+        sort_indices(&items, &mut idx, &("NAME".into(), "DESC".into()));
+        assert_eq!(idx, vec![0, 2, 1, 3]);
+
+        // Filtered + sorted still carries canonical indices (e.g. matching "alpha" -> [1, 3]).
+        let mut filtered: Vec<usize> = (0..items.len()).filter(|i| track_matches(&items[*i], "alpha")).collect();
+        sort_indices(&items, &mut filtered, &("NAME".into(), "DESC".into()));
+        assert_eq!(filtered, vec![1, 3]);
+
+        // DATE keeps undated items at the end in both directions.
+        let mut idx = vec![0, 1, 2, 3];
+        sort_indices(&items, &mut idx, &("DATE".into(), "ASC".into()));
+        assert_eq!(idx, vec![1, 3, 0, 2]);
+        let mut idx = vec![0, 1, 2, 3];
+        sort_indices(&items, &mut idx, &("DATE".into(), "DESC".into()));
+        assert_eq!(idx, vec![0, 1, 3, 2]);
+
+        // LENGTH sorts numerically.
+        let mut idx = vec![0, 1, 2, 3];
+        sort_indices(&items, &mut idx, &("LENGTH".into(), "DESC".into()));
+        assert_eq!(idx, vec![0, 2, 1, 3]);
     }
 }

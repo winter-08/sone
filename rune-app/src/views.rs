@@ -2655,7 +2655,7 @@ pub(crate) fn play_feed_item(kind: &str, id: Value, title: &str) {
             "playlist" => {
                 let Some(uuid) = id.as_str().map(str::to_string) else { return };
                 // playableFromMedia: the whole playlist, paged in behind its first tracks.
-                crate::paged::play(crate::paged::PKey::Playlist { uuid: uuid.clone(), order: None, dir: None }, json!({"type": "playlist", "id": uuid, "name": title}), false, None, |_| true);
+                crate::paged::play(crate::paged::PKey::Playlist(uuid.clone()), json!({"type": "playlist", "id": uuid, "name": title}), false, None, |_| true);
             }
             _ => {
                 let mid = id.as_str().map(str::to_string).unwrap_or_else(|| id.to_string());

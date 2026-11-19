@@ -30,8 +30,8 @@ pub enum Lib {
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum PKey {
-    /// A playlist's items, in the order asked for (None: the playlist's own order).
-    Playlist { uuid: String, order: Option<String>, dir: Option<String> },
+    /// A playlist's items in canonical playlist order (sorting happens over canonical indices).
+    Playlist(String),
     /// Loved tracks (FavoritesView: DATE DESC unless sorted).
     Loved { order: String, dir: String },
     LovedVideos,
@@ -47,7 +47,7 @@ pub enum PKey {
 impl PKey {
     fn page_size(&self) -> u32 {
         match self {
-            PKey::Playlist { .. } | PKey::Loved { .. } => 100,
+            PKey::Playlist(_) | PKey::Loved { .. } => 100,
             _ => 50,
         }
     }
@@ -392,7 +392,7 @@ pub async fn fetch_page(key: &PKey, offset: usize, cursor: Option<String>) -> Re
         (items, None, None, more)
     };
     Ok(match key {
-        PKey::Playlist { uuid, order, dir } => totaled(to(library::get_playlist_tracks_page(st(), h.clone(), uuid.clone(), off, limit, order.clone(), dir.clone()).await)?),
+        PKey::Playlist(uuid) => totaled(to(library::get_playlist_tracks_page(st(), h.clone(), uuid.clone(), off, limit, None, None).await)?),
         PKey::Loved { order, dir } => totaled(to(library::get_favorite_tracks(st(), h.clone(), data::uid().await?, off, limit, order.clone(), dir.clone()).await)?),
         PKey::LovedVideos => {
             let v = to(library::get_favorite_videos(st(), data::uid().await?, off, limit).await)?;
@@ -581,6 +581,20 @@ pub fn play_with(key: PKey, preview: Vec<Value>, source: Value, shuffle: bool, s
     let mut l = crate::sources::Loader::with(source, items, Some(crate::sources::Pager::Paged(key)), offset as u32, more, dedupe, false, include);
     l.play_shuffle = shuffle;
     l.start_at = start_at;
+    crate::controller::send(crate::controller::Cmd::PlaySource(Box::new(l)));
+}
+
+/// Plays a playlist from its canonical items, ordering by `sort` (if active) and starting from
+/// exact canonical entry `start_index` when a row was clicked (handling duplicate songs).
+pub fn play_playlist(uuid: &str, sort: Option<crate::coll::Sort>, source: Value, shuffle: bool, start_index: Option<usize>) {
+    let key = PKey::Playlist(uuid.to_string());
+    let (loaded, next, more) = loaded(&key);
+    let items: Vec<Value> = loaded.iter().map(|v| playable_of(&key, v)).collect();
+    let more = more || items.is_empty();
+    let mut l = crate::sources::Loader::with(source, items, Some(crate::sources::Pager::Paged(key)), next as u32, more, false, false, |_| true);
+    l.play_shuffle = shuffle;
+    l.sort = sort;
+    l.start_index = start_index;
     crate::controller::send(crate::controller::Cmd::PlaySource(Box::new(l)));
 }
 

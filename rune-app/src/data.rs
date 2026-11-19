@@ -345,7 +345,7 @@ pub fn forget(key: &Key) {
     // with it, and the playlist folders take the library lists.
     match key {
         Key::Playlist(u) => {
-            crate::paged::forget_where(|k| matches!(k, crate::paged::PKey::Playlist { uuid, .. } if uuid == u));
+            crate::paged::forget_where(|k| matches!(k, crate::paged::PKey::Playlist(uuid) if uuid == u));
             CACHE.lock().unwrap().remove(&Key::PlaylistRecs(u.clone(), 0));
         }
         Key::Folders => crate::paged::forget_where(|k| matches!(k, crate::paged::PKey::Library { kind: crate::paged::Lib::Playlists, .. })),
@@ -363,7 +363,7 @@ pub fn forget(key: &Key) {
 /// takes its first batch of recommendations and its paged tracks with it, as with `forget`.
 pub fn refresh(key: &Key) {
     if let Key::Playlist(u) = key {
-        crate::paged::refresh_where(|k| matches!(k, crate::paged::PKey::Playlist { uuid, .. } if uuid == u));
+        crate::paged::refresh_where(|k| matches!(k, crate::paged::PKey::Playlist(uuid) if uuid == u));
         refresh_one(&Key::PlaylistRecs(u.clone(), 0));
     }
     refresh_one(key);

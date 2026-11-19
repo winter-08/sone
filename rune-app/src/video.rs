@@ -87,7 +87,7 @@ fn notify(name: &str, payload: String) {
 /// `SONE_VIDEO_TRACE=path`: one line per frame handed to the surface and per frame Rune
 /// submitted to the GPU (`push`/`draw`, frame id, monotonic ms, pts ms), to check pacing.
 fn trace(kind: &str, id: u64, pts_ms: f64) {
-    let t = TRACE.get_or_init(|| std::env::var_os("SONE_VIDEO_TRACE").or_else(|| std::env::var_os("SPIKE_VIDEO_TRACE")).and_then(|p| std::fs::File::create(p).ok()).map(Mutex::new));
+    let t = TRACE.get_or_init(|| std::env::var_os("SONE_VIDEO_TRACE").and_then(|p| std::fs::File::create(p).ok()).map(Mutex::new));
     if let Some(f) = t {
         use std::io::Write;
         static T0: OnceLock<Instant> = OnceLock::new();
@@ -96,24 +96,58 @@ fn trace(kind: &str, id: u64, pts_ms: f64) {
     }
 }
 
+/// Whether `SONE_VIDEO_HW` explicitly opts back into hardware video decoding.
+fn hw_decode_enabled(val: Option<&str>) -> bool {
+    let Some(v) = val.map(str::trim) else { return false };
+    !v.is_empty() && v != "0" && !v.eq_ignore_ascii_case("false")
+}
+
+/// Feature names explicitly configured in `GST_PLUGIN_FEATURE_RANK`, left untouched.
+fn user_ranked_features(env: Option<&str>) -> std::collections::HashSet<&str> {
+    env.unwrap_or("")
+        .split(',')
+        .filter_map(|e| e.split(':').next())
+        .map(str::trim)
+        .filter(|f| !f.is_empty())
+        .collect()
+}
+
 /// GStreamer, with the decoder ranks above; animated covers (cover_video.rs) share it.
 pub(crate) fn init() -> Result<(), String> {
     static INIT: OnceLock<Result<(), String>> = OnceLock::new();
     INIT.get_or_init(|| {
         gst::init().map_err(|e| e.to_string())?;
         // Software decoding. TIDAL's videos stop at 1080p H.264, which libav decodes for about
-        // 1% of a core here, while NVDEC (`nvh264dec`, ranked above it by default) costs more:
-        // every frame is copied back from the GPU on the CPU (6-7% at 720p) because the surface
-        // takes bytes, and the CUDA context adds ~130 MB (measured 2026-11-09 with
-        // video_check.py). `SONE_VIDEO_HW=1` picks the GPU decoders again.
-        let reg = gst::Registry::get();
-        let hw = std::env::var_os("SONE_VIDEO_HW").is_some();
-        for name in ["nvh264dec", "vah264dec"] {
-            if let Some(f) = reg.find_feature(name, gst::ElementFactory::static_type()) {
-                f.set_rank(if hw { gst::Rank::PRIMARY + 10 } else { gst::Rank::NONE });
+        // 1% of a core here, while GPU decoders (`nvcodec` across 1.22 `*sldec` / 1.24+
+        // `nvautogpu*` / `nv*dec`, VA-API, QSV, V4L2, Vulkan) cost more: every frame is copied
+        // back from the GPU on the CPU (6-7% at 720p) because `NativeSurface` takes bytes, and a
+        // CUDA/VA context adds ~130-300 MB (measured 2026-11-09 with video_check.py, and upstream
+        // 8ea067dc). `SONE_VIDEO_HW=1` keeps GStreamer's natural ranks; features named in
+        // `GST_PLUGIN_FEATURE_RANK` keep the rank the user gave them.
+        let hw = hw_decode_enabled(std::env::var("SONE_VIDEO_HW").ok().as_deref());
+        if !hw {
+            let rank_env = std::env::var("GST_PLUGIN_FEATURE_RANK").ok();
+            let user_named = user_ranked_features(rank_env.as_deref());
+            // Query video decoders first, then check `HARDWARE` per factory (`DECODER | HARDWARE`
+            // in `factories_with_type` ORs non-media flags and would match `avdec_*` too).
+            let factories = gst::ElementFactory::factories_with_type(
+                gst::ElementFactoryType::DECODER | gst::ElementFactoryType::MEDIA_VIDEO,
+                gst::Rank::MARGINAL,
+            );
+            for f in factories {
+                let is_hw = f.has_type(gst::ElementFactoryType::HARDWARE)
+                    || f.plugin_name().is_some_and(|p| {
+                        matches!(
+                            p.as_str(),
+                            "nvcodec" | "va" | "vaapi" | "qsv" | "v4l2codecs" | "vulkan"
+                        )
+                    });
+                if is_hw && !user_named.contains(f.name().as_str()) {
+                    f.set_rank(gst::Rank::NONE);
+                }
             }
         }
-        if std::env::var_os("SONE_VIDEO_TRACE").or_else(|| std::env::var_os("SPIKE_VIDEO_TRACE")).is_some() {
+        if std::env::var_os("SONE_VIDEO_TRACE").is_some() {
             surface().set_observer(Arc::new(|t| {
                 if t.completed_at.is_none() {
                     trace("draw", t.frame_id, 0.0);
@@ -154,13 +188,6 @@ pub fn open(url: &str, volume: f32, at: f64) -> Result<(), String> {
     // No subtitles; sound and picture only, with the software volume (it follows the app's).
     pipeline.set_property_from_str("flags", "video+audio+soft-volume");
     pipeline.set_property("volume", volume.clamp(0.0, 1.0) as f64);
-    // Pacing checks only: no sound, so the pipeline runs on the system clock rather than the
-    // audio device's (the verifier's virtual sink runs a few percent slow).
-    if std::env::var_os("SPIKE_VIDEO_NO_AUDIO").is_some() {
-        if let Ok(fake) = gst::ElementFactory::make("fakesink").property("sync", true).build() {
-            pipeline.set_property("audio-sink", &fake);
-        }
-    }
 
     let sink = gst_app::AppSink::builder()
         .caps(&gst::Caps::builder("video/x-raw").field("format", gst::List::new(["NV12", "I420"])).build())
@@ -439,4 +466,30 @@ pub fn size() -> Option<(u32, u32)> {
     let (_, sh) = current()?;
     let s = sh.state.lock().unwrap().size;
     s
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{hw_decode_enabled, user_ranked_features};
+
+    #[test]
+    fn hw_decode_env_parses_truthy_values_only() {
+        assert!(!hw_decode_enabled(None));
+        assert!(!hw_decode_enabled(Some("")));
+        assert!(!hw_decode_enabled(Some("0")));
+        assert!(!hw_decode_enabled(Some("false")));
+        assert!(!hw_decode_enabled(Some("FALSE")));
+        assert!(hw_decode_enabled(Some("1")));
+        assert!(hw_decode_enabled(Some("true")));
+    }
+
+    #[test]
+    fn user_rank_entries_preserve_named_features() {
+        assert!(user_ranked_features(None).is_empty());
+        let set = user_ranked_features(Some("qtdemux:256, nvh264dec:MAX , , vah264dec:NONE"));
+        assert!(set.contains("qtdemux"));
+        assert!(set.contains("nvh264dec"));
+        assert!(set.contains("vah264dec"));
+        assert!(!set.contains("nvh265dec"));
+    }
 }

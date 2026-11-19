@@ -80,8 +80,9 @@ pub fn page(s: &App, v: &View) -> El {
     if videos {
         return c.child(videos_tab(&snap, &needle, source));
     }
-    let sort = s.nav.coll.ui.track_sort.get(SORT_KEY).cloned().unwrap_or(("DATE".into(), "DESC".into()));
-    c = c.child(coll::sort_header("lv", Some(&sort), true, |s: &mut App, sort| {
+    let default_sort: coll::Sort = ("DATE".into(), "DESC".into());
+    let sort = s.nav.coll.ui.track_sort.get(SORT_KEY).cloned().unwrap_or_else(|| default_sort.clone());
+    c = c.child(coll::sort_header("lv", Some(&sort), Some(&default_sort), true, |s: &mut App, sort| {
         // Clearing goes back to newest first (FavoritesView handleSort).
         match sort {
             Some(x) if x != ("DATE".to_string(), "DESC".to_string()) => { s.nav.coll.ui.track_sort.insert(SORT_KEY.into(), x); }

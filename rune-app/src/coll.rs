@@ -200,24 +200,48 @@ pub fn play_pair(v: &crate::controller::View, source: &serde_json::Value, play: 
         .child(views::button::<App>("hero-shuffle", "Shuffle", Some(G::Shuffle), false).on_press(move |_: &mut App| p2(true)))
 }
 
+/// Next track-list sort when clicking `column`, given the current sort and the page's default
+/// (`None` for playlists, `Some(("DATE", "DESC"))` for Loved Tracks). Cycles `ASC → DESC → None`
+/// on playlists, and toggles cleanly without getting stuck when `default` already names `column`.
+pub fn next_track_sort(cur: Option<&Sort>, default: Option<&Sort>, column: &str) -> Option<Sort> {
+    let first_dir = default
+        .filter(|(c, _)| c == column)
+        .map(|(_, d)| d.as_str())
+        .unwrap_or("ASC");
+    let second_dir = if first_dir == "ASC" { "DESC" } else { "ASC" };
+    match cur {
+        Some((c, d)) if c == column => {
+            if d == first_dir {
+                Some((column.to_string(), second_dir.to_string()))
+            } else {
+                None
+            }
+        }
+        _ => {
+            if default.is_some_and(|(c, d)| c == column && d == first_dir) {
+                None
+            } else {
+                Some((column.to_string(), first_dir.to_string()))
+            }
+        }
+    }
+}
+
 /// A sortable track list's column header (TrackList's header row): column titles over the
 /// rows' columns (views::track_row_look: the number, the cover and title with the artists
 /// under it, the album, optionally Date Added, and the time), each a button that sorts by it
-/// (again to flip the direction), the current one with its arrow. The rows have no artist
+/// (cycling `ASC → DESC → default`), the current one with its arrow. The rows have no artist
 /// column, so Artist sits beside Title over the title column.
-pub fn sort_header(key: &str, cur: Option<&Sort>, date_added: bool, pick: impl Fn(&mut App, Option<Sort>) + Clone + 'static) -> El {
+pub fn sort_header(key: &str, cur: Option<&Sort>, default: Option<&Sort>, date_added: bool, pick: impl Fn(&mut App, Option<Sort>) + Clone + 'static) -> El {
     let cell = |order: &str, label: &str| {
         let on = cur.is_some_and(|c| c.0 == order);
         let arrow = match cur { Some(c) if on => if c.1 == "ASC" { " ↑" } else { " ↓" }, _ => "" };
         let name = format!("Sort by {label}{arrow}");
-        let next = match cur {
-            Some(c) if c.0 == order => (order.to_string(), if c.1 == "ASC" { "DESC".into() } else { "ASC".into() }),
-            _ => (order.to_string(), "ASC".to_string()),
-        };
+        let next = next_track_sort(cur, default, order);
         let p = pick.clone();
         theme::focusable(row().key(format!("{key}-sort-{order}")).role("button").label(name.as_str())).h(26.0).radius(6.0).items_center().min_w(0.0)
             .cursor(rune::Cursor::Pointer)
-            .on_press(move |s: &mut App| p(s, Some(next.clone())))
+            .on_press(move |s: &mut App| p(s, next.clone()))
             .child(text(format!("{}{arrow}", label.to_uppercase())).font(t(12.0, 500.0).tracking(1.2)).color(if on { accent() } else { white(0.5) }).truncate().a11y_hidden())
     };
     let caption = |label: &str| text(label.to_string()).font(t(12.0, 500.0).tracking(1.2)).color(white(0.5)).a11y_hidden();
@@ -232,7 +256,7 @@ pub fn sort_header(key: &str, cur: Option<&Sort>, date_added: bool, pick: impl F
     }
     r = r.child(row().w(48.0).child(cell("LENGTH", "Time")));
     let mut actions = row().w(132.0).justify_end().items_center();
-    if cur.is_some() {
+    if cur != default {
         let p = pick.clone();
         actions = actions.child(theme::focusable(row().key(format!("{key}-sort-clear")).role("button").label("Clear sort")).h(26.0).px(6.0).radius(6.0).items_center()
             .hover(white(0.06)).cursor(rune::Cursor::Pointer)
@@ -362,5 +386,30 @@ mod tests {
         assert_eq!(lib_sort(&ui, Lib::Playlists), ("DATE_UPDATED".into(), "DESC".into()));
         assert_eq!(lib_sort(&ui, Lib::Albums), ("DATE".into(), "DESC".into()));
         assert_eq!(sort_label(Lib::Albums, &("RELEASE_DATE".into(), "ASC".into())), "Release date");
+    }
+
+    #[test]
+    fn track_header_cycles_third_click_to_default_without_trapping_loved_date() {
+        // Playlist (`default = None`): None -> ASC -> DESC -> None
+        let s1 = next_track_sort(None, None, "NAME");
+        assert_eq!(s1, Some(("NAME".into(), "ASC".into())));
+        let s2 = next_track_sort(s1.as_ref(), None, "NAME");
+        assert_eq!(s2, Some(("NAME".into(), "DESC".into())));
+        assert_eq!(next_track_sort(s2.as_ref(), None, "NAME"), None);
+        assert_eq!(next_track_sort(s1.as_ref(), None, "DATE"), Some(("DATE".into(), "ASC".into())));
+
+        // Loved Tracks (`default = Some(("DATE", "DESC"))`): DATE ↓ -> DATE ↑ -> None (DATE ↓)
+        let def: Sort = ("DATE".into(), "DESC".into());
+        let d1 = next_track_sort(Some(&def), Some(&def), "DATE");
+        assert_eq!(d1, Some(("DATE".into(), "ASC".into())));
+        assert_eq!(next_track_sort(d1.as_ref(), Some(&def), "DATE"), None);
+        // Other columns on Loved Tracks still cycle ASC -> DESC -> None (DATE ↓),
+        // and clicking DATE from another column resets directly to None (DATE ↓).
+        let n1 = next_track_sort(Some(&def), Some(&def), "NAME");
+        assert_eq!(n1, Some(("NAME".into(), "ASC".into())));
+        let n2 = next_track_sort(n1.as_ref(), Some(&def), "NAME");
+        assert_eq!(n2, Some(("NAME".into(), "DESC".into())));
+        assert_eq!(next_track_sort(n2.as_ref(), Some(&def), "NAME"), None);
+        assert_eq!(next_track_sort(n1.as_ref(), Some(&def), "DATE"), None);
     }
 }
