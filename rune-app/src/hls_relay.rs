@@ -159,18 +159,8 @@ async fn serve(mut sock: TcpStream, token: &str) -> std::io::Result<()> {
     out.push_str("\r\n");
     sock.write_all(out.as_bytes()).await?;
     if method == "GET" {
-        // Verifier only (video_check.py --close-test): segments trickle out, so a download is
-        // mid-body when the video closes.
-        let slow = std::env::var_os("SPIKE_SLOW_TS").is_some() && upstream.split('?').next().unwrap_or("").ends_with(".ts");
         while let Ok(Some(chunk)) = resp.chunk().await {
-            if slow {
-                for part in chunk.chunks(16 * 1024) {
-                    sock.write_all(part).await?;
-                    tokio::time::sleep(std::time::Duration::from_millis(60)).await;
-                }
-            } else {
-                sock.write_all(&chunk).await?;
-            }
+            sock.write_all(&chunk).await?;
         }
     }
     Ok(())

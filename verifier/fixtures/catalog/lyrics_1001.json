@@ -1,9 +1,0 @@
-{
- "trackId": 1001,
- "lyricsProvider": "Fixture Lyrics",
- "providerCommontrackId": "fx1001",
- "providerLyricsId": "fxl1001",
- "isRightToLeft": false,
- "lyrics": "Fixture line one\nFixture line two\nFixture line three\nFixture line four",
- "subtitles": "[00:01.00] Fixture line one\n[00:03.00] Fixture line two\n[00:05.00] Fixture line three\n[00:07.00] Fixture line four"
-}

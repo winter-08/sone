@@ -6,8 +6,8 @@
 //! changed, as the plugin's ini edit did.
 //!
 //! Release builds only: a debug build registering at every launch pointed the system's handler
-//! at whichever build ran last. Not run under the verifier's sandbox (`SPIKE_INNER`) or with
-//! `SONE_NO_SCHEME_REGISTER` set either; tests call [`write_entry`] on a temporary directory.
+//! at whichever build ran last. Not run when `SONE_NO_SCHEME_REGISTER` is set either; tests call
+//! [`write_entry`] on a temporary directory.
 
 use std::path::{Path, PathBuf};
 
@@ -25,10 +25,9 @@ pub fn register_at_start() {
     });
 }
 
-/// Whether this launch registers the handler: a Linux release build, outside the verifier's
-/// sandbox, without `SONE_NO_SCHEME_REGISTER`.
+/// Whether this launch registers the handler: a Linux release build without `SONE_NO_SCHEME_REGISTER`.
 fn registers(linux: bool, debug: bool, set: impl Fn(&str) -> bool) -> bool {
-    linux && !debug && !set("SPIKE_INNER") && !set("SONE_NO_SCHEME_REGISTER")
+    linux && !debug && !set("SONE_NO_SCHEME_REGISTER")
 }
 
 fn register() -> std::io::Result<()> {
@@ -197,7 +196,6 @@ mod tests {
         assert!(registers(true, false, none));
         assert!(!registers(true, true, none));
         assert!(!registers(false, false, none));
-        assert!(!registers(true, false, |k| k == "SPIKE_INNER"));
         assert!(!registers(true, false, |k| k == "SONE_NO_SCHEME_REGISTER"));
     }
 

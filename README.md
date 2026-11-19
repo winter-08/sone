@@ -14,7 +14,6 @@ and its backend belongs to that project.
   and lists what is not done.
 - `core/`: SONE's backend (TIDAL client, audio engine, scrobbling, MPRIS, MCP and overlay
   servers) with Tauri removed.
-- `verifier/`: the sandbox and scenarios used to check the port against the original.
 
 The original Tauri and React app is not in this branch.
 

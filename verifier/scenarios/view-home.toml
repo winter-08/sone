@@ -1,9 +1,0 @@
-name = "view-home"
-description = "Home after sign-in: sidebar, header, library, home feed sections."
-covers = ["views:home"]
-views = true
-audio = false
-
-[[step]]
-label = "home settled"
-wait = 1.0

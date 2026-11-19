@@ -1,9 +1,9 @@
 # SONE on Rune
 
 SONE with a native [Rune](https://github.com/anomalyco/rune) UI over the `sone-core` backend
-(`../core`). This is the app: the Tauri/React build it replaced is on the `main` branch, and its
-React frontend was the specification this UI was written and audited against (the audits are
-recorded in `../verifier/DESIGN.md`). What is still missing is listed at the end of this file.
+(`../core`). This is the app: the Tauri/React build it replaced is on `upstream/master`, and its
+React frontend was the specification this UI was written against. What is still missing is listed
+at the end of this file.
 
 ```
 rune-app/
@@ -70,21 +70,6 @@ are one derivation (`sone-deps`) and the app another, so a source change rebuild
 (about 100 s here, against about 5 minutes from nothing). `package.nix` carries one hash, for the
 Rune source, to update when the Rune rev changes; a wrong one fails with the right one in "got:".
 
-## Verify against the original
-
-```bash
-nix-shell verifier/harness/shell.nix --run \
-  'python3 -I verifier/verify.py check --display 1400x2000 --ignore controls,unnamed_controls --bin rune-app/target/debug/sone-rune-wrapped'
-```
-
-Rune exposes only on-screen content to assistive technology, so Rune builds are scored on a tall
-display. `--ignore controls,unnamed_controls` judges behaviour (MPRIS, MCP, network, bit-exact
-audio) and leaves out the accessibility inventory, whose control names still differ from the
-reference's. The sandbox never touches real audio hardware or your profile. The state benchmark
-is `verifier/bench/states.sh` (see `verifier/bench/states.py`). Loading and navigation times
-against a slow TIDAL (300 ms a request by default, as the real service is) are
-`verifier/bench/latency.py`: the command to rerun is at the top of that file.
-
 The backend sends TIDAL requests concurrently (at most six at once, one token refresh for many
 expired requests: `TidalClientCell` in `core/src/tidal_api.rs`). Work the user hasn't asked
 for yet (other Home tabs, the feed, the profile, favourite ids) holds at most two of those
@@ -110,7 +95,6 @@ slots (`src/sched.rs`).
   and 26%), so there they are off unless turned on in Settings > Playback ("Animated album
   covers"); software rendering is recognised by a Vulkan driver list naming only lavapipe,
   `LIBGL_ALWAYS_SOFTWARE`, or no GPU render node. Unfocused, a cover costs nothing.
-  Numbers: `../verifier/bench/results/states-2026-11-14-114331-vcover.md`.
 - **Not verified on real hardware:** `on_visibility` (the headless compositor never reports it;
   animated covers stop on it, unit-tested only),
   touchpads, profile picture upload (needs a file chooser), X11, and real music.
