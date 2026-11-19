@@ -26,7 +26,7 @@ pkgs.mkShell {
   # The sccache server outlives this shell, and nix-shell deletes its TMPDIR on exit: start the
   # server here with a temp dir that stays, or later shells' compiles fail in a missing one.
   shellHook = ''
-    TMPDIR="''${XDG_RUNTIME_DIR:-/tmp}" sccache --start-server >/dev/null 2>&1 || true
+    TMPDIR="''${XDG_RUNTIME_DIR:-/tmp}" sccache --start-server </dev/null >/dev/null 2>&1 || true
   '';
   buildInputs = runtime ++ gst ++ (with pkgs; [ openssl glib wayland.dev libxkbcommon.dev alsa-lib.dev dbus.dev ]);
   LD_LIBRARY_PATH = pkgs.lib.makeLibraryPath runtime;

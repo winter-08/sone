@@ -13,9 +13,9 @@ path = "src/main.rs"
 [dependencies]
 # The SONE backend (../core).
 sone-core = { path = "../core" }
-rune = { git = "https://github.com/anomalyco/rune", rev = "6c3cb8abf150e1c43b2f276a14568b2f2f504d72", features = ["accessibility", "native-file-dialog"] }
+rune = { git = "https://github.com/anomalyco/rune", rev = "f54cbcfa84d995d339c243a579218f5062c940b5", features = ["accessibility", "native-file-dialog"] }
 # Search folding for the filters (rune_kit::search): case, accents and widths as a reader expects.
-rune-kit = { git = "https://github.com/anomalyco/rune", rev = "6c3cb8abf150e1c43b2f276a14568b2f2f504d72" }
+rune-kit = { git = "https://github.com/anomalyco/rune", rev = "f54cbcfa84d995d339c243a579218f5062c940b5" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tokio = { version = "1", features = ["sync", "time", "macros", "net", "io-util", "signal", "rt-multi-thread"] }
@@ -34,10 +34,12 @@ gstreamer-video = "0.23"
 # so an app that builds Rune patches them too, from the same rev (Rune's README, "Depending on
 # Rune"). Keep the list equal to the [patch.crates-io] table in Rune's root Cargo.toml.
 [patch.crates-io]
-winit = { git = "https://github.com/anomalyco/rune", rev = "6c3cb8abf150e1c43b2f276a14568b2f2f504d72" }
-parley_engine = { git = "https://github.com/anomalyco/rune", rev = "6c3cb8abf150e1c43b2f276a14568b2f2f504d72" }
-wgpu-hal = { git = "https://github.com/anomalyco/rune", rev = "6c3cb8abf150e1c43b2f276a14568b2f2f504d72" }
-accesskit_windows = { git = "https://github.com/anomalyco/rune", rev = "6c3cb8abf150e1c43b2f276a14568b2f2f504d72" }
+wgpu-hal = { git = "https://github.com/anomalyco/rune", rev = "f54cbcfa84d995d339c243a579218f5062c940b5" }
+winit = { git = "https://github.com/anomalyco/rune", rev = "f54cbcfa84d995d339c243a579218f5062c940b5" }
+sctk-adwaita = { git = "https://github.com/anomalyco/rune", rev = "f54cbcfa84d995d339c243a579218f5062c940b5" }
+parley_engine = { git = "https://github.com/anomalyco/rune", rev = "f54cbcfa84d995d339c243a579218f5062c940b5" }
+accesskit_windows = { git = "https://github.com/anomalyco/rune", rev = "f54cbcfa84d995d339c243a579218f5062c940b5" }
+accesskit_macos = { git = "https://github.com/anomalyco/rune", rev = "f54cbcfa84d995d339c243a579218f5062c940b5" }
 
 [profile.dev]
 opt-level = 1

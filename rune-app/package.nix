@@ -64,8 +64,8 @@ let
     cargoVendorDir = craneLib.vendorCargoDeps {
       cargoLock = ./Cargo.lock;
       outputHashes = {
-        "git+https://github.com/anomalyco/rune?rev=6c3cb8abf150e1c43b2f276a14568b2f2f504d72#6c3cb8abf150e1c43b2f276a14568b2f2f504d72" =
-          "sha256-IJzxSA5Kc8UD+BZSwzBfQJ5igNhl2LDbSSUoffKs8zc=";
+        "git+https://github.com/anomalyco/rune?rev=f54cbcfa84d995d339c243a579218f5062c940b5#f54cbcfa84d995d339c243a579218f5062c940b5" =
+          "sha256-TMvYkPdtp3eIU/CnQyH+diMgS/bhhHlK/zehdvYTcAU=";
       };
       # Rune vendors published crates (vendor/winit and others) with the Cargo.toml.orig that
       # `cargo package` left in them, and crane packages each crate again, which refuses that
@@ -85,7 +85,7 @@ let
     nativeBuildInputs = [ pkg-config makeWrapper copyDesktopItems ];
     buildInputs = runtime ++ gst ++ [ openssl glib ];
 
-    # The tests drive the UI headless and need a GPU; the verifier covers them.
+    # Some tests initialize GStreamer / headless Rune outside the Nix sandbox.
     doCheck = false;
   };
   cargoArtifacts = craneLib.buildDepsOnly common;
