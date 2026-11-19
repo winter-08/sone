@@ -3,7 +3,7 @@
 {
   lib,
   craneLib,
-  makeWrapper,
+  makeBinaryWrapper,
   copyDesktopItems,
   makeDesktopItem,
   pkg-config,
@@ -32,8 +32,10 @@ let
     patches = (o.patches or [ ]) ++ [ ./patches/gst-adaptivedemux2-stop-context.patch ];
   });
   gst = with gst_all_1; [ gstreamer gst-plugins-base good gst-plugins-bad gst-libav ];
-  # Opened with dlopen by Rune (winit, wgpu) and the backend, so they go on LD_LIBRARY_PATH.
-  runtime = [ wayland libxkbcommon vulkan-loader libGL libx11 libxcursor libxi libxrandr alsa-lib fontconfig freetype dbus ];
+  # Opened with dlopen by Rune (winit, wgpu, font loading), so they are added to RUNPATH in
+  # postFixup (after shrink-rpath) instead of polluting LD_LIBRARY_PATH for child processes.
+  dlopenLibs = [ wayland libxkbcommon vulkan-loader libGL libx11 libxcursor libxi libxrandr fontconfig freetype ];
+  runtime = dlopenLibs ++ [ alsa-lib dbus ];
   appId = "sone";
   icons = src + "/core/icons";
   # Shared by the two derivations below. crane (not buildRustPackage) so the ~480 dependency
@@ -69,10 +71,12 @@ let
       };
       # Rune vendors published crates (vendor/winit and others) with the Cargo.toml.orig that
       # `cargo package` left in them, and crane packages each crate again, which refuses that
-      # reserved name.
+      # reserved name. rune-text also includes Inter TTFs via `../../../rune/assets/`, which
+      # resolves to `../../../rune-0.0.1/assets/` once crane splits the git checkout per crate.
       overrideVendorGitCheckout = _: drv: drv.overrideAttrs (o: {
         postPatch = (o.postPatch or "") + ''
           find . -name Cargo.toml.orig -delete
+          find . -path '*/fonts/default_fonts.rs' -exec sed -i 's|\.\./\.\./\.\./rune/assets/|../../../rune-0.0.1/assets/|g' {} +
         '';
       });
     };
@@ -82,7 +86,7 @@ let
     '';
     strictDeps = true;
 
-    nativeBuildInputs = [ pkg-config makeWrapper copyDesktopItems ];
+    nativeBuildInputs = [ pkg-config makeBinaryWrapper copyDesktopItems ];
     buildInputs = runtime ++ gst ++ [ openssl glib ];
 
     # Some tests initialize GStreamer / headless Rune outside the Nix sandbox.
@@ -105,10 +109,14 @@ craneLib.buildPackage (common // {
     install -Dm644 ${icons}/128x128@2x.png $out/share/icons/hicolor/256x256/apps/${appId}.png
   '';
 
-  # /run/opengl-driver/lib last: NixOS's GPU driver libraries, found only there.
+  # Bake dlopen'd libraries (and /run/opengl-driver/lib last) into ELF RUNPATH after
+  # fixupPhase's shrink-rpath so nixpkgs libs never leak into LD_LIBRARY_PATH for child
+  # processes (xdg-open, pactl, xdg-mime). Keep only /run/opengl-driver/lib suffixed on
+  # LD_LIBRARY_PATH so GStreamer's libgstnvcodec/libgstcuda can still dlopen host CUDA/NVDEC
+  # when SONE_VIDEO_HW=1 (DT_RUNPATH is not transitive into loaded plugins).
   postFixup = ''
-    wrapProgram $out/bin/sone \
-      --prefix LD_LIBRARY_PATH : ${lib.makeLibraryPath runtime} \
+    patchelf --add-rpath "${lib.makeLibraryPath dlopenLibs}:/run/opengl-driver/lib" "$out/bin/sone"
+    wrapProgram "$out/bin/sone" \
       --suffix LD_LIBRARY_PATH : /run/opengl-driver/lib \
       --set GST_PLUGIN_SYSTEM_PATH_1_0 ${lib.makeSearchPath "lib/gstreamer-1.0" (map lib.getLib gst)} \
       --prefix GIO_EXTRA_MODULES : ${glib-networking}/lib/gio/modules

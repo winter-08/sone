@@ -9,9 +9,10 @@ bin="$(cd "$(dirname "$0")" && pwd)/target/$profile/sone-rune"
 out="$bin-wrapped"
 cat > "$out" <<WRAP
 #!/usr/bin/env bash
-# /run/opengl-driver/lib last: NixOS's GPU driver libraries (libcuda, libnvcuvid for the NVDEC
-# video decoder), found only there, so nothing the build ships is shadowed.
-export LD_LIBRARY_PATH="$LD_LIBRARY_PATH\${LD_LIBRARY_PATH:+:\$LD_LIBRARY_PATH}:/run/opengl-driver/lib"
+# dlopen'd runtime libraries are baked into the ELF RUNPATH by shell.nix (NIX_LDFLAGS), so
+# nixpkgs store paths stay off LD_LIBRARY_PATH. Keep only /run/opengl-driver/lib suffixed last
+# so GStreamer's libgstnvcodec/libgstcuda can dlopen host libcuda/libnvcuvid when SONE_VIDEO_HW=1.
+export LD_LIBRARY_PATH="\${LD_LIBRARY_PATH:+\$LD_LIBRARY_PATH:}/run/opengl-driver/lib"
 export GST_PLUGIN_SYSTEM_PATH_1_0="$GST_PLUGIN_SYSTEM_PATH_1_0"
 export GIO_EXTRA_MODULES="$GIO_EXTRA_MODULES"
 if [[ -n "\${SONE_SOFTWARE_VULKAN:-}" ]]; then

@@ -41,8 +41,9 @@ exists.
 
 ## Build and run
 
-`shell.nix` uses the nixpkgs revision `../flake.lock` pins, links with lld, and shares compiled
-dependencies between checkouts and worktrees through sccache (`~/.cache/sccache`):
+`shell.nix` uses the nixpkgs revision `../flake.lock` pins, links with mold (baking runtime
+libraries into `RUNPATH`), and shares compiled dependencies between checkouts and worktrees
+through sccache (`~/.cache/sccache`):
 
 ```bash
 nix-shell rune-app/shell.nix --run 'cd rune-app && cargo build && ./wrap.sh'

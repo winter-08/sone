@@ -4,19 +4,31 @@
   inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
   # Builds a crate's dependencies as their own derivation (rune-app/package.nix).
   inputs.crane.url = "github:ipetkov/crane";
+  # Tracks rune-app/rust-toolchain.toml (nightly with parallel frontend) for Nix builds too.
+  inputs.rust-overlay = {
+    url = "github:oxalica/rust-overlay";
+    inputs.nixpkgs.follows = "nixpkgs";
+  };
 
   outputs =
-    { self, nixpkgs, crane }:
+    { self, nixpkgs, crane, rust-overlay }:
     let
       system = "x86_64-linux";
-      pkgs = nixpkgs.legacyPackages.${system};
+      pkgs = import nixpkgs {
+        inherit system;
+        overlays = [ (import rust-overlay) ];
+      };
+      rustToolchain = pkgs.rust-bin.fromRustupToolchainFile ./rune-app/rust-toolchain.toml;
+      craneLib = ((crane.mkLib pkgs).overrideToolchain (_: rustToolchain)).overrideScope (_: _: {
+        stdenvSelector = p: p.stdenvAdapters.useMoldLinker p.stdenv;
+      });
     in
     {
       packages.${system} = {
-        # The app (rune-app/).
+        # The app (rune-app/), built with Rust from rust-toolchain.toml and linked with mold.
         sone = pkgs.callPackage ./rune-app/package.nix {
           src = ./.;
-          craneLib = crane.mkLib pkgs;
+          inherit craneLib;
         };
         default = self.packages.${system}.sone;
       };
@@ -26,7 +38,7 @@
         program = "${self.packages.${system}.sone}/bin/sone";
       };
 
-      # The build shell (lld, sccache, the libraries the app opens at run time).
+      # The build shell (mold, sccache, the libraries the app links or opens at run time).
       devShells.${system}.default = import ./rune-app/shell.nix { inherit pkgs; };
 
       formatter.${system} = pkgs.nixfmt;

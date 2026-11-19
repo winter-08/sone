@@ -13,14 +13,17 @@ let
     patches = (o.patches or [ ]) ++ [ ./patches/gst-adaptivedemux2-stop-context.patch ];
   });
   gst = with pkgs.gst_all_1; [ gstreamer gst-plugins-base good gst-plugins-bad gst-libav ];
-  runtime = with pkgs; [ wayland libxkbcommon vulkan-loader libGL libx11 libxcursor libxi libxrandr alsa-lib fontconfig freetype dbus ];
+  dlopenLibs = with pkgs; [ wayland libxkbcommon vulkan-loader libGL libx11 libxcursor libxi libxrandr fontconfig freetype ];
+  runtime = dlopenLibs ++ (with pkgs; [ alsa-lib dbus ]);
 in
-pkgs.mkShell {
-  # lld links the binary; sccache shares compiled dependencies between checkouts and worktrees
-  # (registry and git crates live under ~/.cargo, so their cache keys match everywhere; this
-  # crate and the backend are path crates and stay incremental).
-  packages = with pkgs; [ pkg-config llvmPackages.bintools sccache ];
-  CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUSTFLAGS = "-C link-arg=-fuse-ld=lld";
+(pkgs.mkShell.override {
+  stdenv = pkgs.stdenvAdapters.useMoldLinker pkgs.stdenv;
+}) {
+  # mold links the binary (via stdenvAdapters.useMoldLinker, keeping Cargo's RUSTFLAGS clean);
+  # sccache shares compiled dependencies between checkouts and worktrees (registry and git crates
+  # live under ~/.cargo, so their cache keys match everywhere; this crate and the backend are
+  # path crates and stay incremental).
+  packages = with pkgs; [ pkg-config sccache ];
   RUSTC_WRAPPER = "sccache";
   SCCACHE_CACHE_SIZE = "40G";
   # The sccache server outlives this shell, and nix-shell deletes its TMPDIR on exit: start the
@@ -29,8 +32,12 @@ pkgs.mkShell {
     TMPDIR="''${XDG_RUNTIME_DIR:-/tmp}" sccache --start-server </dev/null >/dev/null 2>&1 || true
   '';
   buildInputs = runtime ++ gst ++ (with pkgs; [ openssl glib wayland.dev libxkbcommon.dev alsa-lib.dev dbus.dev ]);
-  LD_LIBRARY_PATH = pkgs.lib.makeLibraryPath runtime;
-  GST_PLUGIN_SYSTEM_PATH_1_0 = pkgs.lib.makeSearchPath "lib/gstreamer-1.0" gst;
+  # Bake dlopen'd runtime libraries (and /run/opengl-driver/lib last) into the ELF RUNPATH via
+  # cc-wrapper instead of exporting LD_LIBRARY_PATH (which leaks into child processes and would
+  # invalidate Cargo/sccache fingerprints if placed in RUSTFLAGS).
+  NIX_LDFLAGS = pkgs.lib.concatMapStringsSep " " (p: "-rpath ${pkgs.lib.getLib p}/lib") dlopenLibs
+    + " -rpath /run/opengl-driver/lib";
+  GST_PLUGIN_SYSTEM_PATH_1_0 = pkgs.lib.makeSearchPath "lib/gstreamer-1.0" (map pkgs.lib.getLib gst);
   # TLS for GStreamer's souphttpsrc (what wrapGAppsHook gives the Tauri package).
   GIO_EXTRA_MODULES = "${pkgs.glib-networking}/lib/gio/modules";
   # Software Vulkan (lavapipe) for GPU-less runs, e.g. the verifier's headless compositor.
