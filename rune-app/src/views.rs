@@ -2089,7 +2089,7 @@ pub fn drawer_cover_side(shell: Shell) -> f32 {
     shell.drawer_cover - 48.0
 }
 
-pub fn drawer(s: &App, v: &View, shell: Shell) -> Option<El> {
+pub fn drawer(s: &App, v: &View, shell: Shell, drawer_h: f32) -> Option<El> {
     let tab = (*s.nav.drawer)?;
     // (each with its icon, as React's TABS)
     let t_btn = |key: &str, label: &str, which: Drawer, g: G| {
@@ -2108,7 +2108,7 @@ pub fn drawer(s: &App, v: &View, shell: Shell) -> Option<El> {
     took_loading();
     let body = match tab {
         Drawer::Queue => queue_panel(v),
-        Drawer::Lyrics => lyrics(s, v),
+        Drawer::Lyrics => lyrics(s, v, drawer_h),
         Drawer::Suggested => suggested(v),
         Drawer::Credits => credits(v),
     };
@@ -2178,8 +2178,16 @@ pub fn drawer(s: &App, v: &View, shell: Shell) -> Option<El> {
     }
     let lyrics_tab = tab == Drawer::Lyrics;
     let queue_tab = tab == Drawer::Queue;
-    // (the queue's drag scrolls the viewport at its edges: queue_ui::tick)
-    let scroller = if queue_tab { scroller.on_layout_tx(|_: &mut App, r, tx: &mut Tx| { crate::queue_ui::note_viewport(r); tx.live_only(); }) } else { scroller };
+    let scroller = if lyrics_tab { scroller.scroll_edge_fade(36.0) } else { scroller };
+    // (the queue's drag scrolls the viewport at its edges: queue_ui::tick; lyrics measures the
+    // viewport so its custom scroll spring can centre each line cleanly)
+    let scroller = if queue_tab {
+        scroller.on_layout_tx(|_: &mut App, r, tx: &mut Tx| { crate::queue_ui::note_viewport(r); tx.live_only(); })
+    } else if lyrics_tab {
+        scroller.on_layout_tx(|_: &mut App, r, tx: &mut Tx| { note_lyrics_viewport(r); tx.live_only(); })
+    } else {
+        scroller
+    };
     let d = if wide { d } else { wash(d.fill(theme::drawer_bg())) };
     let mut d = d.padding(16.0).gap(12.0)
         .child(head)
@@ -2193,8 +2201,7 @@ pub fn drawer(s: &App, v: &View, shell: Shell) -> Option<El> {
             .on_press_tx(|s: &mut App, tx: &mut Tx| {
                 *s.nav.lyrics_scrolled = false;
                 if let Some(i) = *s.nav.lyric_line {
-                    lyrics_auto_scroll();
-                    tx.scroll_center(format!("ly-{i}"));
+                    scroll_lyrics_to(tx, i, false);
                 }
             })
             .child(glyph(G::Mic, 14.0, theme::ink()))
@@ -2303,23 +2310,96 @@ pub fn synced_lyrics(track: u64) -> Option<std::rc::Rc<Vec<(f64, String)>>> {
     (!lines.is_empty()).then_some(lines)
 }
 
+/// Measured geometry of the drawer's Lyrics tab for smooth custom-spring centering.
+#[derive(Default)]
+struct LyricsLayout {
+    track: Option<u64>,
+    viewport_h: f32,
+    origin_y: Option<f32>,
+    rows: std::collections::HashMap<usize, (f32, f32)>,
+}
+
+/// Silky spring for lyrics auto-scroll (slower and smoother than Rune's default 0.32 s GLIDE).
+const LYRICS_SCROLL_SPRING: rune::Spring = rune::Spring::new(0.68, 0.0);
+/// Sinusoidal ease-in-out curve (`easeInOutSine`): quick through the middle, soft at both ends.
+const LYRICS_SINE: rune::Easing = rune::Easing::cubic(0.37, 0.0, 0.63, 1.0);
+
 thread_local! {
     /// The Lyrics tab's scroll offset and range as last reported (None: not shown since).
     static LY_SCROLL: std::cell::Cell<Option<(f32, f32)>> = const { std::cell::Cell::new(None) };
     /// Until when a scroll is the app's own glide to the active line (LyricsTab isAutoScrolling).
     static LY_AUTO_UNTIL: std::cell::Cell<Option<std::time::Instant>> = const { std::cell::Cell::new(None) };
+    static LY_LAYOUT: std::cell::RefCell<LyricsLayout> = std::cell::RefCell::new(LyricsLayout::default());
 }
 static LY_USER_SCROLLED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+fn note_lyrics_viewport(r: [f32; 4]) {
+    LY_LAYOUT.with(|l| l.borrow_mut().viewport_h = r[3]);
+}
+
+fn note_lyrics_origin(track: u64, y: f32) {
+    LY_LAYOUT.with(|l| {
+        let mut l = l.borrow_mut();
+        if l.track != Some(track) {
+            l.track = Some(track);
+            l.rows.clear();
+        }
+        l.origin_y = Some(y);
+    });
+}
+
+fn note_lyric_row(track: u64, i: usize, y: f32, h: f32) {
+    LY_LAYOUT.with(|l| {
+        let mut l = l.borrow_mut();
+        if l.track != Some(track) {
+            l.track = Some(track);
+            l.rows.clear();
+            l.origin_y = None;
+        }
+        l.rows.insert(i, (y, h));
+    });
+}
 
 /// The drawer is closed: its Lyrics tab, opened again, starts from the top, which is not the
 /// user scrolling away from where it was.
 pub fn forget_lyrics_scroll() {
     LY_SCROLL.with(|c| c.set(None));
+    LY_LAYOUT.with(|l| {
+        let mut l = l.borrow_mut();
+        l.origin_y = None;
+        l.rows.clear();
+    });
 }
 
 /// The app is about to glide the Lyrics tab to a line: the scrolling that follows is its own.
 pub fn lyrics_auto_scroll() {
-    LY_AUTO_UNTIL.with(|c| c.set(Some(std::time::Instant::now() + std::time::Duration::from_millis(1000))));
+    LY_AUTO_UNTIL.with(|c| c.set(Some(std::time::Instant::now() + std::time::Duration::from_millis(1600))));
+}
+
+/// Centre lyric line `i` inside the drawer's Lyrics tab using our custom smooth spring when
+/// layout is known, falling back to Rune's built-in `scroll_center_in` before the first layout.
+pub fn scroll_lyrics_to(tx: &mut Tx, i: usize, instant: bool) {
+    lyrics_auto_scroll();
+    let target = LY_LAYOUT.with(|l| {
+        let l = l.borrow();
+        let origin = l.origin_y?;
+        let &(row_y, row_h) = l.rows.get(&i)?;
+        if l.viewport_h <= 0.0 {
+            return None;
+        }
+        let max = LY_SCROLL.with(|c| c.get().map(|(_, m)| m));
+        let y = ((row_y - origin) - (l.viewport_h - row_h) * 0.5).max(0.0);
+        Some(match max {
+            Some(m) if m > 0.0 => y.min(m),
+            _ => y,
+        })
+    });
+    match (target, instant) {
+        (Some(y), true) => tx.scroll_to_instant("drawer-scroll", 0.0, y),
+        (Some(y), false) => tx.scroll_to_with("drawer-scroll", 0.0, y, LYRICS_SCROLL_SPRING),
+        (None, true) => tx.scroll_center_in_instant("drawer-scroll", format!("ly-{i}")),
+        (None, false) => tx.scroll_center_in("drawer-scroll", format!("ly-{i}")),
+    }
 }
 
 /// The Lyrics tab's scroll offset, every frame it moves: a move the app didn't make (the
@@ -2350,7 +2430,7 @@ pub fn lyric_at(lines: &[(f64, String)], pos: f64) -> (Option<usize>, Option<f64
 /// The Lyrics tab (React LyricsTab). Synced lyrics: the active line grows (1.22x, bold, from
 /// its left edge, over 0.5 s), past lines dim, the view keeps it centred (main::poll), clicking
 /// a line seeks there, and scrolling away shows "Sync lyrics". Otherwise the plain text.
-fn lyrics(s: &App, v: &View) -> El {
+fn lyrics(s: &App, v: &View, drawer_h: f32) -> El {
     let Some(cur) = &v.current else { return ui::empty("Nothing playing") };
     // (The track's title is the drawer's header, so it isn't repeated here.)
     let mut c = col().w_full().gap(10.0);
@@ -2359,26 +2439,47 @@ fn lyrics(s: &App, v: &View) -> El {
             let provider = l["lyricsProvider"].as_str().map(str::to_string);
             if let Some(lines) = synced_lyrics(cur.id) {
                 let active = *s.nav.lyric_line;
-                let mut col_lines = col().w_full().gap(12.0).py(40.0)
+                let track_id = cur.id;
+                // Room above the first line and under the last so every line can glide to centre.
+                let pad = (drawer_h * 0.42).max(80.0);
+                let mut col_lines = col().w_full().gap(14.0)
+                    .on_layout_tx(move |_: &mut App, r, tx: &mut Tx| {
+                        note_lyrics_origin(track_id, r[1]);
+                        tx.live_only();
+                    })
                     .on_wheel(|s: &mut App, _, _| {
                         if !*s.nav.lyrics_scrolled {
                             *s.nav.lyrics_scrolled = true;
                         }
                         false
-                    });
+                    })
+                    .child(el().h(pad));
                 for (i, (at, line)) in lines.iter().enumerate() {
                     let on = Some(i) == active;
                     let past = active.is_some_and(|a| i < a);
                     let at = *at;
                     let color = if on { white(0.97) } else if past { white(0.28) } else { white(0.45) };
-                    let mut words = text(line.clone()).key(format!("ly-{i}")).font(t(20.0, if on { 700.0 } else { 500.0 }).lh(26.0)).color(color).wrap()
-                        .origin(0.0, 0.5).scale(if on { 1.22 } else { 1.0 }).scale_motion(rune::Spring::new(0.5, 0.0));
+                    // Wave cascade outward from the active line on an ease-in-out sine curve.
+                    let dist = active.map_or(0, |a| i.abs_diff(a)).min(6) as f32;
+                    let wave_delay = dist * 0.035;
+                    let wave_y = if on { 0.0 } else if past { -6.0 } else { 6.0 };
+                    // Width capped at 80% so the 1.22x active scale from the left edge stays inside the drawer.
+                    let mut words = text(line.clone()).key(format!("ly-{i}")).font(t(20.0, if on { 700.0 } else { 500.0 }).lh(26.0)).color(color).w_frac(0.80).wrap()
+                        .origin(0.0, 0.5)
+                        .scale(if on { 1.22 } else { 1.0 })
+                        .scale_motion(rune::Curve::tween(0.52, LYRICS_SINE))
+                        .offset(0.0, wave_y)
+                        .offset_motion(rune::AnimExt::delay(rune::Curve::tween(0.58, LYRICS_SINE), wave_delay));
                     // (an inactive line brightens under the pointer: LyricsLine's hover colour)
                     if !on {
                         words = words.group_color(white(0.7));
                     }
                     col_lines = col_lines.child(
-                        el().key(format!("lyw-{i}")).role("presentation").hover_group().cursor(rune::Cursor::Pointer)
+                        col().key(format!("lyw-{i}")).w_full().role("presentation").hover_group().cursor(rune::Cursor::Pointer)
+                            .on_layout_tx(move |_: &mut App, r, tx: &mut Tx| {
+                                note_lyric_row(track_id, i, r[1], r[3]);
+                                tx.live_only();
+                            })
                             .on_press(move |s: &mut App| {
                                 *s.nav.lyrics_scrolled = false;
                                 controller::send(Cmd::SeekTo(at));
@@ -2386,7 +2487,7 @@ fn lyrics(s: &App, v: &View) -> El {
                             .child(words),
                     );
                 }
-                c = c.child(col_lines.child(el().h(160.0)));
+                c = c.child(col_lines.child(el().h(pad)));
                 // (React puts the provider under synced lyrics and plain ones, never under
                 // "No lyrics available")
                 if let Some(p) = provider {
@@ -2399,7 +2500,7 @@ fn lyrics(s: &App, v: &View) -> El {
                 } else {
                     // whitespace-pre-wrap: a blank line keeps its height, between verses
                     for line in plain.lines() {
-                        c = c.child(if line.trim().is_empty() { el().h(32.0) } else { text(line.to_string()).font(t(18.0, 500.0).lh(32.0)).color(white(0.5)).wrap() });
+                        c = c.child(if line.trim().is_empty() { el().h(32.0) } else { text(line.to_string()).font(t(18.0, 500.0).lh(32.0)).color(white(0.5)).w_full().wrap() });
                     }
                     if let Some(p) = provider {
                         c = c.child(text(format!("Lyrics provided by {p}")).font(t(11.0, 500.0)).color(white(0.4)).mt(20.0));

@@ -211,12 +211,12 @@ fn lyric_tick(s: &mut App, tx: &mut Tx) -> bool {
     if !drawer {
         moved |= clear_line(&mut s.nav.lyric_line);
     } else if line != *Tracked::untracked(&s.nav.lyric_line) {
+        let fresh = Tracked::untracked(&s.nav.lyric_line).is_none();
         *s.nav.lyric_line = line;
         if let Some(i) = line
             && !*s.nav.lyrics_scrolled
         {
-            views::lyrics_auto_scroll();
-            tx.scroll_center(format!("ly-{i}"));
+            views::scroll_lyrics_to(tx, i, fresh);
         }
         moved = true;
     }
@@ -230,6 +230,10 @@ fn lyric_tick(s: &mut App, tx: &mut Tx) -> bool {
             if fresh { tx.scroll_center_in_instant("full-lyrics", format!("fly-{i}")) } else { tx.scroll_center_in("full-lyrics", format!("fly-{i}")) }
         }
         moved = true;
+    }
+    if moved {
+        // Text colour springs at half the given duration in Rune (0.95 s -> ~0.48 s fade).
+        tx.color_motion(rune::Spring::new(0.95, 0.0));
     }
     moved
 }
@@ -378,7 +382,8 @@ fn view(s: &App, cx: &mut Cx<App>) -> El {
         // (its colour wash can come from the cover's pixels, which land without a state change)
         let tinted = crate::art::cover_color(Tracked::untracked(&s.ctl).cover.as_deref()).is_some();
         let cover = cover_video::showing(cover_video::Slot::Now);
-        content = content.child(pane("drawer", (shell_in, stores, tinted, cover), || views::drawer(s, &s.ctl, shell).unwrap_or_else(el)));
+        let drawer_h = ((win_size.1 - 240.0).max(160.0) / 32.0).round() * 32.0;
+        content = content.child(pane("drawer", (shell_in, stores, tinted, cover, drawer_h.to_bits()), || views::drawer(s, &s.ctl, shell, drawer_h).unwrap_or_else(el)));
     } else {
         views::forget_lyrics_scroll();
     }
